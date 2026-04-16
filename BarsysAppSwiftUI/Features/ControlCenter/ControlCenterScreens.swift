@@ -1747,32 +1747,27 @@ struct StationSelectorCard: View {
     let onSelect: (StationName) -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text("Select Station")
-                    .font(Theme.Font.of(.headline))
-                    .foregroundStyle(Color("appBlackColor"))
-                Spacer()
-            }
+        // UIKit uses NON-UNIFORM spacing inside the card. Storyboard
+        // offsets (from selectStationView top):
+        //   "Select Station" title:  y=16   (top padding)
+        //   Station buttons:         y=55   (title→buttons gap = 20pt)
+        //   Station image:           y=111  (buttons→image gap = 26pt)
+        //   Ingredient name:         y=362  (image→ingredient gap = 5pt)
+        //   Progress message:        y=400  (ingredient→progress gap = 0)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Select Station")
+                // UIKit: system 16pt (storyboard `lpp-uw-aEx`), appBlackColor
+                .font(.system(size: 16))
+                .foregroundStyle(Color("appBlackColor"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Title → buttons: 20pt gap
+            Spacer().frame(height: 20)
 
             // 1:1 port of UIKit `updateStationNameSelectionUI` +
             // storyboard A-F button stack (`e3w-KK-sLe` distribution
             // `equalSpacing`, buttons tag 1-6, size 30×30, font 18pt):
-            //
-            //   arrStationButton.forEach {
-            //       $0.roundCorners = $0.frame.width/2         // circle
-            //       $0.layer.borderWidth = 1
-            //       $0.layer.borderColor = $0.tag == stationName?.tag
-            //           ? UIColor.clear.cgColor
-            //           : UIColor.black.cgColor                // BLACK border
-            //       $0.layer.backgroundColor = $0.tag == stationName?.tag
-            //           ? UIColor.sideMenuSelectionColor.cgColor
-            //           : UIColor.clear.cgColor
-            //       $0.titleLabel?.font = AppFontClass.font(.title3)
-            //   }
-            //
-            // Title color stays BLACK in every state (storyboard default
-            // `titleColor white=0.0 alpha=1`), never switches to white.
+            //   Title color stays BLACK in every state (storyboard default).
             HStack(spacing: 0) {
                 ForEach(Array(StationName.allCases.enumerated()),
                         id: \.element) { idx, st in
@@ -1802,9 +1797,6 @@ struct StationSelectorCard: View {
                     .buttonStyle(BounceButtonStyle())
                     .accessibilityLabel("Station \(st.rawValue)")
 
-                    // `equalSpacing` distribution — fill the gaps between
-                    // the 6 buttons with flexible Spacers so the stack
-                    // stretches to fill the 279pt card content width.
                     if idx < StationName.allCases.count - 1 {
                         Spacer(minLength: 0)
                     }
@@ -1812,39 +1804,50 @@ struct StationSelectorCard: View {
             }
             .frame(maxWidth: .infinity)
 
-            // Station diagram — UIKit uses asset "stationA", "stationB", ... 246pt tall.
-            // Falls back to a soft platinum placeholder if the asset isn't bundled.
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Theme.Color.softPlatinum.opacity(0.6))
-                    .frame(height: 200)
-                Image("station\(selected.rawValue)")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 200)
-            }
+            // Buttons → image: 26pt gap
+            Spacer().frame(height: 26)
 
-            // Ingredient name (caption1, brand colour)
-            Text(ingredientName.isEmpty ? "—" : ingredientName)
-                .font(Theme.Font.of(.caption1, .medium))
-                .foregroundStyle(ingredientName.isEmpty
-                                 ? Color("lightGrayColor")
-                                 : Theme.Color.brand)
+            // Station diagram — UIKit: 279×246, scaleAspectFit
+            Image("station\(selected.rawValue)")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: .infinity)
+                .frame(height: 246)
 
+            // Image → ingredient name: 5pt gap
+            Spacer().frame(height: 5)
+
+            // Top border separator above ingredient name (UIKit: 24B-uV-JXg)
             Rectangle()
                 .fill(Color("borderColor"))
                 .frame(height: 1)
 
-            // Progress message (caption1, lightGray)
+            // Ingredient name — UIKit: 12pt system, black text,
+            // user interaction disabled, height 38pt
+            Text(ingredientName.isEmpty ? "—" : ingredientName)
+                .font(Theme.Font.of(.caption1))
+                .foregroundStyle(Color("appBlackColor"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 38)
+
+            // Bottom border separator (UIKit: PlR-w6-kk7) above progress message
+            Rectangle()
+                .fill(Color("borderColor"))
+                .frame(height: 1)
+
+            // Progress message — UIKit: 12pt system, black text,
+            // height 45pt, user interaction disabled
             Text(progressMessage)
                 .font(Theme.Font.of(.caption1))
-                .foregroundStyle(Color("lightGrayColor"))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 30)
+                .foregroundStyle(Color("appBlackColor"))
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 45)
         }
-        .padding(16)
+        // UIKit inner padding: 24pt horizontal, 16pt top, 0pt bottom
+        // (progress message extends to card bottom edge)
+        .padding(.horizontal, 24)
+        .padding(.top, 16)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Theme.Color.surface)
@@ -1886,11 +1889,13 @@ struct StationCleaningFlowTableRow: View {
     var body: some View {
         HStack(spacing: 0) {
             // Station label (e.g. "Station A")
+            // UIKit: x=24 w=80 — but row now has 24pt horizontal padding
+            // from the parent, so inner leading is relative to the cell edge.
             Text("Station \(slot.station.rawValue)")
                 .font(isSelected ? Theme.Font.of(.caption1, .semibold) : Theme.Font.of(.caption1))
                 .foregroundStyle(textColor)
                 .frame(width: 80, alignment: .leading)
-                .padding(.leading, 24)
+                .padding(.leading, 16)
 
             // Ingredient name (multi-line, caption1)
             Text(slot.isEmpty ? "—" : slot.ingredientName)
@@ -1905,14 +1910,33 @@ struct StationCleaningFlowTableRow: View {
                 .font(isSelected ? Theme.Font.of(.caption1, .semibold) : Theme.Font.of(.caption1))
                 .foregroundStyle(textColor)
                 .frame(width: 91, alignment: .trailing)
-                .padding(.trailing, 24)
+                .padding(.trailing, 16)
         }
         .frame(height: 51)
-        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.l)
-                .fill(isSelected ? Color("sideMenuSelectionColor").opacity(0.18) : Color.clear)
+            // UIKit `viewGlass`: systemBackgroundColor (white) base with
+            // gradient border (pre-iOS 26) or glass effect (iOS 26+).
+            // cornerRadius = BarsysCornerRadius.xlarge = 20pt.
+            // Selected state adds `sideMenuSelectionColor` background.
+            RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
+                .fill(isSelected
+                      ? Color("sideMenuSelectionColor").opacity(0.18)
+                      : Color.white)
+                // Pre-iOS 26 gradient border: black 0.1 → white 0.1
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.black.opacity(0.1), Color.white.opacity(0.1)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                )
         )
+        .padding(.vertical, 6)
+        .padding(.horizontal, 24)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Station \(slot.station.rawValue), \(slot.isEmpty ? "empty" : slot.ingredientName), \(displayQuantity)")

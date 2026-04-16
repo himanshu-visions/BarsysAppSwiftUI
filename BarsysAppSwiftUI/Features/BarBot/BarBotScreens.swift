@@ -923,13 +923,17 @@ struct WelcomeOccasionSection: View {
         //   Title at (16, 5) 14pt semibold, description at (16, 52)
         //   12pt regular, both `charcoalGrayColor`.
         VStack(alignment: .leading, spacing: 0) {
+            // UIKit title frame: (16, 5) w=100 h=47 — fixed 47pt height
+            // allocation so the description always starts at y≈52 regardless
+            // of whether the title wraps to 1 or 2 lines.
             Text(opt.title ?? "")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color("charcoalGrayColor"))
                 .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 47, alignment: .topLeading)
                 .padding(.top, 5)
 
+            // UIKit description frame: (16, 52) w=122 h=47
             if let prompt = opt.prompt, !prompt.isEmpty {
                 Text(prompt)
                     .font(.system(size: 12))
