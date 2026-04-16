@@ -777,12 +777,15 @@ enum BarsysPopup: Equatable, Identifiable {
     /// `primaryFillColor`: when set, fills the primary (right) button with this color
     ///   (e.g. `.segmentSelectionColor` for rating popup). `nil` = brand gradient.
     /// `isCloseHidden`: hides the close X button (UIKit `isCloseButtonHidden`).
+    /// UIKit `showCustomAlertMultipleButtons` ALWAYS passes
+    /// `cancelButtonColor: .segmentSelectionColor` — the primary (right)
+    /// button is ALWAYS brand-gradient-filled. Default reflects this.
     case confirm(title: String,
                  message: String?,
                  primaryTitle: String,
                  secondaryTitle: String = ConstantButtonsTitle.cancelButtonTitle,
                  isDestructive: Bool = false,
-                 primaryFillColor: String? = nil,
+                 primaryFillColor: String? = "segmentSelectionColor",
                  isCloseHidden: Bool = false)
 
     /// Manual-start spinning prompt for the Shaker — title +

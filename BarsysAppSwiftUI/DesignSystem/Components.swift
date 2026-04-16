@@ -564,41 +564,32 @@ struct BarsysAlertOverlay: View {
                 // full-width orange continue button.
                 if let secondaryTitle = item.secondaryActionTitle {
                     // AlertPopUpHorizontalStackController layout:
-                    // cancel on LEFT, continue on RIGHT — both bordered
-                    // with `craftButtonBorderColor`, 8pt corners,
-                    // 12pt caption1 font.
-                    HStack(spacing: 12) {
+                    // LEFT = continueButton (secondary) — border only
+                    // RIGHT = cancelButton (primary) — brand gradient fill
+                    // UIKit ALWAYS passes cancelButtonColor: .segmentSelectionColor
+                    // Both: capsule shape (height/2 corners), 12pt font
+                    HStack(spacing: 10) {
+                        // LEFT secondary — border only (cancelCapsule style)
                         Button {
                             HapticService.light()
                             item.secondaryAction?()
                             onDismiss()
                         } label: {
                             Text(secondaryTitle)
+                                .cancelCapsule(height: 40, textColor: Color("appBlackColor"))
                                 .font(.system(size: 12))
-                                .foregroundStyle(Color("appBlackColor"))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 40)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
-                                )
                         }
                         .buttonStyle(.plain)
 
+                        // RIGHT primary — brand gradient fill (makeOrangeStyle)
                         Button {
                             HapticService.light()
                             item.primaryAction?()
                             onDismiss()
                         } label: {
                             Text(item.primaryActionTitle)
+                                .brandCapsule(height: 40)
                                 .font(.system(size: 12))
-                                .foregroundStyle(Color("appBlackColor"))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 40)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
-                                )
                         }
                         .buttonStyle(.plain)
                     }

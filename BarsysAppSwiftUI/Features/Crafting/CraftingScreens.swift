@@ -975,11 +975,18 @@ struct CraftingView: View {
             }
             Task { await viewModel.start(recipe: recipe, ble: ble) }
         } else {
+            // UIKit CraftingViewController L128-143:
+            //   showCustomAlertMultipleButtons(
+            //     cancelButtonTitle: "Start Pouring",
+            //     continueButtonTitle: "Cancel",
+            //     cancelButtonColor: .segmentSelectionColor ← makes it orange/brand gradient
+            //   )
             pourConfirmPopup = .confirm(
                 title: Constants.readyToPourTitle,
                 message: "Place your glass and confirm to start crafting.",
                 primaryTitle: "Start Pouring",
-                secondaryTitle: ConstantButtonsTitle.cancelButtonTitle
+                secondaryTitle: ConstantButtonsTitle.cancelButtonTitle,
+                primaryFillColor: "segmentSelectionColor"
             )
         }
     }
@@ -1048,12 +1055,14 @@ struct CraftingView: View {
                 // makeBorder(1pt, silverColor) on pre-26. 168×40pt centered.
                 Button {
                     HapticService.light()
+                    // UIKit L302-314: cancelButtonColor: .segmentSelectionColor
+                    // "Yes, Cancel" gets orange/brand fill, NOT destructive red
                     cancelDrinkPopup = .confirm(
                         title: "Cancel Drink",
                         message: "Are you sure you want to cancel the current drink?",
                         primaryTitle: "Yes, Cancel",
                         secondaryTitle: "No",
-                        isDestructive: true
+                        primaryFillColor: "segmentSelectionColor"
                     )
                 } label: {
                     Text(ConstantButtonsTitle.cancelButtonTitle)
@@ -1373,8 +1382,9 @@ struct DrinkCompleteView: View {
                         VStack(spacing: 8) {
                             // "Make it again" — hidden if SpeakEasy case
                             // UIKit: makeItAgainButton, 345×45, addBounceEffect,
-                            // iOS 26+ applyCancelCapsuleGradientBorderStyle,
-                            // pre-26 makeBorder(1, craftButtonBorderColor)
+                            //   font: .body/.medium (16pt medium)
+                            //   iOS 26+: applyCancelCapsuleGradientBorderStyle
+                            //   pre-26:  makeBorder(1, craftButtonBorderColor), no fill
                             if !isSpeakEasyCase {
                                 Button {
                                     HapticService.light()
@@ -1386,45 +1396,55 @@ struct DrinkCompleteView: View {
                                     }
                                 } label: {
                                     Text("Make it again")
-                                        .cancelCapsule(height: 45, cornerRadius: 8)
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundStyle(Color("appBlackColor"))
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 45)
+                                        .background(drinkCompleteCancelBackground)
+                                        .overlay(drinkCompleteCancelBorder)
                                 }
                                 .buttonStyle(BounceButtonStyle())
                                 .accessibilityLabel("Make it again")
                                 .accessibilityHint("Crafts the same drink again")
                             }
 
-                            // "Customize" — navigate to recipe detail for editing
-                            // UIKit: customizeButton, same style as Make it again
-                            // Action: pops to RecipePage before CraftingVC, or pushes new one
+                            // "Customize" — same style as Make it again
+                            // UIKit: customizeButton, identical styling
                             Button {
                                 HapticService.light()
                                 env.analytics.track(TrackEventName.craftCustomise.rawValue)
-                                // Pop back to recipe detail for customization
-                                // UIKit navigates to the view controller before CraftingVC
-                                // SwiftUI: pop to root and navigate to recipe detail
                                 router.popToRoot()
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                     router.push(.recipeDetail(recipeID))
                                 }
                             } label: {
                                 Text("Customize")
-                                    .cancelCapsule(height: 45, cornerRadius: 8)
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(Color("appBlackColor"))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 45)
+                                    .background(drinkCompleteCancelBackground)
+                                    .overlay(drinkCompleteCancelBorder)
                             }
                             .buttonStyle(BounceButtonStyle())
                             .accessibilityLabel("Customize")
                             .accessibilityHint("Opens recipe customization")
 
                             // "Done" — PrimaryOrangeButton
-                            // UIKit: doneButton, brandTanColor bg,
-                            // iOS 26+ makeOrangeStyle (capsule gradient),
-                            // pre-26 makeBorder(1, sideMenuSelectionColor), 8pt corners
-                            // Action: haptic success → doneAction() (pops to source VC)
+                            // UIKit: doneButton, font: .body/.medium (16pt medium)
+                            //   iOS 26+: makeOrangeStyle (capsule gradient)
+                            //   pre-26:  makeBorder(1, sideMenuSelectionColor), 8pt corners
                             Button {
                                 HapticService.success()
                                 doneAction()
                             } label: {
                                 Text("Done")
-                                    .brandCapsule(height: 45, cornerRadius: 8)
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(Color.black)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 45)
+                                    .background(drinkCompleteDoneBackground)
+                                    .overlay(drinkCompleteDoneBorder)
                             }
                             .buttonStyle(BounceButtonStyle())
                             .accessibilityLabel("Done")
@@ -1564,6 +1584,77 @@ struct DrinkCompleteView: View {
     // in the nav stack (FavouritesRecipesAndDrinks, MakeMyOwn,
     // RecipePage, ReadyToPour, MixlistDetail, or BarBot).
     // SwiftUI: pop to root — the router handles tab-scoped nav stacks.
+    // MARK: - DrinkComplete button styles (1:1 UIKit DrinkCompleteViewController L91-158)
+
+    /// "Make it again" / "Customize" — applyCancelCapsuleGradientBorderStyle on iOS 26+,
+    /// makeBorder(1, craftButtonBorderColor) with NO fill on pre-26.
+    @ViewBuilder
+    private var drinkCompleteCancelBackground: some View {
+        if #available(iOS 26.0, *) {
+            // applyCancelCapsuleGradientBorderStyle → glass capsule
+            Capsule(style: .continuous).fill(.regularMaterial)
+        } else {
+            // No fill — just transparent with border
+            Capsule(style: .continuous).fill(Color.clear)
+        }
+    }
+
+    @ViewBuilder
+    private var drinkCompleteCancelBorder: some View {
+        if #available(iOS 26.0, *) {
+            // applyCancelCapsuleGradientBorderStyle → 1.5pt gradient border
+            Capsule(style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.95),
+                            Color(white: 0.85).opacity(0.9),
+                            Color.white.opacity(0.95)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        } else {
+            // makeBorder(width: 1, color: .craftButtonBorderColor)
+            Capsule(style: .continuous)
+                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
+        }
+    }
+
+    /// "Done" — makeOrangeStyle on iOS 26+ (brand gradient capsule),
+    /// makeBorder(1, sideMenuSelectionColor) on pre-26.
+    /// NOTE: pre-26 uses sideMenuSelectionColor border, NOT craftButtonBorderColor.
+    @ViewBuilder
+    private var drinkCompleteDoneBackground: some View {
+        if #available(iOS 26.0, *) {
+            // makeOrangeStyle → brand gradient capsule
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        } else {
+            // pre-26: no fill, just border
+            Capsule(style: .continuous).fill(Color.clear)
+        }
+    }
+
+    @ViewBuilder
+    private var drinkCompleteDoneBorder: some View {
+        if #available(iOS 26.0, *) {
+            EmptyView()
+        } else {
+            // pre-26: makeBorder(width: 1, color: .sideMenuSelectionColor)
+            Capsule(style: .continuous)
+                .stroke(Color("sideMenuSelectionColor"), lineWidth: 1)
+        }
+    }
+
     private func doneAction() {
         router.popToRoot()
     }
