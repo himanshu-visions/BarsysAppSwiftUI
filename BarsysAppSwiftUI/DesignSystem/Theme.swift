@@ -1048,17 +1048,34 @@ private struct BarsysPopupCard: View {
         .buttonStyle(BounceButtonStyle())
     }
 
-    /// Filled button background — iOS 26: glass + color tint, pre-26: solid fill
+    /// Filled button background — 1:1 port of UIKit alertPopUpButtonBackgroundStyle(fillColor:)
+    /// iOS 26: applyCapsuleGradientStyle() + bg@0.2 alpha + addGlassEffect(effect: "clear")
+    /// Pre-26: solid fillColor fill
     @ViewBuilder
     private func alertFilledButtonBackground(_ colorName: String) -> some View {
         if #available(iOS 26.0, *) {
-            Capsule().fill(SwiftUI.Color(colorName).opacity(0.8))
+            // UIKit: gradient + alpha 0.2 bg + clear glass overlay
+            ZStack {
+                Capsule().fill(
+                    LinearGradient(
+                        colors: [
+                            SwiftUI.Color("brandGradientTop"),
+                            SwiftUI.Color("brandGradientBottom")
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                Capsule().fill(SwiftUI.Color(colorName).opacity(0.2))
+                Capsule().fill(.ultraThinMaterial)
+            }
         } else {
             Capsule().fill(SwiftUI.Color(colorName))
         }
     }
 
-    /// RIGHT button default — brand gradient (used when no custom fill color).
+    /// RIGHT button default — used when no custom fill color provided.
+    /// iOS 26: applyCancelCapsuleGradientBorderStyle (glass with tint)
+    /// Pre-26: no fill, border only
     private func alertPrimaryButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button { HapticService.light(); action() } label: {
             Text(title)
@@ -1066,15 +1083,18 @@ private struct BarsysPopupCard: View {
                 .foregroundStyle(SwiftUI.Color.black)
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
-                .background(
-                    Capsule().fill(SwiftUI.Color("segmentSelectionColor"))
+                .background(alertSecondaryButtonBackground)
+                .overlay(
+                    Capsule().stroke(SwiftUI.Color("craftButtonBorderColor"), lineWidth: 1)
                 )
+                .clipShape(Capsule())
         }
         .buttonStyle(BounceButtonStyle())
     }
 
     /// LEFT button (continueButton in UIKit) — border only, no fill.
-    /// Matches screenshot: white bg with light border, pill shape.
+    /// iOS 26: applyCancelCapsuleGradientBorderStyle() (glass frosted)
+    /// Pre-26: makeBorder(1, craftButtonBorderColor) on white bg
     private func alertSecondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button { HapticService.light(); action() } label: {
             Text(title)
@@ -1091,11 +1111,13 @@ private struct BarsysPopupCard: View {
         .buttonStyle(BounceButtonStyle())
     }
 
-    /// Secondary button background — iOS 26: glass, pre-26: white
+    /// Secondary/default button background
+    /// iOS 26: ultraThinMaterial glass (effect: "clear")
+    /// Pre-26: white solid
     @ViewBuilder
     private var alertSecondaryButtonBackground: some View {
         if #available(iOS 26.0, *) {
-            Capsule().fill(.regularMaterial)
+            Capsule().fill(.ultraThinMaterial)
         } else {
             Capsule().fill(SwiftUI.Color.white)
         }
