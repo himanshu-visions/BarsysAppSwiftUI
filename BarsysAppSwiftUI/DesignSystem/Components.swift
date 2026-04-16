@@ -627,16 +627,27 @@ struct BarsysAlertOverlay: View {
             .padding(.top, 16)
             .padding(.bottom, 20)
             .frame(maxWidth: 320)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white)
-            )
+            .background(alertCardBackground)
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(Color.white.opacity(0.3), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 4)
             .padding(.horizontal, 40)
+        }
+    }
+
+    /// UIKit `alertPopUpBackgroundStyle()` from UIViewClass+GradientStyles.swift:
+    ///   iOS 26+: addGlassEffect(cornerRadius: BarsysCornerRadius.medium=12)
+    ///   Pre-26: UIColor.white.withAlphaComponent(0.95), cornerRadius=12
+    @ViewBuilder
+    private var alertCardBackground: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.regularMaterial)
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.95))
         }
     }
 

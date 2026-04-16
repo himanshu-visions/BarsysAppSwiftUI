@@ -145,6 +145,17 @@ struct MainTabView: View {
 
             SideMenuOverlay()
         }
+        // Rating popup — shown on the full screen AFTER side menu dismisses.
+        // 1:1 port of UIKit: dismissSideMenu(isAnimated: false) → then
+        // showCustomAlertMultipleButtons on topViewController.
+        .barsysPopup($router.pendingRatingPopup, onPrimary: {
+            // "Yes please!" → open App Store review URL
+            if let url = URL(string: WebViewURLs.appStoreReviewUrl) {
+                UIApplication.shared.open(url)
+            }
+        }, onSecondary: {
+            // "No, stay in the app" → dismiss
+        })
     }
 
     // MARK: - Tab labels

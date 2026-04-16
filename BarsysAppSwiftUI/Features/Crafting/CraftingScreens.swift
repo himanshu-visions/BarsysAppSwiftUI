@@ -1468,7 +1468,9 @@ struct DrinkCompleteView: View {
                     title: Constants.wouldYouLikeRatingTextAfterDrinkCompleted,
                     message: nil,
                     primaryTitle: ConstantButtonsTitle.yesPleaseButtonTitle,
-                    secondaryTitle: ConstantButtonsTitle.noStayInAppButtonTitle
+                    secondaryTitle: ConstantButtonsTitle.noStayInAppButtonTitle,
+                    primaryFillColor: "segmentSelectionColor",
+                    isCloseHidden: true
                 )
             }
         }

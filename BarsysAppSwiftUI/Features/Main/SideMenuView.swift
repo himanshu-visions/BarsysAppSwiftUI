@@ -328,10 +328,6 @@ private struct SideMenuPanel: View {
     @State private var selectedSection: Int? = nil
 
     @State private var showLogoutConfirm = false
-    /// Rating popup state — uses BarsysPopup.confirm to match UIKit's
-    /// `showCustomAlertMultipleButtons` glass-card popup (not the native
-    /// action sheet that `.confirmationDialog` provides).
-    @State private var ratingPopup: BarsysPopup? = nil
     /// Shows DeviceConnectedPopup when tapping "Device" while connected.
     /// Ports UIKit `openDeviceConnectedPopUp()`.
     @State private var showDeviceConnectedPopup = false
@@ -633,25 +629,8 @@ private struct SideMenuPanel: View {
         } message: {
             Text(Constants.doYouWantToLogout)
         }
-        // Rating popup — 1:1 port of UIKit `SideMenuViewController.didTapRateApp`
-        // which uses `showCustomAlertMultipleButtons` (AlertPopUpHorizontalStackController).
-        // The UIKit popup is a glass-card modal with:
-        //   • Title: wouldYouLikeRatingTextForSideMenu
-        //   • "Yes, please" (primary brand button) → opens App Store review
-        //   • "No, stay in app" (secondary cancel button) → dismisses
-        //   • Close button hidden
-        // Previous port used `.confirmationDialog` which shows a native iOS
-        // action sheet — wrong per UIKit which shows a centered glass card.
-        .barsysPopup($ratingPopup, onPrimary: {
-            // "Yes, please" → open App Store review URL
-            if let url = URL(string: WebViewURLs.appStoreReviewUrl) {
-                UIApplication.shared.open(url)
-            }
-            onDismiss()
-        }, onSecondary: {
-            // "No, stay in app" → just dismiss
-            onDismiss()
-        })
+        // Rating popup is now shown at the MainTabView level via
+        // router.pendingRatingPopup — see handleSectionTap "Review the App".
         // Device Connected Popup — shown when tapping "Device" while connected.
         // Ports UIKit `openDeviceConnectedPopUp()` which presents
         // DeviceConnectedController modally with .overFullScreen.
@@ -776,12 +755,21 @@ private struct SideMenuPanel: View {
             return
 
         case "Review the App":
-            ratingPopup = .confirm(
-                title: Constants.wouldYouLikeRatingTextForSideMenu,
-                message: nil,
-                primaryTitle: ConstantButtonsTitle.yesPleaseButtonTitle,
-                secondaryTitle: ConstantButtonsTitle.noStayInAppButtonTitle
-            )
+            // UIKit: dismissSideMenu(isAnimated: false) FIRST, THEN shows
+            // the rating popup on UIApplication.shared.topViewController().
+            // We dismiss the side menu and set a pending popup on the router
+            // so MainTabView shows it on the full screen.
+            onDismiss()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                router.pendingRatingPopup = .confirm(
+                    title: Constants.wouldYouLikeRatingTextForSideMenu,
+                    message: nil,
+                    primaryTitle: ConstantButtonsTitle.yesPleaseButtonTitle,
+                    secondaryTitle: ConstantButtonsTitle.noStayInAppButtonTitle,
+                    primaryFillColor: "segmentSelectionColor",
+                    isCloseHidden: true
+                )
+            }
             return
 
         default:

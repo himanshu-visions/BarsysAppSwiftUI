@@ -485,18 +485,27 @@ struct BarsysBrandCapsuleStyle: ButtonStyle {
         let radius: CGFloat = cornerRadius ?? (iOS26Available ? height / 2 : 8)
         configuration.label
             .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(iOS26Available ? SwiftUI.Color.white : SwiftUI.Color.black)
+            // UIKit PrimaryOrangeButton uses system default text (black)
+            .foregroundStyle(SwiftUI.Color.black)
             .padding(.horizontal, horizontalPadding)
             .frame(maxWidth: .infinity)
             .frame(height: height)
             .background(
                 ZStack {
                     if iOS26Available {
+                        // UIKit makeOrangeStyle(): brandGradientTop→brandGradientBottom
+                        // vertical gradient, capsule shape
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(Theme.Gradient.brand)
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(Theme.Gradient.glassHighlight)
-                            .opacity(0.35)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        SwiftUI.Color("brandGradientTop"),
+                                        SwiftUI.Color("brandGradientBottom")
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
                     } else {
                         // UIKit L62-66: flat `segmentSelection` fill,
                         // rounded 8, no gradient. Title stays black.
@@ -506,9 +515,14 @@ struct BarsysBrandCapsuleStyle: ButtonStyle {
                 }
             )
             .opacity(isEnabled ? 1.0 : 0.5)
-            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
-            .animation(.spring(response: 0.28, dampingFraction: 0.6),
-                       value: configuration.isPressed)
+            // Bounce: 0.95 scale, matching UIKit addBounceEffect
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(
+                configuration.isPressed
+                    ? .easeIn(duration: 0.08)
+                    : .spring(response: 0.15, dampingFraction: 0.5),
+                value: configuration.isPressed
+            )
             .barsysShadow(.floatingButton)
     }
 }
@@ -571,9 +585,14 @@ struct BarsysCancelCapsuleStyle: ButtonStyle {
                         lineWidth: iOS26Available ? 1.5 : 1.0
                     )
             )
-            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
-            .animation(.spring(response: 0.28, dampingFraction: 0.6),
-                       value: configuration.isPressed)
+            // Bounce: 0.95 scale, matching UIKit addBounceEffect
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(
+                configuration.isPressed
+                    ? .easeIn(duration: 0.08)
+                    : .spring(response: 0.15, dampingFraction: 0.5),
+                value: configuration.isPressed
+            )
             .barsysShadow(.floatingButton)
     }
 }
@@ -613,6 +632,11 @@ extension View {
     /// Mirrors UIKit `PrimaryOrangeButton.makeOrangeStyle()`:
     ///   • iOS 26+  → gradient + capsule (height/2) + white title
     ///   • iOS <26 → flat `segmentSelection` + corner 8 + black title
+    /// 1:1 port of UIKit `PrimaryOrangeButton.makeOrangeStyle()`:
+    ///   iOS 26+: vertical gradient brandGradientTop (#FAE0CC) → brandGradientBottom (#F2C2A1),
+    ///            capsule shape (cornerRadius = height/2), masksToBounds = false
+    ///   Pre-26:  solid segmentSelectionColor (#E0B392), 8pt corner radius
+    ///   Both:    addBounceEffect(), black text, no border
     func brandCapsule(height: CGFloat = 54,
                       cornerRadius: CGFloat? = nil,
                       isEnabled: Bool = true) -> some View {
@@ -622,18 +646,30 @@ extension View {
         let radius: CGFloat = cornerRadius ?? (iOS26Available ? height / 2 : 8)
         return self
             .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(iOS26Available ? SwiftUI.Color.white : SwiftUI.Color.black)
+            // UIKit PrimaryOrangeButton doesn't set text color explicitly —
+            // uses system default (black on light mode). Previous SwiftUI
+            // used white on iOS 26 which was wrong.
+            .foregroundStyle(SwiftUI.Color.black)
             .frame(maxWidth: .infinity)
             .frame(height: height)
             .background(
                 ZStack {
                     if iOS26Available {
+                        // UIKit: CAGradientLayer with brandGradientTop → brandGradientBottom
+                        // startPoint (0.5, 0) endPoint (0.5, 1) — vertical top-to-bottom
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(Theme.Gradient.brand)
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(Theme.Gradient.glassHighlight)
-                            .opacity(0.35)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        SwiftUI.Color("brandGradientTop"),
+                                        SwiftUI.Color("brandGradientBottom")
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
                     } else {
+                        // UIKit: backgroundColor = .segmentSelection (#E0B392)
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(Theme.Color.segmentSelection)
                     }
@@ -726,13 +762,24 @@ enum BarsysPopup: Equatable, Identifiable {
                primaryTitle: String = ConstantButtonsTitle.okButtonTitle,
                isBlocking: Bool = false)
 
-    /// Generic two-action confirm (primary brand + secondary cancel).
-    /// Mirrors UIKit `AlertPopUpHorizontalStackController.show(...)`.
+    /// Generic two-action confirm — mirrors UIKit `AlertPopUpHorizontalStackController`.
+    ///
+    /// UIKit button mapping (AlertPopUpHorizontalStackController storyboard):
+    ///   - continueButton (LEFT): `continueButtonTitle` — default glass/border style
+    ///   - cancelButton (RIGHT):  `cancelButtonTitle` — optional fill via `cancelButtonColor`
+    ///
+    /// `primaryTitle` maps to the RIGHT button (cancel in UIKit naming = primary action).
+    /// `secondaryTitle` maps to the LEFT button (continue in UIKit naming = secondary/dismiss).
+    /// `primaryFillColor`: when set, fills the primary (right) button with this color
+    ///   (e.g. `.segmentSelectionColor` for rating popup). `nil` = brand gradient.
+    /// `isCloseHidden`: hides the close X button (UIKit `isCloseButtonHidden`).
     case confirm(title: String,
                  message: String?,
                  primaryTitle: String,
                  secondaryTitle: String = ConstantButtonsTitle.cancelButtonTitle,
-                 isDestructive: Bool = false)
+                 isDestructive: Bool = false,
+                 primaryFillColor: String? = nil,
+                 isCloseHidden: Bool = false)
 
     /// Manual-start spinning prompt for the Shaker — title +
     /// brand-spinner + "Cancel" footer button.
@@ -754,7 +801,7 @@ enum BarsysPopup: Equatable, Identifiable {
     var id: String {
         switch self {
         case .alert(let t, _, _, _):                  return "alert-\(t)"
-        case .confirm(let t, _, _, _, _):             return "confirm-\(t)"
+        case .confirm(let t, _, _, _, _, _, _):        return "confirm-\(t)"
         case .manualSpinning(let t, _):               return "manualSpin-\(t)"
         case .multipleIngredients(let t, _):          return "multi-\(t)"
         case .shakerFlatSurface:                      return "shakerFlat"
@@ -804,7 +851,8 @@ private struct BarsysPopupModifier: ViewModifier {
         content.overlay {
             if let current = popup {
                 ZStack {
-                    Color.black.opacity(0.55)
+                    // UIKit: btnTransparent backgroundColor = black.withAlphaComponent(0.5)
+                    Color.black.opacity(0.50)
                         .ignoresSafeArea()
                         .onTapGesture {
                             if !current.isBlocking { popup = nil }
@@ -846,15 +894,21 @@ private struct BarsysPopupCard: View {
                 if let message { bodyLabel(message) }
                 primaryButton(primaryTitle, action: onPrimary)
 
-            case .confirm(let title, let message, let primaryTitle, let secondaryTitle, let isDestructive):
+            case .confirm(let title, let message, let primaryTitle, let secondaryTitle, let isDestructive, let primaryFillColor, _):
                 titleLabel(title)
                 if let message { bodyLabel(message) }
-                HStack(spacing: 8) {
-                    secondaryButton(secondaryTitle, action: onSecondary)
+                // UIKit AlertPopUpHorizontalStackController: equal distribution,
+                // spacing 10pt, each button 109×45, pill corners (height/2=20pt)
+                HStack(spacing: 10) {
+                    // LEFT = secondaryButton (UIKit "continueButton") — border only
+                    alertSecondaryButton(secondaryTitle, action: onSecondary)
+                    // RIGHT = primaryButton (UIKit "cancelButton") — filled or gradient
                     if isDestructive {
                         destructiveButton(primaryTitle, action: onPrimary)
+                    } else if let fillColorName = primaryFillColor {
+                        alertPrimaryFilledButton(primaryTitle, fillColor: fillColorName, action: onPrimary)
                     } else {
-                        primaryButton(primaryTitle, action: onPrimary)
+                        alertPrimaryButton(primaryTitle, action: onPrimary)
                     }
                 }
 
@@ -913,20 +967,17 @@ private struct BarsysPopupCard: View {
                     .padding(.vertical, 8)
             }
         }
-        .padding(20)
+        // UIKit AlertPopUpHorizontalStackController layout:
+        // - Card width: 277pt (49pt margins), inner content 229pt
+        // - Inner padding: 24pt top/left/right, 14pt bottom
+        // - Corner radius: BarsysCornerRadius.medium = 12pt
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 14)
         .frame(width: cardWidth)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.regularMaterial)
-        )
+        .background(popupCardBackground)
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Theme.Gradient.glassHighlight)
-                .opacity(0.6)
-                .blendMode(.plusLighter)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(
                     LinearGradient(colors: [.white.opacity(0.7),
                                             .white.opacity(0.25)],
@@ -936,6 +987,20 @@ private struct BarsysPopupCard: View {
                 )
         )
         .barsysShadow(.glass)
+    }
+
+    /// UIKit alertPopUpBackgroundStyle (UIViewClass+GradientStyles.swift):
+    ///   iOS 26+: addGlassEffect(cornerRadius: BarsysCornerRadius.medium=12)
+    ///   Pre-26: UIColor.white.withAlphaComponent(0.95), cornerRadius=12
+    @ViewBuilder
+    private var popupCardBackground: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.regularMaterial)
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(SwiftUI.Color.white.opacity(0.95))
+        }
     }
 
     // MARK: - Subviews
@@ -960,6 +1025,80 @@ private struct BarsysPopupCard: View {
             Text(title).brandCapsule(height: 45, cornerRadius: 8)
         }
         .buttonStyle(BounceButtonStyle())
+    }
+
+    // MARK: - Alert-specific buttons (pill-shaped, 12pt font)
+    // Matches UIKit AlertPopUpHorizontalStackController storyboard:
+    //   - Button dimensions: ~109×45, pill corners (height/2 = 20pt)
+    //   - Font: System 12pt
+    //   - Title color: black
+
+    /// RIGHT button in UIKit (cancelButton) — filled with custom color.
+    /// Used for "Yes please!" with segmentSelectionColor fill.
+    private func alertPrimaryFilledButton(_ title: String, fillColor: String, action: @escaping () -> Void) -> some View {
+        Button { HapticService.light(); action() } label: {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(SwiftUI.Color.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 45)
+                .background(alertFilledButtonBackground(fillColor))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(BounceButtonStyle())
+    }
+
+    /// Filled button background — iOS 26: glass + color tint, pre-26: solid fill
+    @ViewBuilder
+    private func alertFilledButtonBackground(_ colorName: String) -> some View {
+        if #available(iOS 26.0, *) {
+            Capsule().fill(SwiftUI.Color(colorName).opacity(0.8))
+        } else {
+            Capsule().fill(SwiftUI.Color(colorName))
+        }
+    }
+
+    /// RIGHT button default — brand gradient (used when no custom fill color).
+    private func alertPrimaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button { HapticService.light(); action() } label: {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(SwiftUI.Color.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 45)
+                .background(
+                    Capsule().fill(SwiftUI.Color("segmentSelectionColor"))
+                )
+        }
+        .buttonStyle(BounceButtonStyle())
+    }
+
+    /// LEFT button (continueButton in UIKit) — border only, no fill.
+    /// Matches screenshot: white bg with light border, pill shape.
+    private func alertSecondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button { HapticService.light(); action() } label: {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(SwiftUI.Color.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 45)
+                .background(alertSecondaryButtonBackground)
+                .overlay(
+                    Capsule().stroke(SwiftUI.Color("craftButtonBorderColor"), lineWidth: 1)
+                )
+                .clipShape(Capsule())
+        }
+        .buttonStyle(BounceButtonStyle())
+    }
+
+    /// Secondary button background — iOS 26: glass, pre-26: white
+    @ViewBuilder
+    private var alertSecondaryButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule().fill(.regularMaterial)
+        } else {
+            Capsule().fill(SwiftUI.Color.white)
+        }
     }
 
     private func secondaryButton(_ title: String, action: @escaping () -> Void) -> some View {

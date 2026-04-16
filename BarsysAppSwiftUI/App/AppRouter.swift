@@ -180,6 +180,12 @@ final class AppRouter: ObservableObject {
     /// can't tell which alert to show.
     @Published var activeCraftingScreen: CraftingScreenKind? = nil
 
+    /// Rating popup state — shown on the full screen AFTER the side menu
+    /// dismisses. 1:1 port of UIKit SideMenuViewController which calls
+    /// `dismissSideMenu(isAnimated: false)` FIRST, then presents the
+    /// alert on `UIApplication.shared.topViewController()`.
+    @Published var pendingRatingPopup: BarsysPopup? = nil
+
     // MARK: - Cross-screen signals (NotificationCenter replacements)
     //
     // UIKit uses `NotificationCenter.default.post(name:)` to coordinate
