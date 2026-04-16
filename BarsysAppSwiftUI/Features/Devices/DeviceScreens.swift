@@ -22,6 +22,7 @@ struct PairDeviceView: View {
     @State private var showDeviceListPopup = false
     @State private var selectedKind: DeviceKind?
     @State private var showBluetoothAlert = false
+    @State private var bluetoothPopup: BarsysPopup? = nil
 
     private let devices: [(kind: DeviceKind, name: String, image: String)] = [
         (.barsys360, "Barsys 360",    "barsys_360"),
@@ -102,17 +103,14 @@ struct PairDeviceView: View {
             )
             .background(ClearBackgroundView())
         }
-        // Ports showBluetoothDisabledAlert from UIKit
-        .alert("Bluetooth Required", isPresented: $showBluetoothAlert) {
-            Button("Open Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
+        // Bluetooth alert — glass-card style matching UIKit showCustomAlertMultipleButtons
+        .barsysPopup($bluetoothPopup, onPrimary: {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Please enable Bluetooth in Settings to discover Barsys devices.")
-        }
+        }, onSecondary: {
+            // Cancel — just dismiss
+        })
     }
 
     @ViewBuilder
@@ -143,7 +141,12 @@ struct PairDeviceView: View {
 
         // Check BLE authorization (ports BleManager.checkBlePermissions)
         if !ble.bluetoothAuthorized {
-            showBluetoothAlert = true
+            bluetoothPopup = .confirm(
+                title: "Bluetooth Required",
+                message: "Please enable Bluetooth in Settings to discover Barsys devices.",
+                primaryTitle: "Open Settings",
+                secondaryTitle: ConstantButtonsTitle.cancelButtonTitle
+            )
             return
         }
 
