@@ -806,9 +806,12 @@ struct BarsysRecipeRow: View {
                         switch phase {
                         case .success(let img):
                             img.resizable().aspectRatio(contentMode: .fill)
-                        case .empty, .failure:
+                        case .empty:
+                            Color("lightBorderGrayColor")
+                        case .failure:
                             Image("myDrink")
-                                .resizable().aspectRatio(contentMode: .fill)
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .padding(16)
                         @unknown default:
                             Color("lightBorderGrayColor")
                         }

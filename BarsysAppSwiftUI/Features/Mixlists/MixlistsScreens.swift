@@ -262,10 +262,13 @@ struct MixlistRowCell: View {
                 switch phase {
                 case .success(let img):
                     img.resizable().aspectRatio(contentMode: .fill)
+                case .empty:
+                    Color("lightBorderGrayColor")
                 default:
                     Image("myDrink")
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .aspectRatio(contentMode: .fit)
+                        .padding(16)
                 }
             }
             .frame(width: cellHeight, height: cellHeight)
@@ -472,17 +475,17 @@ struct MixlistDetailView: View {
                     case .success(let img):
                         img.resizable().aspectRatio(contentMode: .fill)
                     case .empty:
-                        // Show the `myDrink` placeholder immediately
-                        // (don't wait for failure) so the banner has
-                        // content on first paint rather than a blank
-                        // grey square that fades in later.
+                        // Show placeholder immediately so the banner has
+                        // content on first paint.
                         Image("myDrink")
                             .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .aspectRatio(contentMode: .fit)
+                            .padding(40)
                     case .failure:
                         Image("myDrink")
                             .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .aspectRatio(contentMode: .fit)
+                            .padding(40)
                     @unknown default:
                         Color.clear
                     }
@@ -1126,8 +1129,10 @@ struct MixlistDetailRecipeRow: View {
                     switch phase {
                     case .success(let img):
                         img.resizable().aspectRatio(contentMode: .fill)
-                    case .empty, .failure:
-                        Image("myDrink").resizable().aspectRatio(contentMode: .fill)
+                    case .empty:
+                        Color("lightBorderGrayColor")
+                    case .failure:
+                        Image("myDrink").resizable().aspectRatio(contentMode: .fit).padding(16)
                     @unknown default:
                         Color("lightBorderGrayColor")
                     }

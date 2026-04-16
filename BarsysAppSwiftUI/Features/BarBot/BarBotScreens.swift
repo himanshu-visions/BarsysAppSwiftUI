@@ -1834,6 +1834,23 @@ struct BarBotCraftView: View {
             BarBotImagePicker(image: $viewModel.selectedImage, source: imagePickerSource)
                 .ignoresSafeArea()
         }
+        // Left-edge swipe to OPEN history — ports UIKit
+        // `SideMenuManager.default.addScreenEdgePanGesturesToPresent(toView:forMenu:.left)`
+        // + `gestureRecognizerShouldBegin` which gates on `canProcessNewRequest`.
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    // Only open if swipe starts near left edge and goes rightward
+                    let startX = value.startLocation.x
+                    let isEdgeSwipe = startX < 30
+                    let isRightward = value.translation.width > 60
+                    if isEdgeSwipe && isRightward && viewModel.canProcessNewRequest && !showHistory {
+                        HapticService.light()
+                        showHistory = true
+                        viewModel.fetchSessions()
+                    }
+                }
+        )
         // BarBot History — ports `BarBotHistoryViewController` which UIKit
         // presents as a left-edge slide-in side menu via SideMenuManager
         // (`openSideMenuforBarBotHistory()`), NOT as a sheet. Drag-right

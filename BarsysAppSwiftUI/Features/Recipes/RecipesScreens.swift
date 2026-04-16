@@ -295,23 +295,28 @@ struct RecipeRowCell: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        // UIKit pipeline: `sd_setImage(with:imgUrl, placeholderImage:.myDrink)`
-        // — placeholder appears immediately, then real image loads.
+        // UIKit: sd_setImage(with:imgUrl, placeholderImage:.myDrink)
+        // Placeholder uses .fit to avoid zooming/stretching a small asset.
+        // Loaded image uses .fill to cover the square frame and clip.
         if let url = optimizedImageURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let img):
                     img.resizable().aspectRatio(contentMode: .fill)
-                case .empty, .failure:
+                case .empty:
+                    Color("lightBorderGrayColor")
+                case .failure:
                     Image("myDrink")
-                        .resizable().aspectRatio(contentMode: .fill)
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .padding(16)
                 @unknown default:
                     Color("lightBorderGrayColor")
                 }
             }
         } else {
             Image("myDrink")
-                .resizable().aspectRatio(contentMode: .fill)
+                .resizable().aspectRatio(contentMode: .fit)
+                .padding(16)
         }
     }
 }
@@ -634,11 +639,20 @@ struct RecipeDetailView: View {
         AsyncImage(url: url) { phase in
             switch phase {
             case .success(let img):
+                // Remote image: .fill so it covers the full square,
+                // clipped by the rounded rect below.
                 img.resizable().aspectRatio(contentMode: .fill)
-            case .empty, .failure:
+            case .empty:
+                // Loading state: show background color only
+                Color("lightBorderGrayColor")
+            case .failure:
+                // Failed / no URL: show placeholder centered, NOT zoomed.
+                // Using .fit prevents the small placeholder from
+                // stretching to fill the entire square frame.
                 Image("myDrink")
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(contentMode: .fit)
+                    .padding(40)
             @unknown default:
                 Color("lightBorderGrayColor")
             }
