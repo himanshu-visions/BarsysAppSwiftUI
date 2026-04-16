@@ -95,6 +95,15 @@ struct MainTabView: View {
                 }
                 .tabItem { tabLabel(.homeOrControlCenter, connected: ble.isAnyDeviceConnected) }
                 .tag(AppTab.homeOrControlCenter)
+                // Re-apply selectedImage every time this tab's content appears.
+                // SwiftUI's .tabItem re-creates UITabBarItem on body re-evaluation,
+                // wiping our selectedImage. This onAppear fires when the tab becomes
+                // visible, re-applying the correct selected image asset.
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        setFourthTabToSearchItem()
+                    }
+                }
             }
             .tint(Theme.Color.brand)
             .onAppear {
@@ -128,6 +137,13 @@ struct MainTabView: View {
             // connected-device state on selection, exactly like UIKit.
             .onChange(of: ble.isAnyDeviceConnected) { _ in
                 setFourthTabToSearchItem()
+            }
+            // Re-apply selectedImage when user switches tabs — SwiftUI's
+            // .tabItem modifier can reset UITabBarItem, losing our selectedImage.
+            .onChange(of: router.selectedTab) { _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    setFourthTabToSearchItem()
+                }
             }
             // Clear the home nav stack every time the connection state flips
             // so the new root view (Home or ControlCenter) is the top of the
@@ -284,22 +300,40 @@ struct MainTabView: View {
               vcs.count > tabIndex else { return }
 
         let isConnected = ble.isAnyDeviceConnected
-        let imageName = isConnected ? "controlCentreIcon" : "homeIcon"
-        let title = isConnected ? "Control Center" : ""
 
-        // Create .search system item — this gives the iOS 26 floating behavior
-        let searchItem = UITabBarItem(tabBarSystemItem: .search, tag: tabIndex)
-        // Override the icon/title to match the connection state
-        searchItem.image = UIImage(named: imageName)
-        searchItem.title = title
+        // 1:1 port of UIKit TabBarViewController.updateTabImageAccordingToConnection().
+        //
+        // Strategy: modify the EXISTING UITabBarItem in-place rather than
+        // creating a new one. SwiftUI's TabView manages its own tab items
+        // and can overwrite a replacement item on re-render. By mutating
+        // the existing item's properties, the changes survive re-renders.
+        // We also create a .search system item as fallback if the existing
+        // one isn't already a search type.
+        let existingItem = vcs[tabIndex].tabBarItem
+        let searchItem: UITabBarItem
 
-        // On iOS 26+, set the selected image for proper rendering
-        if #available(iOS 26.0, *) {
-            let selectedName = isConnected ? "newControlCenterSelectedTab" : "newHomeSelectedTab"
-            searchItem.selectedImage = UIImage(named: selectedName)?.withRenderingMode(.alwaysOriginal)
+        // Check if it's already a .search system item (tag == tabIndex)
+        if existingItem?.tag == tabIndex {
+            searchItem = existingItem!
+        } else {
+            searchItem = UITabBarItem(tabBarSystemItem: .search, tag: tabIndex)
+        }
+
+        if isConnected {
+            searchItem.selectedImage = UIImage(named: "newControlCenterSelectedTab")?.withRenderingMode(.alwaysOriginal)
+            searchItem.image = UIImage(named: "controlCentreIcon")
+            searchItem.title = "Control Center"
+        } else {
+            searchItem.image = UIImage(named: "homeIcon")
+            searchItem.selectedImage = UIImage(named: "newHomeSelectedTab")?.withRenderingMode(.alwaysOriginal)
+            searchItem.title = "Home"
         }
 
         vcs[tabIndex].tabBarItem = searchItem
+
+        // Force the tab bar to re-layout so it picks up the new selectedImage
+        tabBarController.tabBar.setNeedsLayout()
+        tabBarController.tabBar.layoutIfNeeded()
     }
 
     // MARK: - BLE connection/disconnection callbacks
