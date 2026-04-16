@@ -1615,7 +1615,8 @@ struct StationsMenuView: View {
                 }
             case .controlCenter:
                 if isOccupied {
-                    HStack(spacing: 12) {
+                    // UIKit stack gRn-1d-c0y: spacing=8, distribution=fillEqually
+                    HStack(spacing: 8) {
                         primaryActionButton(title: "Clean", color: Color.white,
                                             textColor: Color("appBlackColor"),
                                             stroke: Color("borderColor")) {
@@ -2792,7 +2793,8 @@ struct StationCleaningView: View {
                 }
             }
             if buttons.contains(.pause) || buttons.contains(.stop) {
-                HStack(spacing: 12) {
+                // UIKit stack tP9-r1-gEb: spacing=8, distribution=fillEqually
+                HStack(spacing: 8) {
                     if buttons.contains(.pause) {
                         actionButton("Pause", color: Color.white,
                                      textColor: Color("appBlackColor"),

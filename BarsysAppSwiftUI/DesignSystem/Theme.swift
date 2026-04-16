@@ -643,7 +643,9 @@ extension View {
         let iOS26Available: Bool = {
             if #available(iOS 26.0, *) { return true } else { return false }
         }()
-        let radius: CGFloat = cornerRadius ?? (iOS26Available ? height / 2 : 8)
+        // UIKit makeOrangeStyle() ALWAYS uses height/2 on iOS 26+ (capsule),
+        // regardless of storyboard cornerRadius. Pre-26 uses 8pt.
+        let radius: CGFloat = iOS26Available ? height / 2 : (cornerRadius ?? 8)
         return self
             .font(.system(size: 16, weight: .semibold))
             // UIKit PrimaryOrangeButton doesn't set text color explicitly —
@@ -691,7 +693,9 @@ extension View {
         let iOS26Available: Bool = {
             if #available(iOS 26.0, *) { return true } else { return false }
         }()
-        let radius = cornerRadius ?? height / 2
+        // UIKit applyCancelCapsuleGradientBorderStyle() ALWAYS uses height/2
+        // on iOS 26+ (capsule). Pre-26 uses the passed radius or height/2.
+        let radius = iOS26Available ? height / 2 : (cornerRadius ?? height / 2)
         return self
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(textColor)

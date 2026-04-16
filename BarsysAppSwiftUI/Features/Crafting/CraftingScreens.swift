@@ -1044,6 +1044,8 @@ struct CraftingView: View {
                 // spacer so layout doesn't shift.
                 Spacer().frame(height: 40)
             default:
+                // UIKit: applyCancelCapsuleGradientBorderStyle() on iOS 26+,
+                // makeBorder(1pt, silverColor) on pre-26. 168×40pt centered.
                 Button {
                     HapticService.light()
                     cancelDrinkPopup = .confirm(
@@ -1055,17 +1057,10 @@ struct CraftingView: View {
                     )
                 } label: {
                     Text(ConstantButtonsTitle.cancelButtonTitle)
+                        .cancelCapsule(height: 40, cornerRadius: 20,
+                                       textColor: .black)
                         .font(.system(size: 14))
-                        .foregroundStyle(Color.black)
-                        .frame(width: 168, height: 40)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.clear)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Color("silverColor"), lineWidth: 1)
-                        )
+                        .frame(width: 168)
                 }
                 .buttonStyle(BounceButtonStyle())
                 .accessibilityLabel("Cancel drink")

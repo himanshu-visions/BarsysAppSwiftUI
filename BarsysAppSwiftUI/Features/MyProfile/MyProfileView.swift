@@ -1075,23 +1075,17 @@ struct MyProfileView: View {
         HStack(spacing: 20) {
             // OK — pops back. Matches UIKit `actionOk(_:)` →
             // `navigationController?.popViewController(animated: true)`.
+            // OK — ports applyCancelCapsuleGradientBorderStyle():
+            // iOS 26+: glass capsule + gradient border
+            // Pre-26: white fill + craftButtonBorderColor 1pt stroke
             Button {
                 HapticService.light()
                 dismiss()
             } label: {
                 Text("Ok")
+                    .cancelCapsule(height: 45, cornerRadius: 22.5,
+                                   textColor: Color("appBlackColor"))
                     .font(.system(size: 14))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 45)
-                    .background(
-                        RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                            .fill(Color.white)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                            .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
-                    )
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("OK")
