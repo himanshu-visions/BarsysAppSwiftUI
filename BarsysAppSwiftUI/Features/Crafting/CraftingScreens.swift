@@ -693,10 +693,14 @@ struct CraftingView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = CraftingViewModel()
     @State private var showCancelConfirm = false
+    /// Glass-card popup for "Cancel Drink" — replaces native .alert
+    @State private var cancelDrinkPopup: BarsysPopup? = nil
     /// Drives the "Ready to Pour?" confirmation alert. Shown on first
     /// appear unless `skipPourConfirmation` / `isSpeakEasyCase`.
     /// 1:1 with UIKit `showPourConfirmation(onConfirm:)` (L128-143).
     @State private var showPourConfirm = false
+    /// Glass-card popup for "Ready to Pour?" — replaces native .alert
+    @State private var pourConfirmPopup: BarsysPopup? = nil
     /// True once we've either confirmed or bypassed the pour prompt —
     /// prevents the alert from re-appearing on view re-appearance
     /// (SwiftUI's `.task(id:)` runs again if the view re-enters).
@@ -894,51 +898,27 @@ struct CraftingView: View {
                 }
             )
         }
-        .alert("Cancel Drink",
-               isPresented: $showCancelConfirm,
-               actions: {
-            Button("Yes, Cancel", role: .destructive) {
-                // Matches UIKit L312/L341: medium haptic on confirm.
-                HapticService.medium()
-                viewModel.cancel(ble: ble)
-            }
-            Button("No", role: .cancel) {}
-        }, message: {
-            Text("Are you sure you want to cancel the current drink?")
-        })
-        // 1:1 port of UIKit `showPourConfirmation(onConfirm:)`
-        // (`CraftingViewController.swift` L128-143):
-        //   title = "Ready to Pour?"
-        //   subtitle = "Place your glass and confirm to start crafting."
-        //   primary button: "Start Pouring" → HapticService.medium()
-        //                   then start crafting
-        //   secondary button: "Cancel" → pop nav (dismiss)
-        //   close-button hidden + cancelButtonColor=.segmentSelectionColor
-        //
-        // SwiftUI alerts don't support tinted primary buttons or
-        // custom close-button visibility — the semantic behaviour
-        // (two-button destructive/default arrangement) is the part
-        // that matters for parity.
-        .alert(Constants.readyToPourTitle,
-               isPresented: $showPourConfirm,
-               actions: {
-            Button("Start Pouring") {
-                // UIKit L140: medium haptic on "Start Pouring" tap.
-                HapticService.medium()
-                didResolvePourConfirm = true
-                guard let recipe = env.storage.recipe(by: recipeID) else { return }
-                env.analytics.track(TrackEventName.craftBegin.rawValue)
-                Task { await viewModel.start(recipe: recipe, ble: ble) }
-            }
-            Button(ConstantButtonsTitle.cancelButtonTitle, role: .cancel) {
-                // UIKit L138: user declined → pop nav.
-                didResolvePourConfirm = true
-                dismiss()
-            }
-        }, message: {
-            Text("Place your glass and confirm to start crafting.")
-        })
         .barsysPopup($popup)
+        // Cancel Drink popup — 1:1 port of UIKit showCustomAlertMultipleButtons
+        // glass-card popup (replaces native .alert which lacks glass styling).
+        .barsysPopup($cancelDrinkPopup, onPrimary: {
+            HapticService.medium()
+            viewModel.cancel(ble: ble)
+        }, onSecondary: {
+            // "No" — dismiss popup, continue crafting
+        })
+        // Ready to Pour popup — 1:1 port of UIKit showPourConfirmation
+        // with glass card styling, cancelButtonColor=.segmentSelectionColor.
+        .barsysPopup($pourConfirmPopup, onPrimary: {
+            HapticService.medium()
+            didResolvePourConfirm = true
+            guard let recipe = env.storage.recipe(by: recipeID) else { return }
+            env.analytics.track(TrackEventName.craftBegin.rawValue)
+            Task { await viewModel.start(recipe: recipe, ble: ble) }
+        }, onSecondary: {
+            didResolvePourConfirm = true
+            dismiss()
+        })
     }
 
     /// Single source of truth for "should we show the pour confirmation
@@ -995,7 +975,12 @@ struct CraftingView: View {
             }
             Task { await viewModel.start(recipe: recipe, ble: ble) }
         } else {
-            showPourConfirm = true
+            pourConfirmPopup = .confirm(
+                title: Constants.readyToPourTitle,
+                message: "Place your glass and confirm to start crafting.",
+                primaryTitle: "Start Pouring",
+                secondaryTitle: ConstantButtonsTitle.cancelButtonTitle
+            )
         }
     }
 
@@ -1061,7 +1046,13 @@ struct CraftingView: View {
             default:
                 Button {
                     HapticService.light()
-                    showCancelConfirm = true
+                    cancelDrinkPopup = .confirm(
+                        title: "Cancel Drink",
+                        message: "Are you sure you want to cancel the current drink?",
+                        primaryTitle: "Yes, Cancel",
+                        secondaryTitle: "No",
+                        isDestructive: true
+                    )
                 } label: {
                     Text(ConstantButtonsTitle.cancelButtonTitle)
                         .font(.system(size: 14))

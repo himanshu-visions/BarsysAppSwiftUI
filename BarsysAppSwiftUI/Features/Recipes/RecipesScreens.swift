@@ -345,6 +345,7 @@ struct RecipeDetailView: View {
     @State private var editedIngredients: [Ingredient] = []
     @State private var originalIngredients: [Ingredient] = []
     @State private var showUnsavedAlert = false
+    @State private var unsavedPopup: BarsysPopup? = nil
     /// UIKit `RecipePageViewController.didPressAddToFavoriteButton` in
     /// the "Save to My Drinks" branch adds `editVc` as a CHILD view
     /// controller — `self.view.addSubview(editVc.view)` + `addChild` —
@@ -436,13 +437,12 @@ struct RecipeDetailView: View {
                 // glass pill renders on the same canvas HomeView uses.
                 .chooseOptionsStyleNavBar()
                 .onAppear { loadIngredients(from: recipe) }
-                .alert("Unsaved changes",
-                       isPresented: $showUnsavedAlert,
-                       actions: {
-                           Button("Discard", role: .destructive) { /* dismiss handled by nav */ }
-                           Button("Keep editing", role: .cancel) { }
-                       },
-                       message: { Text("You've changed quantities. Discard your edits?") })
+                // Unsaved changes popup — glass-card style matching UIKit
+                .barsysPopup($unsavedPopup, onPrimary: {
+                    // "Discard" — dismiss handled by nav
+                }, onSecondary: {
+                    // "Keep editing" — stay on page
+                })
                 // 1:1 port of UIKit child-VC embed:
                 //   editVc.presentedFromController = self
                 //   self.view.addSubview(editVc.view)
@@ -889,7 +889,13 @@ struct RecipeDetailView: View {
             Button {
                 HapticService.light()
                 if hasUnsavedChanges {
-                    showUnsavedAlert = true
+                    unsavedPopup = .confirm(
+                        title: "Unsaved changes",
+                        message: "You've changed quantities. Discard your edits?",
+                        primaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                        secondaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                        isDestructive: true
+                    )
                 } else {
                     craft(recipe)
                 }
@@ -1947,13 +1953,41 @@ struct EditIngredientRow: View {
             .padding(.trailing, 4)
         }
         .frame(height: 52)
-        .background(
-            Capsule().fill(.regularMaterial)
-        )
-        .overlay(
-            Capsule().stroke(Color(white: 0.95), lineWidth: 1)
-        )
+        .background(editCellBackground)
+        .overlay(editCellBorder)
         .onAppear { editingText = displayQty }
+    }
+
+    /// UIKit `applyCellGlassStyle()` from EditViewController.swift:
+    ///   iOS 26+: addGlassEffect(cornerRadius: xlarge=20, alpha: 1.0)
+    ///   Pre-26: roundCorners = pill(24), borderWidth=1, gradient [black@10%, white@10%],
+    ///           borderColor = #F2F2F2
+    @ViewBuilder
+    private var editCellBackground: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.regularMaterial)
+        } else {
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.10), Color.white.opacity(0.10)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .background(Capsule().fill(Color.white.opacity(0.8)))
+        }
+    }
+
+    @ViewBuilder
+    private var editCellBorder: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+        } else {
+            Capsule()
+                .stroke(Color(red: 0.949, green: 0.949, blue: 0.949), lineWidth: 1)
+        }
     }
 
     /// Step + clamp logic — 1:1 with UIKit

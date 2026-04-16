@@ -44,6 +44,7 @@ struct MyBarView: View {
 
     @State private var query = ""
     @State private var pendingDelete: Ingredient?
+    @State private var deletePopup: BarsysPopup? = nil
 
     /// All ingredients filtered by search query.
     private var allIngredients: [Ingredient] {
@@ -100,20 +101,15 @@ struct MyBarView: View {
         // identical across both screens.
         .chooseOptionsStyleNavBar()
         .safeAreaInset(edge: .bottom) { bottomActionBar }
-        .alert("Delete ingredient?",
-               isPresented: Binding(
-                   get: { pendingDelete != nil },
-                   set: { if !$0 { pendingDelete = nil } }
-               ),
-               presenting: pendingDelete) { ingredient in
-            Button("Delete", role: .destructive) {
+        // Delete ingredient popup — glass-card style matching UIKit
+        .barsysPopup($deletePopup, onPrimary: {
+            if let ingredient = pendingDelete {
                 env.storage.toggleMyBar(ingredient)
-                pendingDelete = nil
             }
-            Button("Cancel", role: .cancel) { pendingDelete = nil }
-        } message: { ingredient in
-            Text("Remove \(ingredient.name) from your bar?")
-        }
+            pendingDelete = nil
+        }, onSecondary: {
+            pendingDelete = nil
+        })
     }
 
     // MARK: - Content list
@@ -193,6 +189,13 @@ struct MyBarView: View {
             Button {
                 HapticService.light()
                 pendingDelete = ingredient
+                deletePopup = .confirm(
+                    title: "Delete ingredient?",
+                    message: "Remove \(ingredient.name) from your bar?",
+                    primaryTitle: ConstantButtonsTitle.deleteButtonTitle,
+                    secondaryTitle: ConstantButtonsTitle.cancelButtonTitle,
+                    isDestructive: true
+                )
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 14, weight: .medium))

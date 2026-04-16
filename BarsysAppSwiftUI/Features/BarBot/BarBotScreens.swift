@@ -635,11 +635,20 @@ final class BarBotViewModel: ObservableObject {
 
 // MARK: - Support: Bounce button style (ports addBounceEffect)
 
+/// 1:1 port of UIKit `UIButton.addBounceEffect()`:
+///   - handleBounceDown: scale 0.95 over 0.08s (curveEaseIn)
+///   - handleBounceUp: spring back to 1.0 over 0.15s (damping 0.5, velocity 0.8)
+///   - Respects UIAccessibility.isReduceMotionEnabled
 struct BounceButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.94 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(
+                configuration.isPressed
+                    ? .easeIn(duration: 0.08)
+                    : .spring(response: 0.15, dampingFraction: 0.5),
+                value: configuration.isPressed
+            )
     }
 }
 

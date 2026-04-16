@@ -599,6 +599,19 @@ struct BarsysRecipeRow: View {
 
     private var isFavourite: Bool { recipe.isFavourite ?? false }
 
+    /// UIKit BarsysRecipeTableViewCell L63-77: iOS 26 uses 40×40 glass buttons
+    /// with black@0.3 tint; pre-26 uses 30×30 plain buttons with white tint.
+    private var favButtonSize: CGFloat {
+        if #available(iOS 26.0, *) { return 40 } else { return 30 }
+    }
+    private var favButtonTint: Color {
+        if #available(iOS 26.0, *) {
+            return Color.black.opacity(0.3)
+        } else {
+            return Color.white
+        }
+    }
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 0) {
@@ -645,6 +658,9 @@ struct BarsysRecipeRow: View {
                     // Favourite + (My Drinks only) More — stacked vertically
                     // on the image's right edge, matching xib (top=5,
                     // trailing=5 for fav; below it for more).
+                    // UIKit BarsysRecipeTableViewCell.configure() L63-77:
+                    // iOS 26: 40×40 glass buttons, tint black@0.3
+                    // Pre-26: 30×30 plain buttons, tint white
                     VStack(spacing: 15) {
                         Button {
                             onFavourite()
@@ -653,9 +669,10 @@ struct BarsysRecipeRow: View {
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 22, height: 22)
-                                .frame(width: 30, height: 30)
-                                .foregroundStyle(.white)
+                                .frame(width: favButtonSize, height: favButtonSize)
+                                .foregroundStyle(favButtonTint)
                         }
+                        .glassButtonIfAvailable(size: favButtonSize)
                         .buttonStyle(BounceButtonStyle())
                         .accessibilityLabel(isFavourite
                                             ? "Remove from favourites"
@@ -669,9 +686,10 @@ struct BarsysRecipeRow: View {
                                     .resizable()
                                     .aspectRatio(contentMode: .fit)
                                     .frame(width: 22, height: 22)
-                                    .frame(width: 30, height: 30)
-                                    .foregroundStyle(.white)
+                                    .frame(width: favButtonSize, height: favButtonSize)
+                                    .foregroundStyle(favButtonTint)
                             }
+                            .glassButtonIfAvailable(size: favButtonSize)
                             .buttonStyle(BounceButtonStyle())
                             .accessibilityLabel("More options for \(recipe.displayName)")
                         }
@@ -738,11 +756,51 @@ struct BarsysRecipeRow: View {
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Delete recipe")
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.5), lineWidth: 1)
-        )
+        .background(morePopupBackground)
+        .overlay(morePopupBorder)
         .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+    }
+
+    /// UIKit BarsysRecipeTableViewCell L75-79:
+    /// iOS 26: moreView.backgroundColor = .clear + addGlassEffect(cornerRadius: 8)
+    /// Pre-26: moreView.backgroundColor = .systemBackground
+    @ViewBuilder
+    private var morePopupBackground: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.regularMaterial)
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(UIColor.systemBackground))
+        }
+    }
+
+    @ViewBuilder
+    private var morePopupBorder: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+        } else {
+            EmptyView()
+        }
+    }
+}
+
+// MARK: - Glass button modifier for iOS 26+ (ports .prominentGlass() config)
+
+private extension View {
+    /// On iOS 26+, wraps the view in a glass-effect background circle.
+    /// Pre-26: no-op (buttons remain flat on the image).
+    @ViewBuilder
+    func glassButtonIfAvailable(size: CGFloat) -> some View {
+        if #available(iOS 26.0, *) {
+            self.background(
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: size, height: size)
+            )
+        } else {
+            self
+        }
     }
 }
