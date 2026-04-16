@@ -538,10 +538,12 @@ struct BarsysAlertOverlay: View {
 
                 // lblTitle — centred, system 16pt. UIKit uses the
                 // default label font from AlertPopUp.storyboard.
+                // UIKit AlertPopUp.storyboard: lblTitle — system 16pt,
+                // veryDarkGrayColor (#262626), centered.
                 if !item.title.isEmpty {
                     Text(item.title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color("appBlackColor"))
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color("veryDarkGrayColor"))
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -601,22 +603,21 @@ struct BarsysAlertOverlay: View {
                         .buttonStyle(.plain)
                     }
                 } else {
-                    // Single orange continue button (PrimaryOrangeButton).
-                    // UIKit `makeOrangeStyle()` produces a filled orange
-                    // pill; we replicate via `primaryOrangeColor` if
-                    // defined, otherwise fall back to a system orange.
+                    // Single continue button — 1:1 UIKit AlertPopUp.storyboard:
+                    // `mSZ-L7-enf` (continueButton): 209×45pt, brandTanColor
+                    // background, white 16pt text, 20pt corner radius.
                     Button {
                         HapticService.light()
                         item.primaryAction?()
                         onDismiss()
                     } label: {
                         Text(item.primaryActionTitle)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 16))
                             .foregroundStyle(Color.white)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 40)
+                            .frame(height: 45)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
+                                RoundedRectangle(cornerRadius: 20)
                                     .fill(primaryOrange)
                             )
                     }

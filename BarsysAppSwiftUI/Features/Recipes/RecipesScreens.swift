@@ -287,7 +287,7 @@ struct RecipeRowCell: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.bottom, 12)
@@ -355,6 +355,13 @@ struct RecipeDetailView: View {
     /// navigating the parent tab stack (previously it was wrongly
     /// pushed into the BarBot tab via `router.push(in: .barBot)`).
     @State private var showEditRecipe = false
+    /// Local favourite flag — drives the button text (Add to Favorites /
+    /// Unfavourite) immediately on tap without waiting for `env.storage`
+    /// to trigger a SwiftUI re-render (MockStorageService is NOT
+    /// ObservableObject, so mutations to its internal dict are invisible
+    /// to SwiftUI).  Matches UIKit `setLikeAndCraftButtonsUI()` which
+    /// explicitly updates the button title after the API callback.
+    @State private var localIsFavourite: Bool = false
 
     private var recipe: Recipe? { env.storage.recipe(by: recipeID) }
 
@@ -436,7 +443,14 @@ struct RecipeDetailView: View {
                 // Flat `primaryBackgroundColor` nav bar so the top-right
                 // glass pill renders on the same canvas HomeView uses.
                 .chooseOptionsStyleNavBar()
-                .onAppear { loadIngredients(from: recipe) }
+                .onAppear {
+                    loadIngredients(from: recipe)
+                    // Seed local favourite state from storage so the
+                    // button text + toolbar heart icon are correct on
+                    // initial render. Subsequent toggles update
+                    // localIsFavourite directly (instant UI feedback).
+                    localIsFavourite = recipe.isFavourite ?? false
+                }
                 // Unsaved changes popup — glass-card style matching UIKit
                 .barsysPopup($unsavedPopup, onPrimary: {
                     // "Discard" — dismiss handled by nav
@@ -455,7 +469,9 @@ struct RecipeDetailView: View {
                 // jump the previous port was causing).
                 .fullScreenCover(isPresented: $showEditRecipe) {
                     NavigationStack {
-                        EditRecipeView(recipeID: recipe.id)
+                        // isCustomizing: true — creating NEW My Drink from
+                        // existing Barsys recipe (UIKit: isCustomizingRecipe = true)
+                        EditRecipeView(recipeID: recipe.id, isCustomizing: true)
                     }
                 }
         } else {
@@ -799,7 +815,9 @@ struct RecipeDetailView: View {
 
     private func favouriteButtonState(for recipe: Recipe) -> FavouriteButtonState {
         if hasUnsavedChanges { return .addToMyDrinks }
-        return (recipe.isFavourite ?? false) ? .unfavourite : .addToFavourites
+        // Read from local @State so SwiftUI re-renders immediately on tap.
+        // `recipe.isFavourite` comes from env.storage which is NOT observable.
+        return localIsFavourite ? .unfavourite : .addToFavourites
     }
 
     private func favouriteButtonTitle(for recipe: Recipe) -> String {
@@ -849,20 +867,33 @@ struct RecipeDetailView: View {
                     // tabs regardless of where they came from.
                     showEditRecipe = true
                 case .addToFavourites:
+                    localIsFavourite = true
                     env.storage.toggleFavorite(recipe.id)
                     // 1:1 port of UIKit RecipePageViewController+Actions
                     // performLikeUnlike: updates DB + calls likeUnlikeApi
+                    // Revert on failure (matches FavoritesView pattern)
                     Task {
-                        _ = try? await env.api.likeUnlike(
-                            recipeId: recipe.id.value, isLike: true)
+                        do {
+                            _ = try await env.api.likeUnlike(
+                                recipeId: recipe.id.value, isLike: true)
+                        } catch {
+                            localIsFavourite = false
+                            env.storage.toggleFavorite(recipe.id)
+                        }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeAdded.rawValue)
                     env.alerts.show(message: Constants.likeSuccessMessage)
                 case .unfavourite:
+                    localIsFavourite = false
                     env.storage.toggleFavorite(recipe.id)
                     Task {
-                        _ = try? await env.api.likeUnlike(
-                            recipeId: recipe.id.value, isLike: false)
+                        do {
+                            _ = try await env.api.likeUnlike(
+                                recipeId: recipe.id.value, isLike: false)
+                        } catch {
+                            localIsFavourite = true
+                            env.storage.toggleFavorite(recipe.id)
+                        }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)
                     env.alerts.show(message: Constants.unlikeSuccessMessage)
@@ -970,17 +1001,23 @@ struct RecipeDetailView: View {
         // otherwise) + the action (toggle recipe favorite + toast).
         ToolbarItemGroup(placement: .topBarTrailing) {
             NavigationRightGlassButtons(
-                leadingSystemImage: (recipe.isFavourite ?? false)
+                leadingSystemImage: localIsFavourite
                     ? "heart.fill"
                     : "heart",
                 leadingAccessibilityLabel: "Favourite",
                 onFavorites: {
-                    let willBeFav = !(recipe.isFavourite ?? false)
+                    let willBeFav = !localIsFavourite
+                    localIsFavourite = willBeFav
                     env.storage.toggleFavorite(recipe.id)
-                    // 1:1 port of UIKit: likeUnlikeApi fire-and-forget
+                    // 1:1 port of UIKit: likeUnlikeApi + revert on failure
                     Task {
-                        _ = try? await env.api.likeUnlike(
-                            recipeId: recipe.id.value, isLike: willBeFav)
+                        do {
+                            _ = try await env.api.likeUnlike(
+                                recipeId: recipe.id.value, isLike: willBeFav)
+                        } catch {
+                            localIsFavourite = !willBeFav
+                            env.storage.toggleFavorite(recipe.id)
+                        }
                     }
                     env.analytics.track(
                         (willBeFav ? TrackEventName.favouriteRecipeAdded
@@ -1265,13 +1302,23 @@ final class MakeMyOwnViewModel: ObservableObject {
     func addIngredient(_ i: Ingredient) { items.append(i) }
     func remove(_ i: Ingredient) { items.removeAll { $0.id == i.id } }
 
-    func save(to storage: StorageService) -> Recipe {
-        let recipe = Recipe(name: name.isEmpty ? "My Custom Drink" : name,
+    /// Ports UIKit MakeMyOwnViewController+Actions.saveRecipeAfterAll() →
+    /// FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe(mode: .create).
+    /// Creates a new My Drink locally AND calls the POST /my/recipes API.
+    func save(to storage: StorageService, api: APIClient) -> Recipe {
+        var recipe = Recipe(name: name.isEmpty ? "My Custom Drink" : name,
                             description: "Custom creation",
                             ingredients: items,
                             instructions: ["Add all ingredients in order.", "Stir or shake to taste."],
-                            tags: ["Custom"])
+                            tags: ["Custom"],
+                            isMyDrinkFavourite: true)
         storage.upsert(recipe: recipe)
+        // Fire-and-forget API call (UIKit: saveRecipeAfterAll → saveRecipe_Or_UpdateRecipe)
+        let recipeToSend = recipe
+        Task {
+            try? await api.saveOrUpdateMyDrink(
+                recipe: recipeToSend, image: nil, isCustomizing: false)
+        }
         return recipe
     }
 }
@@ -1318,7 +1365,7 @@ struct MakeMyOwnView: View {
                 .pagePadding()
 
                 PrimaryButton(title: "Save & craft") {
-                    let recipe = viewModel.save(to: env.storage)
+                    let recipe = viewModel.save(to: env.storage, api: env.api)
                     router.push(.crafting(recipe.id))
                 }
                 .pagePadding()
@@ -1391,8 +1438,15 @@ private struct IngredientPicker: View {
 
 struct EditRecipeView: View {
     let recipeID: RecipeID?
+    /// Ports UIKit `EditViewController.isCustomizingRecipe`.
+    /// - `true`  → creating a NEW My Drink from an existing Barsys recipe
+    ///   (RecipeDetailView "Save to My Drinks"). API: POST /my/recipes.
+    /// - `false` → editing an EXISTING My Drink
+    ///   (FavoritesView My Drinks tab "Edit"). API: PATCH /my/recipes/{id}.
+    var isCustomizing: Bool = false
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService    // hide-add row depends on Barsys 360 connection
+    @EnvironmentObject private var router: AppRouter
     @Environment(\.dismiss) private var dismiss
 
     @State private var name: String = ""
@@ -1401,6 +1455,7 @@ struct EditRecipeView: View {
     @State private var showPhotoPicker = false
     @State private var nameHasError = false
     @State private var errorMessage: String?
+    @State private var isSaving = false
 
     /// Ports UIKit `EditViewModel.validateForSave()` — must have a name
     /// and at least one ingredient with a non-zero quantity.
@@ -1683,7 +1738,7 @@ struct EditRecipeView: View {
     private var addIngredientBorder: some View {
         if #available(iOS 26.0, *) {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         } else {
             // UIKit border color #F2F2F2, 1pt width.
             Capsule()
@@ -1796,26 +1851,109 @@ struct EditRecipeView: View {
 
     // MARK: - Save / Craft handlers (ports EditViewModel+API.saveRecipe)
 
+    /// Ports UIKit EditViewModel+API.saveRecipe() → FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe().
+    ///
+    /// Flow (matching UIKit EditViewController.didPressAddToFavouriteButton L238-293):
+    ///   1. Validate name + ingredients
+    ///   2. Show loader ("Saving Recipe")
+    ///   3. Call API: POST (create) or PATCH (update)
+    ///   4. On success → upsert to storage + cache, show alert, dismiss
+    ///   5. FavoritesView.onAppear will re-fetch from API (resetMyDrinksForRefresh)
     private func save() {
         guard validate() else { return }
+        guard !isSaving else { return }
+        isSaving = true
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        if let id = recipeID, var recipe = env.storage.recipe(by: id) {
-            recipe.name = trimmed
-            recipe.ingredients = ingredients
-            recipe.isMyDrinkFavourite = true
-            env.storage.upsert(recipe: recipe)
+
+        // UIKit EditViewModel+API.saveRecipe L26-28: filter ingredients
+        // with quantity > 0 before sending to API.
+        let filteredIngredients = ingredients.filter { ($0.quantity ?? 0) > 0 }
+
+        // Build the recipe to send to API
+        var recipeToSave: Recipe
+        if let id = recipeID, let existing = env.storage.recipe(by: id), !isCustomizing {
+            // EDIT existing My Drink — PATCH /my/recipes/{id}
+            recipeToSave = existing
+            recipeToSave.name = trimmed
+            recipeToSave.ingredients = filteredIngredients
+            recipeToSave.isMyDrinkFavourite = true
         } else {
-            let recipe = Recipe(
-                id: RecipeID(),
-                name: trimmed,
-                ingredients: ingredients,
-                isMyDrinkFavourite: true
-            )
-            env.storage.upsert(recipe: recipe)
+            // CREATE new My Drink — POST /my/recipes
+            // When customizing, use existing recipe data as template but
+            // clear the ID so the server generates a new one.
+            if let id = recipeID, let existing = env.storage.recipe(by: id) {
+                recipeToSave = Recipe(
+                    id: RecipeID(""),   // Server generates new ID
+                    name: trimmed,
+                    description: existing.description,
+                    image: existing.image,
+                    ice: existing.ice,
+                    ingredients: filteredIngredients,
+                    instructions: existing.instructions,
+                    glassware: existing.glassware,
+                    tags: existing.tags,
+                    ingredientNames: existing.ingredientNames,
+                    barsys360Compatible: existing.barsys360Compatible,
+                    isMyDrinkFavourite: true,
+                    slug: existing.slug
+                )
+            } else {
+                recipeToSave = Recipe(
+                    id: RecipeID(""),
+                    name: trimmed,
+                    ingredients: filteredIngredients,
+                    instructions: ["Add all ingredients in order.", "Stir or shake to taste."],
+                    isMyDrinkFavourite: true
+                )
+            }
         }
-        env.alerts.show(message: Constants.recipeUpdateMessage)
-        env.analytics.track(TrackEventName.editRecipeSuccessful.rawValue)
-        dismiss()
+
+        // Encode image if user picked one (UIKit: base64 JPEG)
+        let imageData = selectedImage?.jpegData(compressionQuality: 0.7)
+
+        Task { @MainActor in
+            do {
+                // API call — POST or PATCH (matches UIKit L265-268)
+                try await env.api.saveOrUpdateMyDrink(
+                    recipe: recipeToSave,
+                    image: imageData,
+                    isCustomizing: isCustomizing
+                )
+                // Local upsert (for immediate visibility on other screens)
+                if !isCustomizing, let id = recipeID {
+                    // Update: keep the existing ID, upsert locally
+                    var updated = recipeToSave
+                    updated.isMyDrinkFavourite = true
+                    env.storage.upsert(recipe: updated)
+                }
+                isSaving = false
+                env.analytics.track(TrackEventName.editRecipeSuccessful.rawValue)
+                // UIKit: isCustomizingRecipe || .create → recipeAddMessage,
+                //        .update → recipeUpdateMessage (EditViewModel+API L53-55)
+                let successMsg = isCustomizing
+                    ? Constants.recipeAddMessage
+                    : Constants.recipeUpdateMessage
+                // UIKit (EditViewController L274-289):
+                //   if topVC is FavouritesRecipesAndDrinksViewController:
+                //     controller.getMyDrinksApi(isInitialDataLoading: true)
+                //   else:
+                //     BarBotCoordinator.showFavourites(tabSelected: 1)
+                // We dismiss first (closes the fullScreenCover), then
+                // navigate to favourites on the current tab so the user
+                // lands on the My Drinks tab and sees the saved recipe.
+                env.alerts.show(message: successMsg) {
+                    dismiss()
+                    // Navigate to favorites screen (My Drinks tab) after
+                    // a short delay so the dismiss animation completes
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        router.push(.favorites)
+                    }
+                }
+            } catch {
+                isSaving = false
+                env.alerts.show(message: Constants.recipeSaveError)
+            }
+        }
     }
 
     private func craft() {
@@ -1983,7 +2121,7 @@ struct EditIngredientRow: View {
     private var editCellBorder: some View {
         if #available(iOS 26.0, *) {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         } else {
             Capsule()
                 .stroke(Color(red: 0.949, green: 0.949, blue: 0.949), lineWidth: 1)

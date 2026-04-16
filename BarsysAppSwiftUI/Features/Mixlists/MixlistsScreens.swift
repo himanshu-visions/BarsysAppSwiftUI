@@ -283,7 +283,7 @@ struct MixlistRowCell: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.bottom, 12) // 12pt bottom spacer inside the parent stack
@@ -1006,10 +1006,26 @@ struct MixlistDetailView: View {
         return Array(seen.values).sorted { $0.name < $1.name }
     }
 
+    /// 1:1 port of UIKit `MixlistDetailViewModel.performLikeUnlike(at:controller:)`:
+    ///   1. Toggle local storage (isFavourite + favCreatedAt)
+    ///   2. Call likeUnlikeApi (fire-and-forget)
+    ///   3. Show toast
+    /// UIKit also does `storage.updateFavouriteStatus(forRecipeId:isFavourite:)`
+    /// — our `toggleFavorite` now handles that (sets isFavourite + favCreatedAt).
     private func toggleFav(_ recipe: Recipe) {
         HapticService.light()
         let wasFav = recipe.isFavourite ?? false
+        let willBeFav = !wasFav
         env.storage.toggleFavorite(recipe.id)
+        // Fire-and-forget API call (1:1 UIKit: FavoriteRecipeApiService.likeUnlikeApi)
+        Task {
+            _ = try? await env.api.likeUnlike(
+                recipeId: recipe.id.value, isLike: willBeFav)
+        }
+        env.analytics.track(
+            (willBeFav ? TrackEventName.favouriteRecipeAdded
+                       : TrackEventName.favouriteRecipeRemoved).rawValue
+        )
         env.alerts.show(message: wasFav ? Constants.unlikeSuccessMessage : Constants.likeSuccessMessage)
     }
 }

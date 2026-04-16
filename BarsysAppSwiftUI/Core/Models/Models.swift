@@ -197,7 +197,7 @@ struct Variation: Codable, Hashable {
 
 // MARK: - Recipe (ports `Recipe` from MixlistModel.swift)
 
-struct Recipe: Hashable, Identifiable {
+struct Recipe: Hashable, Identifiable, Codable {
     let id: RecipeID
     var name: String?
     var description: String?

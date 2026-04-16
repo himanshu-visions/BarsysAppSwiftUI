@@ -572,7 +572,8 @@ final class OryAPIClient: APIClient {
         guard !sessionToken.isEmpty else {
             return MyDrinksDataModel(data: [], total: 0, limit: 20, offset: 0)
         }
-        let urlStr = Self.recipesBaseURL + "my-recipes?offset=\(offset)&barsys360=\(isBarsys360Connected)"
+        // UIKit: AppAPI.getMyRecipesApi = "my/recipes" (NOT "my-recipes")
+        let urlStr = Self.recipesBaseURL + "my/recipes?offset=\(offset)&barsys360=\(isBarsys360Connected)"
         guard let url = URL(string: urlStr) else {
             throw AppError.network("Invalid URL")
         }
@@ -592,7 +593,17 @@ final class OryAPIClient: APIClient {
         let decoder = JSONDecoder()
         let apiResponse = try decoder.decode(APIMyDrinksResponse.self, from: data)
         let apiRecipes: [APIRecipe] = apiResponse.data ?? []
-        let recipes: [Recipe] = apiRecipes.map { $0.toRecipe() }
+        // Mark every recipe from the my-recipes endpoint as a My Drink.
+        // UIKit stores these in the separate `cocktails_recipes` table;
+        // our in-memory storage uses the `isMyDrinkFavourite` flag to
+        // distinguish them from Barsys Recipes. Without this flag the
+        // fallback path in FavoritesView (filter { isMyDrinkFavourite == true })
+        // returns empty on API failure / app restart.
+        let recipes: [Recipe] = apiRecipes.map {
+            var r = $0.toRecipe()
+            r.isMyDrinkFavourite = true
+            return r
+        }
         return MyDrinksDataModel(
             data: recipes,
             total: apiResponse.total,
@@ -605,7 +616,8 @@ final class OryAPIClient: APIClient {
     func deleteMyDrink(recipeId: String) async throws {
         let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
         guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
-        let urlStr = Self.recipesBaseURL + "my-recipes/\(recipeId)"
+        // UIKit: AppAPI.getMyRecipesApi + "/{id}" = "my/recipes/{id}"
+        let urlStr = Self.recipesBaseURL + "my/recipes/\(recipeId)"
         guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
 
         var request = URLRequest(url: url)
@@ -617,6 +629,107 @@ final class OryAPIClient: APIClient {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         print("[OryAPIClient] deleteMyDrink \(recipeId): HTTP \(status)")
         guard status == 200 || status == 201 || status == 204 else {
+            throw AppError.network("HTTP \(status)")
+        }
+    }
+
+    /// Ports FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe().
+    ///
+    /// UIKit decision logic:
+    ///   • isCustomizing == true → POST /my/recipes (create new from existing)
+    ///   • isCustomizing == false && recipeID exists → PATCH /my/recipes/{id}
+    ///   • isCustomizing == false && no recipeID → POST /my/recipes (brand new)
+    ///
+    /// Request body: Recipe JSON with image as base64. UIKit removes
+    /// `created_at`, `variations`, `mixing_technique`, `ice`, `isFavourite`
+    /// and computes `barsys_360_compatible` (non-garnish ingredients <= 6).
+    func saveOrUpdateMyDrink(recipe: Recipe, image: Data?, isCustomizing: Bool) async throws {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
+
+        // Determine HTTP method + URL (matches UIKit L34-47)
+        let isUpdate = !isCustomizing && !recipe.id.value.isEmpty
+        let endpoint = isUpdate
+            ? "my/recipes/\(recipe.id.value)"
+            : "my/recipes"
+        let httpMethod = isUpdate ? "PATCH" : "POST"
+        let urlStr = Self.recipesBaseURL + endpoint
+        guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
+
+        // Build JSON payload (matches UIKit L48-107)
+        var params: [String: Any] = [:]
+        params["name"] = recipe.name ?? ""
+        params["description"] = recipe.description ?? ""
+        params["slug"] = recipe.slug ?? ""
+
+        // Image handling (UIKit L72-95): base64 or existing URL
+        var imageDict: [String: String] = ["alt": "iOS"]
+        if let imageData = image {
+            imageDict["url"] = "data:image/jpeg;base64," + imageData.base64EncodedString()
+        } else if let existingUrl = recipe.image?.url, !existingUrl.isEmpty {
+            imageDict["url"] = existingUrl
+        } else {
+            imageDict["url"] = ""
+        }
+        params["image"] = imageDict
+
+        // Ingredients — sorted alphabetically (UIKit L57)
+        let sortedIngredients = (recipe.ingredients ?? []).sorted {
+            $0.name.lowercased() < $1.name.lowercased()
+        }
+        params["ingredients"] = sortedIngredients.map { ing -> [String: Any] in
+            var d: [String: Any] = ["name": ing.name]
+            d["unit"] = ing.unit ?? ""
+            d["quantity"] = ing.quantity ?? 0
+            d["notes"] = ing.notes ?? ""
+            d["perishable"] = ing.perishable ?? false
+            d["optional"] = ing.ingredientOptional ?? false
+            if let cat = ing.category {
+                d["category"] = [
+                    "primary": cat.primary ?? "",
+                    "secondary": cat.secondary ?? ""
+                ]
+            }
+            return d
+        }
+
+        // barsys_360_compatible — UIKit L96: non-garnish/non-additional <= 6
+        let baseCount = sortedIngredients.filter {
+            let p = ($0.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional"
+        }.count
+        params["barsys_360_compatible"] = baseCount <= 6
+
+        // Glassware
+        if let g = recipe.glassware {
+            params["glassware"] = [
+                "type": g.type ?? "",
+                "chilled": g.chilled ?? false,
+                "rimmed": g.rimmed ?? false,
+                "notes": g.notes ?? ""
+            ]
+        }
+
+        // Instructions
+        params["instructions"] = recipe.instructions
+
+        // Remove `id` for create mode (UIKit L106)
+        if !isUpdate {
+            params.removeValue(forKey: "id")
+        }
+
+        let body = try JSONSerialization.data(withJSONObject: params)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = httpMethod
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] saveOrUpdateMyDrink \(httpMethod) \(endpoint): HTTP \(status)")
+        guard status == 200 || status == 201 else {
             throw AppError.network("HTTP \(status)")
         }
     }

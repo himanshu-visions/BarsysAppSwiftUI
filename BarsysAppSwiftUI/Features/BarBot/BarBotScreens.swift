@@ -1883,15 +1883,19 @@ struct BarBotCraftView: View {
                 if #available(iOS 26.0, *) {
                     // iOS 26 `clearGlass()` config — translucent circular
                     // glass over the nav bar. 48×48 matches storyboard.
+                    // Border + shadow match `NavigationRightGlassButtons`
+                    // pill styling (UIGlassEffect .clear style).
                     ZStack {
                         Circle().fill(.ultraThinMaterial)
+                        Circle().stroke(Color.white.opacity(0.25), lineWidth: 1)
                         Image("chatHistory")
                             .resizable().renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 22, height: 22)
                             .foregroundStyle(Color("appBlackColor"))
                     }
-                    .frame(width: 44, height: 44)
+                    .frame(width: 48, height: 48)
+                    .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 4)
                 } else {
                     // pre-26 plain — just the icon on the nav bar.
                     Image("chatHistory")
@@ -1899,7 +1903,7 @@ struct BarBotCraftView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 22, height: 22)
                         .foregroundStyle(Color("appBlackColor"))
-                        .frame(width: 44, height: 44)
+                        .frame(width: 48, height: 48)
                 }
             }
             .buttonStyle(BounceButtonStyle())

@@ -65,6 +65,11 @@ protocol APIClient: AnyObject {
     func fetchMyDrinks(offset: Int, isBarsys360Connected: Bool) async throws -> MyDrinksDataModel
     /// 1:1 port of UIKit `FavoriteRecipeApiService.deleteReceipe`.
     func deleteMyDrink(recipeId: String) async throws
+    /// 1:1 port of UIKit `FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe`.
+    /// - `isCustomizing`: true → POST (create new from existing recipe),
+    ///   false + recipeId non-nil → PATCH (update existing My Drink),
+    ///   false + recipeId nil → POST (brand new recipe).
+    func saveOrUpdateMyDrink(recipe: Recipe, image: Data?, isCustomizing: Bool) async throws
     /// 1:1 port of UIKit `FavoriteRecipeApiService.likeUnlikeApi`.
     func likeUnlike(recipeId: String, isLike: Bool) async throws -> String
 }
@@ -135,6 +140,11 @@ final class MockAPIClient: APIClient {
         try await Task.sleep(nanoseconds: 300_000_000)
     }
 
+    func saveOrUpdateMyDrink(recipe: Recipe, image: Data?, isCustomizing: Bool) async throws {
+        try await Task.sleep(nanoseconds: 400_000_000)
+        // Mock: no-op — recipe is already in local storage
+    }
+
     func likeUnlike(recipeId: String, isLike: Bool) async throws -> String {
         try await Task.sleep(nanoseconds: 300_000_000)
         return isLike ? Constants.likeSuccessMessage : Constants.unlikeSuccessMessage
@@ -156,6 +166,34 @@ protocol StorageService: AnyObject {
     func toggleMyBar(_ ingredient: Ingredient)
     func favorites() -> Set<RecipeID>
     func toggleFavorite(_ id: RecipeID)
+
+    // MARK: - Ports of UIKit DBManager methods not yet in base protocol
+
+    /// Ports `DBManager._fetchRecipeBySlug(bySlug:)` / `DBQueries.fetchRecipeBySlug`.
+    /// Used by BarBot to find a recipe when the AI response contains a slug.
+    func recipe(bySlug slug: String) -> Recipe?
+
+    /// Ports `DBManager._fetchMixlistBySlug(bySlug:)` / `DBQueries.fetchMixlistBySlug`.
+    /// Used for deep-linking into a specific mixlist.
+    func mixlist(bySlug slug: String) -> Mixlist?
+
+    /// Ports `DBManager._retrieveMixlistBarsys360()` / `DBQueries.retrieveMixlistBarsys360`.
+    /// Fetches mixlists where every recipe has ≤ 6 non-garnish ingredients.
+    func barsys360Mixlists() -> [Mixlist]
+
+    /// Ports `DBManager.fetchRecipeWithAllIngredients(for:)`.
+    /// Returns recipe + 3 ingredient arrays (baseAndMixer, garnish, additional)
+    /// in one call — mirrors the UIKit convenience that feeds RecipePageViewController.
+    func recipeWithSplitIngredients(for id: RecipeID) -> (recipe: Recipe, baseAndMixer: [Ingredient], garnish: [Ingredient], additional: [Ingredient])?
+
+    /// Ports `DBManager._fetchMatchingRecipeLists(allowedIngredients:)` /
+    /// `DBQueries.fetchReadyToPourMixlist`.
+    /// Returns recipes whose non-garnish ingredients ALL match the allowed list.
+    func recipesMatchingIngredients(_ allowed: [(primary: String, secondary: String)]) -> [Recipe]
+
+    /// Ports `DBManager._fetchReadyToPourMixlist(allowedIngredients:)`.
+    /// Returns mixlists where EVERY recipe's non-garnish ingredients match.
+    func readyToPourMixlists(allowedIngredients: [(primary: String, secondary: String)], barsys360Only: Bool) -> [Mixlist]
 }
 
 final class MockStorageService: StorageService {
@@ -204,7 +242,28 @@ final class MockStorageService: StorageService {
     }
     func recipe(by id: RecipeID) -> Recipe? { recipes[id] }
     func upsert(recipe: Recipe) { recipes[recipe.id] = recipe }
-    func delete(recipe id: RecipeID) { recipes.removeValue(forKey: id) }
+    /// 1:1 port of UIKit `DBManager._deleteRecipe(byId:)` which runs:
+    ///   DELETE FROM mixlistrecipes WHERE recipeId = ?;
+    ///   DELETE FROM recipes WHERE id = ?;   -- cascades to ingredients
+    /// In our in-memory model we mirror this by:
+    ///   1. Removing the recipe from the recipes dictionary
+    ///   2. Removing it from the favourites set (UIKit stored isFavouriteRecipe
+    ///      as a column in the recipes table, so deleting the row also cleared
+    ///      the favourite flag)
+    ///   3. Removing references from any mixlist's nested recipes array
+    ///      (mirrors DELETE FROM mixlistrecipes WHERE recipeId = ?)
+    func delete(recipe id: RecipeID) {
+        recipes.removeValue(forKey: id)
+        favs.remove(id)
+        // Clean up mixlist→recipe references (UIKit: DELETE FROM mixlistrecipes)
+        for (key, var mixlist) in mixlists {
+            if let recipesList = mixlist.recipes,
+               recipesList.contains(where: { $0.id == id }) {
+                mixlist.recipes?.removeAll { $0.id == id }
+                mixlists[key] = mixlist
+            }
+        }
+    }
     /// Ports DBManager.fetchMixlists() SQL JOIN that computes ingredient_names.
     /// UIKit SQL: SELECT m.*, (SELECT GROUP_CONCAT(DISTINCT i.name)
     ///   FROM ingredients i JOIN mixlistrecipes mr ON mr.recipeId = i.recipeId
@@ -261,11 +320,112 @@ final class MockStorageService: StorageService {
     }
 
     func favorites() -> Set<RecipeID> { favs }
+    /// 1:1 port of UIKit `DBManager._updateFavouriteStatus(forRecipeId:isFavourite:)`:
+    ///   UPDATE recipes SET isFavouriteRecipe = ?, favCreatedAt = ? WHERE id = ?
+    /// When adding to favourites, sets `favCreatedAt` to the current Unix
+    /// timestamp so `FavoritesView.rows` sorts correctly
+    /// (`ORDER BY barsys360Compatible DESC, favCreatedAt DESC`).
+    /// When removing, clears `favCreatedAt` to 0.
     func toggleFavorite(_ id: RecipeID) {
         if favs.contains(id) { favs.remove(id) } else { favs.insert(id) }
+        let isFav = favs.contains(id)
         if var r = recipes[id] {
-            r.isFavourite = favs.contains(id)
+            r.isFavourite = isFav
+            r.favCreatedAt = isFav ? Int32(Date().timeIntervalSince1970) : 0
             recipes[id] = r
+        }
+    }
+
+    // MARK: - Extended DBManager ports
+
+    /// Ports `DBManager._fetchRecipeBySlug` / `DBQueries.fetchRecipeBySlug`:
+    ///   SELECT id FROM recipes WHERE slug = ?
+    func recipe(bySlug slug: String) -> Recipe? {
+        guard !slug.isEmpty else { return nil }
+        let lower = slug.lowercased()
+        return recipes.values.first { ($0.slug ?? "").lowercased() == lower }
+    }
+
+    /// Ports `DBManager._fetchMixlistBySlug` / `DBQueries.fetchMixlistBySlug`.
+    func mixlist(bySlug slug: String) -> Mixlist? {
+        guard !slug.isEmpty else { return nil }
+        let lower = slug.lowercased()
+        return mixlists.values.first { ($0.slug ?? "").lowercased() == lower }
+    }
+
+    /// Ports `DBManager._retrieveMixlistBarsys360` / `DBQueries.retrieveMixlistBarsys360`.
+    /// UIKit SQL: WHERE all recipes have non-garnish ingredient count <= 6.
+    func barsys360Mixlists() -> [Mixlist] {
+        allMixlists().filter { mixlist in
+            guard let mlRecipes = mixlist.recipes, !mlRecipes.isEmpty else { return false }
+            return mlRecipes.allSatisfy { recipe in
+                let nonGarnish = (recipe.ingredients ?? []).filter {
+                    let p = ($0.category?.primary ?? "").lowercased()
+                    return p != "garnish" && p != "additional"
+                }
+                return nonGarnish.count <= 6
+            }
+        }
+    }
+
+    /// Ports `DBManager.fetchRecipeWithAllIngredients(for:)`.
+    /// Returns recipe + ingredients split into 3 arrays matching
+    /// RecipePageViewModel+DataLoading categories.
+    func recipeWithSplitIngredients(for id: RecipeID) -> (recipe: Recipe, baseAndMixer: [Ingredient], garnish: [Ingredient], additional: [Ingredient])? {
+        guard let recipe = recipes[id] else { return nil }
+        let all = recipe.ingredients ?? []
+        let baseAndMixer = all.filter {
+            let p = ($0.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional"
+        }
+        let garnish = all.filter {
+            let p = ($0.category?.primary ?? "").lowercased()
+            return p == "garnish" && ($0.ingredientOptional ?? false) == false
+        }
+        let additional = all.filter {
+            let p = ($0.category?.primary ?? "").lowercased()
+            return p == "garnish" && ($0.ingredientOptional ?? false) == true
+        }
+        return (recipe, baseAndMixer, garnish, additional)
+    }
+
+    /// Ports `DBManager._fetchMatchingRecipeLists(allowedIngredients:)`.
+    /// UIKit SQL: recipe WHERE every non-garnish ingredient's (primary,secondary)
+    /// pair exists in the allowed list.
+    func recipesMatchingIngredients(_ allowed: [(primary: String, secondary: String)]) -> [Recipe] {
+        let allowedSet = Set(allowed.map { "\($0.primary.lowercased())|\($0.secondary.lowercased())" })
+        return allRecipes().filter { recipe in
+            let nonGarnish = (recipe.ingredients ?? []).filter {
+                let p = ($0.category?.primary ?? "").lowercased()
+                return p != "garnish" && p != "additional"
+            }
+            guard !nonGarnish.isEmpty else { return false }
+            return nonGarnish.allSatisfy { ing in
+                let key = "\((ing.category?.primary ?? "").lowercased())|\((ing.category?.secondary ?? "").lowercased())"
+                return allowedSet.contains(key)
+            }
+        }
+    }
+
+    /// Ports `DBManager._fetchReadyToPourMixlist(allowedIngredients:)` /
+    /// `DBQueries.fetchReadyToPourMixlist`.
+    /// Returns mixlists where EVERY recipe is fully makeable with allowed ingredients.
+    func readyToPourMixlists(allowedIngredients: [(primary: String, secondary: String)], barsys360Only: Bool) -> [Mixlist] {
+        let allowedSet = Set(allowedIngredients.map { "\($0.primary.lowercased())|\($0.secondary.lowercased())" })
+        let source = barsys360Only ? barsys360Mixlists() : allMixlists()
+        return source.filter { mixlist in
+            guard let mlRecipes = mixlist.recipes, !mlRecipes.isEmpty else { return false }
+            return mlRecipes.allSatisfy { recipe in
+                let nonGarnish = (recipe.ingredients ?? []).filter {
+                    let p = ($0.category?.primary ?? "").lowercased()
+                    return p != "garnish" && p != "additional"
+                }
+                guard !nonGarnish.isEmpty else { return false }
+                return nonGarnish.allSatisfy { ing in
+                    let key = "\((ing.category?.primary ?? "").lowercased())|\((ing.category?.secondary ?? "").lowercased())"
+                    return allowedSet.contains(key)
+                }
+            }
         }
     }
 }
@@ -1254,16 +1414,30 @@ final class CatalogService: ObservableObject {
             }
 
             // 6. Fetch and sync favourites (ports getFavouritesData + updateFavouriteStatus)
+            // UIKit `_updateFavouritesInDatabase(favData:)` iterates ALL favourite
+            // items from the API and sets `isFavouriteRecipe = 1` or `0` for each.
+            // We mirror this by:
+            //   a) Adding any server-side favourite that is missing locally.
+            //   b) REMOVING any local favourite that is NO LONGER on the server
+            //      (handles un-favourite from another device / web).
             do {
                 let favIDs = try await api.fetchFavorites()
-                if !favIDs.isEmpty {
-                    // Mark each favourite recipe in storage
-                    let currentFavs = storage.favorites()
-                    for favID in favIDs {
-                        if !currentFavs.contains(favID) {
-                            storage.toggleFavorite(favID)
-                        }
+                let serverFavSet = Set(favIDs)
+                let currentFavs = storage.favorites()
+
+                // a) Add missing favourites
+                for favID in serverFavSet {
+                    if !currentFavs.contains(favID) {
+                        storage.toggleFavorite(favID)
                     }
+                }
+                // b) Remove stale local favourites not on server
+                for localFavID in currentFavs {
+                    if !serverFavSet.contains(localFavID) {
+                        storage.toggleFavorite(localFavID)   // removes from favs set
+                    }
+                }
+                if !favIDs.isEmpty {
                     print("[CatalogService] Synced \(favIDs.count) favourites from API")
                 }
             } catch {
