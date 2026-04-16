@@ -945,14 +945,17 @@ struct WelcomeOccasionSection: View {
         .frame(height: tileHeight - 10) // inner 109pt (outer 119 - 10pt inset)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                // `grayColorForBarBot` = RGB(0.922, 0.922, 0.922) —
-                // asset not ported to SwiftUI project, so inline the
-                // exact UIKit color.
-                .fill(Color(red: 0.922, green: 0.922, blue: 0.922))
+                // `grayColorForBarBot` = #EBEBEB light / #1C1C1E dark
+                .fill(Color("grayColorForBarBot"))
+                // Runtime `applyCustomShadow(cornerRadius: 12, size: 1.0,
+                // shadowRadius: 3.0)` — opacity 0.43, offset (0, 1), blur 3.
+                // Shadow on the background shape ONLY — not on the text labels.
+                // In UIKit `applyCustomShadow` sits on `innerView` with
+                // `clipsToBounds` isolating the text. Applying `.shadow()` to
+                // the full VStack would bleed through the text glyphs, making
+                // them appear blurred.
+                .shadow(color: .black.opacity(0.43), radius: 3, x: 0, y: 1)
         )
-        // Runtime `applyCustomShadow(cornerRadius: 12, size: 1.0,
-        // shadowRadius: 3.0)` — opacity 0.43, offset (0, 1), blur 3.
-        .shadow(color: .black.opacity(0.43), radius: 3, x: 0, y: 1)
         .padding(5) // 5pt outer inset = `lbg-yu-hL3` leading/top/trailing/bottom constant
     }
 
@@ -1270,8 +1273,9 @@ struct ChatMessageRow: View {
                         Text(msg.questionText)
                             .font(Theme.Font.of(.caption1))
                             .foregroundStyle(Color("aiBlackTextColor"))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
+                            // UIKit PaddingLabel: top=8, left=16, bottom=8, right=16
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
                             .background(
                                 Color.white
                                     .clipShape(
@@ -1379,7 +1383,8 @@ struct ChatMessageRow: View {
     private func sectionHeader(title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(Theme.Font.of(.subheadline, .bold))
+                // UIKit `lblRecipeOrMixlistHeader`: AppFontClass.font(.callout, weight: .bold) = 14pt bold
+                .font(Theme.Font.of(.callout, .bold))
                 .foregroundStyle(Color("charcoalGrayColor"))
             Text(subtitle)
                 .font(Theme.Font.of(.caption1))
