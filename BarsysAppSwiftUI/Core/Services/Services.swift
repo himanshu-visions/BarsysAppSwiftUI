@@ -39,6 +39,14 @@ enum AppError: LocalizedError {
 
 // MARK: - APIClient
 
+// MARK: - MyDrinksDataModel (1:1 port of UIKit FavoriteRecipeApiService.swift)
+/// Response from `GET /my-recipes?offset=&barsys360=`.
+/// UIKit stores this in FavouritesRecipesAndDrinksViewModel.myDrinksResponseModel.
+struct MyDrinksDataModel {
+    var data: [Recipe]?
+    var total, limit, offset: Int?
+}
+
 protocol APIClient: AnyObject {
     func sendOtp(phone: String) async throws
     func verifyOtp(phone: String, code: String) async throws -> UserProfile
@@ -49,6 +57,16 @@ protocol APIClient: AnyObject {
     func fetchRecipes() async throws -> [Recipe]
     func fetchMixlists() async throws -> [Mixlist]
     func fetchFavorites() async throws -> [RecipeID]
+    /// 1:1 port of UIKit `FavoriteRecipeApiService.getMyDrinksApi`.
+    /// Fetches user-created custom recipes with pagination.
+    /// - Parameters:
+    ///   - offset: Current item count for pagination (0 for initial load).
+    ///   - isBarsys360Connected: Whether a Barsys 360 device is connected.
+    func fetchMyDrinks(offset: Int, isBarsys360Connected: Bool) async throws -> MyDrinksDataModel
+    /// 1:1 port of UIKit `FavoriteRecipeApiService.deleteReceipe`.
+    func deleteMyDrink(recipeId: String) async throws
+    /// 1:1 port of UIKit `FavoriteRecipeApiService.likeUnlikeApi`.
+    func likeUnlike(recipeId: String, isLike: Bool) async throws -> String
 }
 
 final class MockAPIClient: APIClient {
@@ -105,6 +123,22 @@ final class MockAPIClient: APIClient {
     func fetchRecipes() async throws -> [Recipe] { [] }
     func fetchMixlists() async throws -> [Mixlist] { [] }
     func fetchFavorites() async throws -> [RecipeID] { [] }
+
+    func fetchMyDrinks(offset: Int, isBarsys360Connected: Bool) async throws -> MyDrinksDataModel {
+        try await Task.sleep(nanoseconds: 300_000_000)
+        // Mock: return recipes marked as myDrink from sample data
+        let myDrinks = SampleData.recipes.filter { $0.isMyDrinkFavourite == true }
+        return MyDrinksDataModel(data: myDrinks, total: myDrinks.count, limit: 20, offset: offset)
+    }
+
+    func deleteMyDrink(recipeId: String) async throws {
+        try await Task.sleep(nanoseconds: 300_000_000)
+    }
+
+    func likeUnlike(recipeId: String, isLike: Bool) async throws -> String {
+        try await Task.sleep(nanoseconds: 300_000_000)
+        return isLike ? Constants.likeSuccessMessage : Constants.unlikeSuccessMessage
+    }
 }
 
 // MARK: - StorageService

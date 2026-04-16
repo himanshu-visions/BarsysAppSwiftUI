@@ -565,6 +565,90 @@ final class OryAPIClient: APIClient {
         }
     }
 
+    // MARK: - My Drinks API (1:1 port of FavoriteRecipeApiService.getMyDrinksApi)
+
+    func fetchMyDrinks(offset: Int, isBarsys360Connected: Bool) async throws -> MyDrinksDataModel {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else {
+            return MyDrinksDataModel(data: [], total: 0, limit: 20, offset: 0)
+        }
+        let urlStr = Self.recipesBaseURL + "my-recipes?offset=\(offset)&barsys360=\(isBarsys360Connected)"
+        guard let url = URL(string: urlStr) else {
+            throw AppError.network("Invalid URL")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] fetchMyDrinks offset=\(offset): HTTP \(status)")
+
+        guard status == 200 else {
+            throw AppError.network("HTTP \(status)")
+        }
+
+        let decoder = JSONDecoder()
+        let apiResponse = try decoder.decode(APIMyDrinksResponse.self, from: data)
+        let apiRecipes: [APIRecipe] = apiResponse.data ?? []
+        let recipes: [Recipe] = apiRecipes.map { $0.toRecipe() }
+        return MyDrinksDataModel(
+            data: recipes,
+            total: apiResponse.total,
+            limit: apiResponse.limit,
+            offset: apiResponse.offset
+        )
+    }
+
+    /// Ports FavoriteRecipeApiService.deleteReceipe().
+    func deleteMyDrink(recipeId: String) async throws {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
+        let urlStr = Self.recipesBaseURL + "my-recipes/\(recipeId)"
+        guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] deleteMyDrink \(recipeId): HTTP \(status)")
+        guard status == 200 || status == 201 || status == 204 else {
+            throw AppError.network("HTTP \(status)")
+        }
+    }
+
+    /// Ports FavoriteRecipeApiService.likeUnlikeApi().
+    func likeUnlike(recipeId: String, isLike: Bool) async throws -> String {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
+        let urlStr = Self.recipesBaseURL + "my/recipes/\(recipeId)/favorites"
+        guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = isLike ? "POST" : "DELETE"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] likeUnlike \(isLike ? "LIKE" : "UNLIKE") \(recipeId): HTTP \(status)")
+        guard status == 200 || status == 201 || status == 204 else {
+            throw AppError.network("HTTP \(status)")
+        }
+        return isLike ? Constants.likeSuccessMessage : Constants.unlikeSuccessMessage
+    }
+
+    // MARK: - My Drinks Response Model
+
+    private struct APIMyDrinksResponse: Decodable {
+        var data: [APIRecipe]?
+        var total, limit, offset: Int?
+    }
+
     // MARK: - API Response Models
     //
     // Decodable wrappers matching the exact JSON schema from the Barsys API.

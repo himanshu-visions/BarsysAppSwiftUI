@@ -328,7 +328,10 @@ private struct SideMenuPanel: View {
     @State private var selectedSection: Int? = nil
 
     @State private var showLogoutConfirm = false
-    @State private var showReviewConfirm = false
+    /// Rating popup state — uses BarsysPopup.confirm to match UIKit's
+    /// `showCustomAlertMultipleButtons` glass-card popup (not the native
+    /// action sheet that `.confirmationDialog` provides).
+    @State private var ratingPopup: BarsysPopup? = nil
     /// Shows DeviceConnectedPopup when tapping "Device" while connected.
     /// Ports UIKit `openDeviceConnectedPopUp()`.
     @State private var showDeviceConnectedPopup = false
@@ -630,22 +633,25 @@ private struct SideMenuPanel: View {
         } message: {
             Text(Constants.doYouWantToLogout)
         }
-        .confirmationDialog("", isPresented: $showReviewConfirm, titleVisibility: .visible) {
-            Button("Yes, please") {
-                // App Store review URLs have to open in the external
-                // App Store app — WKWebView can't handle the
-                // `itms-apps://` scheme. UIKit parity preserved via
-                // `UIApplication.shared.open` (same as
-                // `SideMenuViewController.didTapRateApp`).
-                if let url = URL(string: WebViewURLs.appStoreReviewUrl) {
-                    UIApplication.shared.open(url)
-                }
-                onDismiss()
+        // Rating popup — 1:1 port of UIKit `SideMenuViewController.didTapRateApp`
+        // which uses `showCustomAlertMultipleButtons` (AlertPopUpHorizontalStackController).
+        // The UIKit popup is a glass-card modal with:
+        //   • Title: wouldYouLikeRatingTextForSideMenu
+        //   • "Yes, please" (primary brand button) → opens App Store review
+        //   • "No, stay in app" (secondary cancel button) → dismisses
+        //   • Close button hidden
+        // Previous port used `.confirmationDialog` which shows a native iOS
+        // action sheet — wrong per UIKit which shows a centered glass card.
+        .barsysPopup($ratingPopup, onPrimary: {
+            // "Yes, please" → open App Store review URL
+            if let url = URL(string: WebViewURLs.appStoreReviewUrl) {
+                UIApplication.shared.open(url)
             }
-            Button("No, stay in app", role: .cancel) { onDismiss() }
-        } message: {
-            Text(Constants.wouldYouLikeRatingTextForSideMenu)
-        }
+            onDismiss()
+        }, onSecondary: {
+            // "No, stay in app" → just dismiss
+            onDismiss()
+        })
         // Device Connected Popup — shown when tapping "Device" while connected.
         // Ports UIKit `openDeviceConnectedPopUp()` which presents
         // DeviceConnectedController modally with .overFullScreen.
@@ -770,7 +776,12 @@ private struct SideMenuPanel: View {
             return
 
         case "Review the App":
-            showReviewConfirm = true
+            ratingPopup = .confirm(
+                title: Constants.wouldYouLikeRatingTextForSideMenu,
+                message: nil,
+                primaryTitle: ConstantButtonsTitle.yesPleaseButtonTitle,
+                secondaryTitle: ConstantButtonsTitle.noStayInAppButtonTitle
+            )
             return
 
         default:

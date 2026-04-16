@@ -309,4 +309,6 @@ enum ConstantButtonsTitle {
     static let saveButtonTitle = "Save"
     static let deleteButtonTitle = "Delete"
     static let logoutButtonTitle = "Log out"
+    static let yesPleaseButtonTitle = "Yes please!"
+    static let noStayInAppButtonTitle = "No, stay in the app"
 }

@@ -1239,119 +1239,344 @@ private struct CraftingIngredientRowView: View {
     }
 }
 
-// MARK: - DrinkCompleteView (ports DrinkCompleteViewController)
+// MARK: - DrinkCompleteView (1:1 port of DrinkCompleteViewController)
+//
+// UIKit storyboard hierarchy (Crafting.storyboard, scene F7y-N5-Rnz):
+//
+//   Main View (393×852)
+//   ├── Header View (393×60) — back button, device info, side menu
+//   └── ScrollView (393×555, y=60)
+//       └── Content View (393×639.33)
+//           ├── Recipe Name Label — top: 47
+//           ├── Drink Image — 211×211 circular, top: 50 below name
+//           ├── "Drink is ready!" Label — 16pt, centered, top: 40 below image
+//           ├── Garnish Label — bold "Garnish:" + names, top: 10
+//           ├── Additional Label — bold "Additional Ingredients:" + names
+//           └── Buttons Stack (vertical, spacing: 8, 345×151)
+//               ├── "Make it again" — 345×45, primaryBackgroundColor,
+//               │   8pt corners, 15pt medium, 1pt craftButtonBorderColor
+//               │   (iOS 26+ cancelCapsuleGradientBorderStyle)
+//               ├── "Customize" — same style
+//               └── "Done" — PrimaryOrangeButton, brandTanColor/orange,
+//                   8pt corners (iOS 26+ capsule with orange gradient)
+//
+// Fonts: SFProDisplay (body=16pt, buttons=15pt medium)
+// Colors: brandTanColor (Done), primaryBackgroundColor (secondary buttons),
+//         craftButtonBorderColor (borders), charcoalGrayColor (text)
 
 struct DrinkCompleteView: View {
     let recipeID: RecipeID
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
-    /// "Craft again" dismisses this view (pops off the nav stack) so
-    /// the underlying CraftingView resets + re-enters its flow. 1:1
-    /// with UIKit `self.navigationController?.popViewController(animated: true)`.
+    @EnvironmentObject private var ble: BLEService
     @Environment(\.dismiss) private var dismiss
-    @State private var rating: Int = 0
+
+    /// Rating popup state — 1:1 port of UIKit DrinkCompleteViewController
+    /// viewDidLoad L126-134 which checks shouldShowRatingPrompt interval.
+    @State private var ratingPopup: BarsysPopup? = nil
+
+    /// Hides "Make it again" when SpeakEasy case is active (UIKit L106-108).
+    private var isSpeakEasyCase: Bool {
+        AppStateManager.shared.isSpeakEasyCase
+    }
+
+    // Toolbar device helpers (matches UIKit header device info stack).
+    private var deviceIconName: String {
+        if ble.isBarsys360Connected() || isSpeakEasyCase { return "icon_barsys_360" }
+        if ble.isCoasterConnected() { return "icon_barsys_coaster" }
+        if ble.isBarsysShakerConnected() { return "icon_barsys_shaker" }
+        return ""
+    }
+    private var deviceKindName: String {
+        if ble.isBarsys360Connected() || isSpeakEasyCase { return Constants.barsys360NameTitle }
+        if ble.isCoasterConnected() { return Constants.barsysCoasterTitle }
+        if ble.isBarsysShakerConnected() { return Constants.barsysShakerTitle }
+        return ""
+    }
+
+    /// Garnish ingredients — recipe ingredients with category primary == "garnish"
+    private func garnishIngredients(for recipe: Recipe) -> [Ingredient] {
+        recipe.ingredients?.filter {
+            $0.category?.primary?.lowercased() == "garnish"
+        } ?? []
+    }
+
+    /// Additional ingredients — optional ingredients or category primary == "additional"
+    private func additionalIngredients(for recipe: Recipe) -> [Ingredient] {
+        let allNonBase = (recipe.ingredients ?? []).filter {
+            $0.ingredientOptional == true
+                || $0.category?.primary?.lowercased() == "additional"
+        }
+        return allNonBase
+    }
+
+    private func optimizedImageURL(for recipe: Recipe) -> URL? {
+        guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
+        let optimized = raw
+            .replacingOccurrences(of: "https://storage.googleapis.com/barsys-images-production/",
+                                  with: "https://api.barsys.com/api/optimizeImage?fileUrl=https://media.barsys.com/")
+        return URL(string: optimized)
+    }
 
     var body: some View {
-        VStack(spacing: Theme.Spacing.l) {
+        VStack(spacing: 0) {
             if let recipe = env.storage.recipe(by: recipeID) {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // Recipe Name — top: 47pt from content top
+                        // UIKit: lblRecipeName, bold body (16pt)
+                        Text(recipe.displayName)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Color("charcoalGrayColor"))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                            .padding(.top, 47)
 
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 96))
-                    .foregroundStyle(Theme.Color.success)
-                    .padding(.top, Theme.Spacing.xxl)
-
-                Text("Enjoy your \(recipe.displayName)")
-                    .font(Theme.Font.bold(26))
-                    .foregroundStyle(Theme.Color.textPrimary)
-                    .multilineTextAlignment(.center)
-                    .pagePadding()
-
-                Text(Constants.drinkCompletedStr)
-                    .font(Theme.Font.medium(14))
-                    .foregroundStyle(Theme.Color.textSecondary)
-
-                HStack(spacing: Theme.Spacing.s) {
-                    ForEach(1...5, id: \.self) { star in
-                        Button {
-                            withAnimation(.spring()) { rating = star }
-                        } label: {
-                            Image(systemName: star <= rating ? "star.fill" : "star")
-                                .font(.system(size: 32))
-                                .foregroundStyle(star <= rating ? Theme.Color.brand : Theme.Color.textTertiary)
+                        // Drink Image — 211×211 circular
+                        // UIKit: drinkCompleteImage, roundCorners = height/2,
+                        // SDWebImage with placeholder myDrink
+                        AsyncImage(url: optimizedImageURL(for: recipe)) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().aspectRatio(contentMode: .fill)
+                            case .empty, .failure:
+                                Image("myDrink")
+                                    .resizable().aspectRatio(contentMode: .fill)
+                            @unknown default:
+                                Color("lightBorderGrayColor")
+                            }
                         }
+                        .frame(width: 211, height: 211)
+                        .background(Color("lightBorderGrayColor"))
+                        .clipShape(Circle())
+                        .padding(.top, 50)
+
+                        // "Drink is ready!" — 16pt, centered
+                        // UIKit: zYW-Hh-bze label, charcoalGrayColor
+                        Text("Drink is ready!")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Color("charcoalGrayColor"))
+                            .padding(.top, 40)
+
+                        // Garnish & Additional labels
+                        // UIKit: attributed strings with bold prefix
+                        let garnish = garnishIngredients(for: recipe)
+                        let additional = additionalIngredients(for: recipe)
+
+                        if !garnish.isEmpty {
+                            drinkCompleteAttributedLabel(
+                                boldPrefix: "Garnish: ",
+                                text: garnish.map { $0.name }.joined(separator: ", ")
+                            )
+                            .padding(.horizontal, 24)
+                            .padding(.top, 10)
+                        }
+
+                        if !additional.isEmpty {
+                            drinkCompleteAttributedLabel(
+                                boldPrefix: "Additional Ingredients: ",
+                                text: additional.map { $0.name }.joined(separator: ", ")
+                            )
+                            .padding(.horizontal, 24)
+                            .padding(.top, 6)
+                        }
+
+                        // Action Buttons Stack
+                        // UIKit: phe-0t-jY4 vertical stack, spacing: 8, 345×151
+                        // Leading/trailing: 24pt each → 345pt width on 393pt screen
+                        VStack(spacing: 8) {
+                            // "Make it again" — hidden if SpeakEasy case
+                            // UIKit: makeItAgainButton, 345×45, addBounceEffect,
+                            // iOS 26+ applyCancelCapsuleGradientBorderStyle,
+                            // pre-26 makeBorder(1, craftButtonBorderColor)
+                            if !isSpeakEasyCase {
+                                Button {
+                                    HapticService.light()
+                                    env.analytics.track(TrackEventName.craftMakeAgain.rawValue)
+                                    AppStateManager.shared.makeItAgainPending = true
+                                    Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                                        dismiss()
+                                    }
+                                } label: {
+                                    Text("Make it again")
+                                        .cancelCapsule(height: 45, cornerRadius: 8)
+                                }
+                                .buttonStyle(BounceButtonStyle())
+                                .accessibilityLabel("Make it again")
+                                .accessibilityHint("Crafts the same drink again")
+                            }
+
+                            // "Customize" — navigate to recipe detail for editing
+                            // UIKit: customizeButton, same style as Make it again
+                            // Action: pops to RecipePage before CraftingVC, or pushes new one
+                            Button {
+                                HapticService.light()
+                                env.analytics.track(TrackEventName.craftCustomise.rawValue)
+                                // Pop back to recipe detail for customization
+                                // UIKit navigates to the view controller before CraftingVC
+                                // SwiftUI: pop to root and navigate to recipe detail
+                                router.popToRoot()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    router.push(.recipeDetail(recipeID))
+                                }
+                            } label: {
+                                Text("Customize")
+                                    .cancelCapsule(height: 45, cornerRadius: 8)
+                            }
+                            .buttonStyle(BounceButtonStyle())
+                            .accessibilityLabel("Customize")
+                            .accessibilityHint("Opens recipe customization")
+
+                            // "Done" — PrimaryOrangeButton
+                            // UIKit: doneButton, brandTanColor bg,
+                            // iOS 26+ makeOrangeStyle (capsule gradient),
+                            // pre-26 makeBorder(1, sideMenuSelectionColor), 8pt corners
+                            // Action: haptic success → doneAction() (pops to source VC)
+                            Button {
+                                HapticService.success()
+                                doneAction()
+                            } label: {
+                                Text("Done")
+                                    .brandCapsule(height: 45, cornerRadius: 8)
+                            }
+                            .buttonStyle(BounceButtonStyle())
+                            .accessibilityLabel("Done")
+                            .accessibilityHint("Returns to the previous screen")
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 30)
+                        .padding(.bottom, 75)
                     }
                 }
-                .padding(.top, Theme.Spacing.m)
-
-                Spacer()
-
-                VStack(spacing: Theme.Spacing.s) {
-                    // 1:1 port of UIKit `DrinkCompleteViewController.swift`
-                    // L262-287 "Make It Again" button handler:
-                    //
-                    // ```
-                    // self.navigationController?.popViewController(animated: true) {
-                    //     DelayedAction.afterBleResponse(seconds: 1.0) { [weak craftingVc] in
-                    //         craftingVc?.resetCraftingState()
-                    //         craftingVc?.makeDrinkInitiallyOrAgain()
-                    //     }
-                    // }
-                    // ```
-                    //
-                    // So UIKit:
-                    //   1. Medium haptic.
-                    //   2. Pop DrinkCompleteVC (one level).
-                    //   3. Wait 1.0s for the BLE firmware to settle.
-                    //   4. Reset the CraftingViewController's state machine.
-                    //   5. Call `makeDrinkInitiallyOrAgain()` which SKIPS
-                    //      the pour-confirmation alert the second time
-                    //      (UIKit sets `skipPourConfirmation = true` on
-                    //      this path).
-                    //
-                    // SwiftUI equivalent:
-                    //   • `dismiss()` pops DrinkCompleteView off the nav
-                    //     stack, returning to the underlying CraftingView.
-                    //   • CraftingView's `.onAppear` detects
-                    //     `viewModel.state == .completed`, runs
-                    //     `viewModel.resetForMakeAgain()`, and re-runs
-                    //     `runCraftEntryFlow()` — which re-shows the
-                    //     pour confirmation alert.
-                    //
-                    // **UIKit parity subtlety**: UIKit passes
-                    // `skipPourConfirmation = true` so the alert is
-                    // bypassed on re-craft. The SwiftUI port matches
-                    // via a published flag on `AppStateManager` which
-                    // the CraftingView reads before re-entry.
-                    PrimaryButton(title: "Craft again", systemImage: "arrow.clockwise") {
-                        HapticService.medium()
-                        env.analytics.track(TrackEventName.craftMakeAgain.rawValue)
-                        // Signal the CraftingView re-entry to bypass
-                        // the "Ready to Pour?" alert this round.
-                        AppStateManager.shared.makeItAgainPending = true
-                        // 1.0s settle delay matches UIKit
-                        // `DelayedAction.afterBleResponse(seconds: 1.0)`.
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 1_000_000_000)
-                            dismiss()
-                        }
-                    }
-                    SecondaryButton(title: "Back to home") {
-                        router.popToRoot()
-                        router.selectedTab = .homeOrControlCenter
-                    }
-                }
-                .pagePadding()
             } else {
                 EmptyStateView(systemImage: "checkmark.seal",
                                title: Constants.drinkCompletedStr,
                                subtitle: "")
             }
         }
-        .padding(.bottom, Theme.Spacing.xl)
-        .background(Theme.Color.background.ignoresSafeArea())
+        .background(Color("primaryBackgroundColor").ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        .toolbar { drinkCompleteToolbar }
+        .chooseOptionsStyleNavBar()
         .onAppear {
             env.analytics.track(TrackEventName.craftCompleted.rawValue)
+
+            // 1:1 port of UIKit DrinkCompleteViewController viewDidLoad L126-134:
+            // Rating prompt shown on a 24-hour interval (perishableInterval = 86400s).
+            // UIKit: if shouldShowRatingPrompt → markRatingShown → showCustomAlertMultipleButtons
+            //   title: wouldYouLikeRatingTextAfterDrinkCompleted
+            //   cancelButton: "Yes please!" (opens App Store)
+            //   continueButton: "No, stay in the app"
+            //   cancelButtonColor: segmentSelectionColor
+            //   closeButton: hidden
+            if shouldShowRatingPrompt() {
+                markRatingShown()
+                ratingPopup = .confirm(
+                    title: Constants.wouldYouLikeRatingTextAfterDrinkCompleted,
+                    message: nil,
+                    primaryTitle: ConstantButtonsTitle.yesPleaseButtonTitle,
+                    secondaryTitle: ConstantButtonsTitle.noStayInAppButtonTitle
+                )
+            }
         }
+        // Rating popup overlay — uses BarsysPopup glass card matching UIKit
+        // AlertPopUpHorizontalStackController styling.
+        .barsysPopup($ratingPopup, onPrimary: {
+            // "Yes please!" → open App Store review URL
+            if let url = URL(string: WebViewURLs.appStoreReviewUrl) {
+                UIApplication.shared.open(url)
+            }
+        }, onSecondary: {
+            // "No, stay in the app" → just dismiss
+        })
+    }
+
+    // MARK: - Rating prompt interval logic
+    // 1:1 port of DrinkCompleteViewModel.shouldShowRatingPrompt / markRatingShown.
+    // Shows rating prompt after 24 hours (perishableInterval = 86400 seconds)
+    // since the last time it was shown. First craft always shows it.
+
+    private func shouldShowRatingPrompt() -> Bool {
+        // Key matches UIKit UserDefaultsClass "lastRatingViewShownTimeInterval"
+        let key = "lastRatingViewShownTimeInterval"
+        let savedTimestamp = UserDefaults.standard.double(forKey: key)
+        if savedTimestamp == 0 { return true } // Never shown before
+        let elapsed = Date().timeIntervalSince1970 - savedTimestamp
+        // UIKit: differenceTimeStamp > NumericConstants.perishableInterval (86400s = 24 hours)
+        return elapsed > NumericConstants.perishableInterval
+    }
+
+    private func markRatingShown() {
+        let key = "lastRatingViewShownTimeInterval"
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: key)
+    }
+
+    // MARK: - Attributed label helper
+    // UIKit: makeAttributedString(fullText:boldPart:normalFont:boldFont:)
+    // Renders "Garnish: Lime, Mint" with "Garnish:" in bold 16pt.
+    private func drinkCompleteAttributedLabel(boldPrefix: String, text: String) -> some View {
+        (Text(boldPrefix).font(.system(size: 16, weight: .bold))
+            + Text(text).font(.system(size: 16)))
+            .foregroundStyle(Color("charcoalGrayColor"))
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Toolbar (matches UIKit header: back, device info, side menu)
+    @ToolbarContentBuilder
+    private var drinkCompleteToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                HapticService.light()
+                doneAction()
+            } label: {
+                Image("back")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 12, height: 20)
+                    .frame(width: 30, height: 30)
+            }
+            .accessibilityLabel("Back")
+            .accessibilityHint("Returns to the previous screen")
+        }
+
+        if ble.isAnyDeviceConnected || isSpeakEasyCase {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 8) {
+                    if !deviceIconName.isEmpty {
+                        Image(deviceIconName)
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 22, height: 22)
+                    }
+                    Text(deviceKindName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color("appBlackColor"))
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Connected device, \(deviceKindName)")
+            }
+        }
+
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            NavigationRightGlassButtons(
+                showsLeading: false,
+                onFavorites: {},
+                onProfile: {
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        router.showSideMenu = true
+                    }
+                }
+            )
+        }
+    }
+
+    // MARK: - Done action
+    // UIKit: doneAction() pops to the first DrinkCompletionDestination
+    // in the nav stack (FavouritesRecipesAndDrinks, MakeMyOwn,
+    // RecipePage, ReadyToPour, MixlistDetail, or BarBot).
+    // SwiftUI: pop to root — the router handles tab-scoped nav stacks.
+    private func doneAction() {
+        router.popToRoot()
     }
 }

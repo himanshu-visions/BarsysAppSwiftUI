@@ -850,9 +850,21 @@ struct RecipeDetailView: View {
                     showEditRecipe = true
                 case .addToFavourites:
                     env.storage.toggleFavorite(recipe.id)
+                    // 1:1 port of UIKit RecipePageViewController+Actions
+                    // performLikeUnlike: updates DB + calls likeUnlikeApi
+                    Task {
+                        _ = try? await env.api.likeUnlike(
+                            recipeId: recipe.id.value, isLike: true)
+                    }
+                    env.analytics.track(TrackEventName.favouriteRecipeAdded.rawValue)
                     env.alerts.show(message: Constants.likeSuccessMessage)
                 case .unfavourite:
                     env.storage.toggleFavorite(recipe.id)
+                    Task {
+                        _ = try? await env.api.likeUnlike(
+                            recipeId: recipe.id.value, isLike: false)
+                    }
+                    env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)
                     env.alerts.show(message: Constants.unlikeSuccessMessage)
                 }
             } label: {
@@ -957,10 +969,19 @@ struct RecipeDetailView: View {
                     : "heart",
                 leadingAccessibilityLabel: "Favourite",
                 onFavorites: {
+                    let willBeFav = !(recipe.isFavourite ?? false)
                     env.storage.toggleFavorite(recipe.id)
-                    let nowFav = env.storage.recipe(by: recipe.id)?.isFavourite ?? false
+                    // 1:1 port of UIKit: likeUnlikeApi fire-and-forget
+                    Task {
+                        _ = try? await env.api.likeUnlike(
+                            recipeId: recipe.id.value, isLike: willBeFav)
+                    }
+                    env.analytics.track(
+                        (willBeFav ? TrackEventName.favouriteRecipeAdded
+                                   : TrackEventName.favouriteRecipeRemoved).rawValue
+                    )
                     env.alerts.show(
-                        message: nowFav
+                        message: willBeFav
                             ? Constants.likeSuccessMessage
                             : Constants.unlikeSuccessMessage
                     )

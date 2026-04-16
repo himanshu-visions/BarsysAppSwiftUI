@@ -66,17 +66,31 @@ struct FavoritesView: View {
     @State private var query: String = ""
     @State private var showMoreMenuFor: RecipeID? = nil
     @State private var didTrackView = false
-    /// Bug fix (edit-routing): 1:1 port of UIKit
-    /// `FavouritesRecipesAndDrinksViewController.didSelectEdit` →
-    /// `present(EditViewController, animated: true)` which presents
-    /// the edit sheet AS A MODAL on top of the current tab stack.
-    /// The previous SwiftUI port used `router.push(.editRecipe(id))`
-    /// which pushed the edit view onto the CURRENT tab's navigation
-    /// stack instead — so the user ended up with the edit screen
-    /// wedged into the BarBot / My Drinks nav stack, never returning
-    /// to My Drinks. Using `.fullScreenCover` with this `Identifiable`
-    /// state variable matches UIKit's modal presentation exactly.
     @State private var recipeToEdit: Recipe? = nil
+
+    // MARK: - My Drinks Pagination State
+    // 1:1 port of UIKit FavouritesRecipesAndDrinksViewModel pagination:
+    //   var myDrinksResponseModel: MyDrinksDataModel? = nil
+    //   var paginationState: PaginationState = .idle
+    //
+    // PaginationState: idle → loadingMore, triggered when scroll reaches
+    // within 20pt of bottom (scrollViewDidEndDecelerating check).
+    // Data concatenation: new API page data appended to existing array.
+
+    @State private var myDrinksResponseModel: MyDrinksDataModel? = nil
+    @State private var myDrinksLoaded: [Recipe] = []
+    @State private var isLoadingMyDrinks = false
+    @State private var isLoadingMoreMyDrinks = false
+    @State private var myDrinksInitialLoadDone = false
+
+    /// Whether more My Drinks pages are available.
+    /// UIKit: `canLoadMoreMyDrinks` → offset != 0 && offset < total.
+    private var canLoadMoreMyDrinks: Bool {
+        guard let model = myDrinksResponseModel else { return false }
+        let currentCount = model.data?.count ?? 0
+        let total = model.total ?? 0
+        return currentCount > 0 && currentCount < total
+    }
 
     /// Source recipes per tab — ports `numberOfRows` + `recipe(at:)` from
     /// `FavouritesRecipesAndDrinksViewModel`.
@@ -84,14 +98,7 @@ struct FavoritesView: View {
     /// **Sort order** — matches UIKit `DBQueries.swift`:
     ///   • Barsys Recipes (L125):
     ///       ORDER BY r.barsys360Compatible DESC, r.favCreatedAt DESC
-    ///     i.e. Barsys 360-compatible recipes first, then by time
-    ///     favourited (newest favourites first).
-    ///   • My Drinks (L149):
-    ///       ORDER BY r.favCreatedAt DESC
-    ///     — newest-favourited at the top.
-    ///
-    /// Previous port relied on `allRecipes()`'s alphabetical order,
-    /// which inverted the Favourites tab vs UIKit.
+    ///   • My Drinks: uses API response order (server-sorted)
     private var rows: [Recipe] {
         let pool: [Recipe]
         switch selectedTab {
@@ -100,17 +107,20 @@ struct FavoritesView: View {
             pool = env.storage.allRecipes()
                 .filter { ids.contains($0.id) }
                 .sorted { lhs, rhs in
-                    // Primary: Barsys 360 compatible first (DESC on Bool).
                     let lb = lhs.barsys360Compatible == true
                     let rb = rhs.barsys360Compatible == true
                     if lb != rb { return lb && !rb }
-                    // Secondary: favCreatedAt DESC (newest favourite first).
                     return (lhs.favCreatedAt ?? 0) > (rhs.favCreatedAt ?? 0)
                 }
         case .myDrinks:
-            pool = env.storage.allRecipes()
-                .filter { $0.isMyDrinkFavourite == true }
-                .sorted { ($0.favCreatedAt ?? 0) > ($1.favCreatedAt ?? 0) }
+            // Use API-loaded data when available, fallback to local storage
+            if myDrinksInitialLoadDone {
+                pool = myDrinksLoaded
+            } else {
+                pool = env.storage.allRecipes()
+                    .filter { $0.isMyDrinkFavourite == true }
+                    .sorted { ($0.favCreatedAt ?? 0) > ($1.favCreatedAt ?? 0) }
+            }
         }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return pool }
@@ -150,6 +160,17 @@ struct FavoritesView: View {
             if !didTrackView {
                 didTrackView = true
                 env.analytics.track(TrackEventName.favouratesScreenViewed.rawValue)
+            }
+            // 1:1 port of UIKit viewDidLoad → getMyDrinksApi(isInitialDataLoading: true)
+            // Load My Drinks from API on first appear
+            if !myDrinksInitialLoadDone {
+                loadMyDrinksInitially()
+            }
+        }
+        .onChange(of: selectedTab) { newTab in
+            // Reload My Drinks when switching to the tab if not yet loaded
+            if newTab == .myDrinks && !myDrinksInitialLoadDone {
+                loadMyDrinksInitially()
             }
         }
         .simultaneousGesture(
@@ -282,7 +303,16 @@ struct FavoritesView: View {
 
     @ViewBuilder
     private var content: some View {
-        if rows.isEmpty {
+        if isLoadingMyDrinks && selectedTab == .myDrinks && !myDrinksInitialLoadDone {
+            // Show loading state for initial My Drinks fetch
+            VStack {
+                Spacer()
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle())
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if rows.isEmpty {
             VStack(spacing: 12) {
                 Spacer(minLength: 40)
                 Image(systemName: "heart")
@@ -299,8 +329,6 @@ struct FavoritesView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("No favourites yet")
         } else {
-            // Same deterministic geometry as Cocktail Kits / Explore
-            // Recipes — eliminates LazyVStack scroll-zoom.
             let cellWidth = UIScreen.main.bounds.width - 48
             let rowHeight = cellWidth / 2
 
@@ -323,14 +351,6 @@ struct FavoritesView: View {
                             },
                             onEdit: {
                                 showMoreMenuFor = nil
-                                // 1:1 port of UIKit
-                                // `FavouritesRecipesAndDrinksViewController.didSelectEdit`:
-                                // present EditViewController modally ABOVE the
-                                // current tab (matching the storyboard segue
-                                // `present modally` kind). Previously this
-                                // used `router.push(.editRecipe(id))` which
-                                // nested the edit screen inside the current
-                                // tab's nav stack — wrong per UIKit.
                                 recipeToEdit = recipe
                             },
                             onDelete: {
@@ -338,6 +358,28 @@ struct FavoritesView: View {
                                 confirmDelete(recipe)
                             }
                         )
+                        // Pagination trigger — 1:1 port of UIKit
+                        // scrollViewDidEndDecelerating → shouldLoadMore.
+                        // When the last visible row appears, load more
+                        // if pagination has more pages available.
+                        .onAppear {
+                            if selectedTab == .myDrinks,
+                               recipe.id == rows.last?.id,
+                               canLoadMoreMyDrinks,
+                               !isLoadingMoreMyDrinks {
+                                loadMoreMyDrinks()
+                            }
+                        }
+                    }
+
+                    // Loading indicator at bottom during pagination
+                    if selectedTab == .myDrinks && isLoadingMoreMyDrinks {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .padding(.vertical, 16)
+                            Spacer()
+                        }
                     }
                 }
                 .padding(.horizontal, 24)
@@ -387,12 +429,32 @@ struct FavoritesView: View {
 
     // MARK: - Actions
 
-    /// Ports `performLikeUnlike(at:)` → toggles the local store and emits
-    /// the matching Braze event with a confirmation toast.
+    /// Ports `performLikeUnlike(at:)` → toggles the local store, calls
+    /// the API, and emits the matching Braze event with a confirmation toast.
     private func toggleFavourite(_ recipe: Recipe) {
         HapticService.light()
         let willBeFavourite = !(recipe.isFavourite ?? false)
         env.storage.toggleFavorite(recipe.id)
+
+        // Also update local myDrinksLoaded array for My Drinks tab
+        if selectedTab == .myDrinks {
+            if let idx = myDrinksLoaded.firstIndex(where: { $0.id == recipe.id }) {
+                myDrinksLoaded[idx].isFavourite = willBeFavourite
+                myDrinksLoaded[idx].isMyDrinkFavourite = willBeFavourite
+            }
+        }
+
+        // Fire-and-forget API call (1:1 with UIKit likeUnlikeApi)
+        Task {
+            do {
+                _ = try await env.api.likeUnlike(recipeId: recipe.id.value,
+                                                  isLike: willBeFavourite)
+            } catch {
+                // Revert on failure
+                env.storage.toggleFavorite(recipe.id)
+            }
+        }
+
         env.analytics.track(
             (willBeFavourite ? TrackEventName.favouriteRecipeAdded
                              : TrackEventName.favouriteRecipeRemoved).rawValue
@@ -403,22 +465,114 @@ struct FavoritesView: View {
     }
 
     /// Ports `deleteRecipe(at:)` confirmation flow.
+    /// UIKit: showCustomAlertMultipleButtons → deleteReceipe API → success alert → refresh
     private func confirmDelete(_ recipe: Recipe) {
         env.alerts.show(
             title: Constants.doYouWantToDeleteRecipe,
             message: ""
         ) {
-            // Local removal — the real DBManager + API call would happen
-            // here (mirrors `_deleteFromDB` + `deleteReceipe`).
-            env.storage.toggleFavorite(recipe.id)
-            env.alerts.show(message: Constants.recipeDeleteMessage)
+            Task {
+                do {
+                    try await env.api.deleteMyDrink(recipeId: recipe.id.value)
+                    // Remove from local state
+                    env.storage.delete(recipe: recipe.id)
+                    myDrinksLoaded.removeAll { $0.id == recipe.id }
+                    if var model = myDrinksResponseModel {
+                        model.data?.removeAll { $0.id == recipe.id }
+                        if let total = model.total { model.total = total - 1 }
+                        myDrinksResponseModel = model
+                    }
+                    env.alerts.show(message: Constants.recipeDeleteMessage)
+                } catch {
+                    env.alerts.show(message: Constants.recipeSaveError)
+                }
+            }
         }
     }
 
+    // MARK: - My Drinks API (1:1 port of UIKit getMyDrinksApi)
+
+    /// Initial load or full refresh of My Drinks from API.
+    /// UIKit: `getMyDrinksApi(isInitialDataLoading: true)` →
+    /// `viewModel.fetchMyDrinks(offset: 0)` → reloadTableForMyDrinks
+    private func loadMyDrinksInitially() {
+        guard !isLoadingMyDrinks else { return }
+        isLoadingMyDrinks = true
+        Task {
+            do {
+                let response = try await env.api.fetchMyDrinks(
+                    offset: 0,
+                    isBarsys360Connected: ble.isBarsys360Connected()
+                )
+                myDrinksResponseModel = response
+                myDrinksLoaded = response.data ?? []
+                // Also upsert into local storage so other screens see them
+                for recipe in myDrinksLoaded {
+                    env.storage.upsert(recipe: recipe)
+                }
+                myDrinksInitialLoadDone = true
+            } catch {
+                // Fallback: use local storage data
+                myDrinksLoaded = env.storage.allRecipes()
+                    .filter { $0.isMyDrinkFavourite == true }
+                    .sorted { ($0.favCreatedAt ?? 0) > ($1.favCreatedAt ?? 0) }
+                myDrinksInitialLoadDone = true
+            }
+            isLoadingMyDrinks = false
+        }
+    }
+
+    /// Pagination — loads next page of My Drinks.
+    /// UIKit: scrollViewDidEndDecelerating → shouldLoadMore →
+    /// getMyDrinksApi(offset: currentCount) → append to data array.
+    private func loadMoreMyDrinks() {
+        guard !isLoadingMoreMyDrinks, canLoadMoreMyDrinks else { return }
+        isLoadingMoreMyDrinks = true
+        let currentCount = myDrinksResponseModel?.data?.count ?? 0
+        Task {
+            do {
+                let response = try await env.api.fetchMyDrinks(
+                    offset: currentCount,
+                    isBarsys360Connected: ble.isBarsys360Connected()
+                )
+                // Append new data (1:1 with UIKit pagination concatenation)
+                if let newData = response.data {
+                    myDrinksLoaded.append(contentsOf: newData)
+                    if var model = myDrinksResponseModel {
+                        model.data?.append(contentsOf: newData)
+                        model.offset = response.offset
+                        model.limit = response.limit
+                        myDrinksResponseModel = model
+                    }
+                    for recipe in newData {
+                        env.storage.upsert(recipe: recipe)
+                    }
+                }
+            } catch {
+                // Silently fail pagination — user can scroll again
+            }
+            isLoadingMoreMyDrinks = false
+        }
+    }
+
+    /// Pull-to-refresh handler.
+    /// UIKit: refresh(_ sender:) → selectedTabIndex == 1 ? refreshMyDrinks : getMyFavouritesDataToShow
     private func refresh() async {
-        // Placeholder for the API refresh; the real fetch hooks in here in
-        // production.
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        if selectedTab == .myDrinks {
+            // Reset and reload My Drinks from API
+            myDrinksResponseModel = nil
+            myDrinksLoaded = []
+            myDrinksInitialLoadDone = false
+            loadMyDrinksInitially()
+            // Wait for the load to complete
+            while isLoadingMyDrinks {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        } else {
+            // Barsys Recipes: refresh favourites from local DB
+            // (in production this would call getFavouritesListApi)
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
     }
 }
 
