@@ -1103,20 +1103,37 @@ struct MyProfileView: View {
                 HapticService.light()
                 Task { _ = await viewModel.save(env: env) }
             } label: {
+                // Ports PrimaryOrangeButton.makeOrangeStyle():
+                // iOS 26+: brand gradient capsule, pre-26: flat segmentSelectionColor
                 Text("Update")
                     .font(.system(size: 14))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
-                    .background(
-                        RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                            .fill(Color("segmentSelectionColor"))
-                    )
+                    .background(profileOrangeButtonBackground)
             }
             .buttonStyle(BounceButtonStyle())
             .disabled(!isUpdateEnabled)
             .opacity(isUpdateEnabled ? 1.0 : 0.5)
             .accessibilityLabel("Update profile")
+        }
+    }
+
+    /// Ports PrimaryOrangeButton.makeOrangeStyle() for profile update button.
+    @ViewBuilder
+    private var profileOrangeButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 22.5, style: .continuous)
+                .fill(Color("segmentSelectionColor"))
         }
     }
 

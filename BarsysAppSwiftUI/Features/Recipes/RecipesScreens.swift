@@ -899,24 +899,21 @@ struct RecipeDetailView: View {
                     env.alerts.show(message: Constants.unlikeSuccessMessage)
                 }
             } label: {
+                // UIKit: applyCancelCapsuleGradientBorderStyle() — capsule
+                // glass with 1.5pt gradient border (white@95% highlights).
+                // Pre-26 fallback: craftButtonBorderColor 1pt stroke.
                 Text(favouriteButtonTitle(for: recipe))
                     .font(.system(size: 15))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
-                    .background(
-                        RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                            .fill(Color.white)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                            .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
-                    )
+                    .background(cancelCapsuleBackground)
+                    .overlay(cancelCapsuleBorder)
             }
             .buttonStyle(BounceButtonStyle())
 
-            // Craft — PrimaryOrangeButton (brand `segmentSelectionColor`
-            // base; makeOrangeStyle on iOS 26 composites the glass).
+            // Craft — PrimaryOrangeButton (brand gradient on iOS 26+,
+            // flat segmentSelectionColor on pre-26).
             Button {
                 HapticService.light()
                 if hasUnsavedChanges {
@@ -931,15 +928,14 @@ struct RecipeDetailView: View {
                     craft(recipe)
                 }
             } label: {
+                // UIKit makeOrangeStyle(): iOS 26+ → capsule with brand
+                // gradient (#FAE0CC → #F2C2A1). Pre-26 → flat segmentSelectionColor.
                 Text("Craft")
                     .font(.system(size: 15))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
-                    .background(
-                        RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                            .fill(Color("segmentSelectionColor"))
-                    )
+                    .background(primaryOrangeButtonBackground)
             }
             .buttonStyle(BounceButtonStyle())
         }
@@ -971,6 +967,67 @@ struct RecipeDetailView: View {
                 .ignoresSafeArea(edges: .bottom)
         } else {
             Theme.Gradient.bottomScrim
+        }
+    }
+
+    // MARK: - Shared button backgrounds (ports UIKit PrimaryOrangeButton + applyCancelCapsuleGradientBorderStyle)
+
+    /// Ports UIKit `makeOrangeStyle()` — PrimaryOrangeButton.swift:
+    ///   iOS 26+: Capsule with brand gradient #FAE0CC → #F2C2A1
+    ///   Pre-26:  Flat segmentSelectionColor (#E0B392) with 8pt corners
+    @ViewBuilder
+    private var primaryOrangeButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color("segmentSelectionColor"))
+        }
+    }
+
+    /// Ports UIKit `applyCancelCapsuleGradientBorderStyle()` —
+    /// UIViewClass+GradientStyles.swift:
+    ///   iOS 26+: Capsule glass with cancelButtonGray tint + 1.5pt
+    ///            gradient border (white@95% highlights)
+    ///   Pre-26:  White bg with craftButtonBorderColor 1pt stroke
+    @ViewBuilder
+    private var cancelCapsuleBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+        } else {
+            RoundedRectangle(cornerRadius: 22.5, style: .continuous)
+                .fill(Color.white)
+        }
+    }
+
+    @ViewBuilder
+    private var cancelCapsuleBorder: some View {
+        if #available(iOS 26.0, *) {
+            // UIKit: 1.5pt gradient border with white@95% highlights
+            Capsule(style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.95),
+                            Color(white: 0.85).opacity(0.9),
+                            Color.white.opacity(0.95)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 22.5, style: .continuous)
+                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
         }
     }
 
@@ -1768,52 +1825,30 @@ struct EditRecipeView: View {
     // (`viewWillAppear` in EditViewController.swift L196-L200).
     private var bottomButtons: some View {
         HStack(spacing: 8) {
-            // Save — iOS 26 gradient border capsule vs pre-26 plain border.
+            // Save — ports applyCancelCapsuleGradientBorderStyle():
+            //   iOS 26+: Capsule glass + 1.5pt gradient border
+            //   Pre-26:  White bg + craftButtonBorderColor 1pt stroke
             Button {
                 HapticService.light()
                 save()
             } label: {
-                Group {
-                    if #available(iOS 26.0, *) {
-                        Text(ConstantButtonsTitle.saveButtonTitle)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color("appBlackColor"))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 45)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.white)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Theme.Gradient.cancelCapsuleBorder,
-                                            lineWidth: 1)
-                            )
-                    } else {
-                        Text(ConstantButtonsTitle.saveButtonTitle)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color("appBlackColor"))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 45)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.white)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color("craftButtonBorderColor"),
-                                            lineWidth: 1)
-                            )
-                    }
-                }
-                .opacity(canSave ? 1.0 : 0.5)
+                Text(ConstantButtonsTitle.saveButtonTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 45)
+                    .background(editCancelCapsuleBackground)
+                    .overlay(editCancelCapsuleBorder)
+                    .opacity(canSave ? 1.0 : 0.5)
             }
             .buttonStyle(BounceButtonStyle())
             .disabled(!canSave)
             .accessibilityLabel("Save to My Drinks")
             .accessibilityHint("Saves the recipe to your drinks list")
 
-            // Craft — makeOrangeStyle() + segmentSelectionColor background.
+            // Craft — ports makeOrangeStyle():
+            //   iOS 26+: Capsule with brand gradient #FAE0CC → #F2C2A1
+            //   Pre-26:  Flat segmentSelectionColor, 8pt corners
             Button {
                 HapticService.light()
                 craft()
@@ -1823,10 +1858,7 @@ struct EditRecipeView: View {
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color("segmentSelectionColor"))
-                    )
+                    .background(editOrangeButtonBackground)
                     .opacity(canSave ? 1.0 : 0.5)
             }
             .buttonStyle(BounceButtonStyle())
@@ -1960,6 +1992,58 @@ struct EditRecipeView: View {
         guard validate() else { return }
         if let id = recipeID { env.alerts.show(message: "Crafting \(name)…") ; _ = id }
         dismiss()
+    }
+
+    // MARK: - Button style helpers (ports PrimaryOrangeButton + applyCancelCapsuleGradientBorderStyle)
+
+    @ViewBuilder
+    private var editOrangeButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color("segmentSelectionColor"))
+        }
+    }
+
+    @ViewBuilder
+    private var editCancelCapsuleBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white)
+        }
+    }
+
+    @ViewBuilder
+    private var editCancelCapsuleBorder: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.95),
+                            Color(white: 0.85).opacity(0.9),
+                            Color.white.opacity(0.95)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
+        }
     }
 
     private func validate() -> Bool {
