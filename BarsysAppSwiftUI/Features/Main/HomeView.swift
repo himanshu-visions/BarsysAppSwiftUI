@@ -109,21 +109,27 @@ struct HomeView: View {
 
             VStack(spacing: 0) {
 
-                // ─── 1. Top bar (dbg-mw-KqI): flush to safe area top, 44pt ───
+                // ─── 1. "Hi {name}" greeting (lUD-VJ-a4r) ───
                 //
-                // Leading inset 24pt (storyboard: explore button `O3O-bl-vqo`
-                // leading = safeArea.leading + 24). Trailing inset 16pt
-                // here — the remaining 8pt to reach the UIKit 24pt spec
-                // is added INSIDE `NavigationRightGlassButtons` so the
-                // component's right-edge matches the toolbar-hosted
-                // version on every other screen (pixel-identical across
-                // Explore / MyBar / Mixlists / Recipes / Favorites /
-                // MyProfile / Preferences / Devices / StationsMenu /
-                // StationCleaning / etc.).
-                topBar
-                    .frame(height: 44)
-                    .padding(.leading, 24)
-                    .padding(.trailing, 16)
+                // Previously this lived inside a custom top-bar HStack,
+                // alongside the Explore / Favorites / Profile buttons.
+                // The custom top bar has been removed: those buttons are
+                // now hosted in the system `.toolbar` below so they pick
+                // up iOS 26's native Liquid Glass wrapping — matching
+                // PairYourDevice / Explore / MyBar / etc. pixel-for-pixel.
+                // With the top bar gone, the greeting moves into the
+                // content `VStack` as the first row. This mirrors the
+                // pattern PairYourDevice uses for its "Pair your device"
+                // title (DeviceScreens.swift:33-47).
+                Text("Hi \(displayName)")
+                    .font(.system(size: 17))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                    .accessibilityAddTraits(.isHeader)
 
                 // ─── 2. "Welcome to Barsys AI," (Jlh-K8-Gez) ───
                 Text("Welcome to Barsys AI,")
@@ -131,7 +137,7 @@ struct HomeView: View {
                     .foregroundStyle(Color("darkGrayColor"))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 24)
-                    .padding(.top, 24)
+                    .padding(.top, 16)
                     .accessibilityLabel("Welcome message")
 
                 // ─── 3. Description (Vky-cT-XzT) ───
@@ -163,7 +169,52 @@ struct HomeView: View {
                     .padding(.bottom, speakeasyCardBottomInset)
             }
         }
-        .navigationBarHidden(true)
+        // System toolbar — 1:1 with PairYourDevice
+        // (DeviceScreens.swift:68-95). iOS 26 auto-wraps each item in
+        // its native Liquid Glass capsule/circle, which is exactly the
+        // chrome the user wants to match. Previously HomeView rendered
+        // its own custom HStack top bar that couldn't pick up that
+        // wrapping, which is why the right-nav pill looked duller than
+        // PairYourDevice's.
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // Explore button — bare `imgExploreSmall` icon, 18×22.
+            // iOS 26 toolbar wraps this in a Liquid Glass circle
+            // automatically (same treatment as PairYourDevice's back
+            // button, DeviceScreens.swift:69-80).
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    HapticService.light()
+                    router.selectedTab = .explore
+                } label: {
+                    Image("imgExploreSmall")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 18, height: 22)
+                        .foregroundStyle(Color("appBlackColor"))
+                }
+                .accessibilityLabel("Explore")
+            }
+
+            // Shared 100×48 glass pill — identical call to
+            // PairDeviceView (DeviceScreens.swift:85-94) so iOS 26
+            // toolbar auto-glass renders the same pill on both screens.
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationRightGlassButtons(
+                    onFavorites: { router.push(.favorites) },
+                    onProfile: {
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            router.showSideMenu = true
+                        }
+                    }
+                )
+            }
+        }
+        // Flat `primaryBackgroundColor` nav bar — same modifier
+        // PairDeviceView uses (DeviceScreens.swift:98) so the glass
+        // pill composites on the identical canvas.
+        .chooseOptionsStyleNavBar()
         .task {
             // viewWillAppear → getProfileHere() refreshes "Hi {name}".
             await refreshProfile()
@@ -181,75 +232,14 @@ struct HomeView: View {
 
     // MARK: - Top bar
     //
-    // 1:1 port of storyboard container `dbg-mw-KqI` (Device.storyboard
-    // scene `9lH-Lv-Iqd`), frame 393×44, flush-to-safe-area-top. Live
-    // layout verified against the raw storyboard XML:
-    //
-    //   ┌─────────────────────────────────────────────────┐ 44pt
-    //   │ [🧭]   Hi {name}          [♡  👤]               │
-    //   └─────────────────────────────────────────────────┘
-    //    24pt          16pt            16pt     24pt/40pt
-    //
-    // Storyboard specs:
-    //   • Root view (dbg-mw-KqI): 393×44, bg = clear,
-    //     leading/trailing = safeArea, top = safeArea.top.
-    //   • Explore button (O3O-bl-vqo): 18×22, leading:24 from safeArea,
-    //     image="imgExploreSmall", centerY aligned.
-    //   • Hi label (lUD-VJ-a4r): system 17pt, 2 lines, tailTruncation,
-    //     leading = exploreButton.trailing + 16, centerY = explore.centerY,
-    //     textColor nil (defaults to label color / appBlackColor).
-    //   • **navigationRightGlassView (Kri-Ka-NoE)**: 100×48 container,
-    //     trailing = safeArea.trailing − 24, centerY = nav.centerY.
-    //     iOS 26+ ONLY: `addGlassEffect(isBorderEnabled: true,
-    //                                    cornerRadius: height/2 = 24,
-    //                                    effect: "clear")`.
-    //     Pre-26: NO glass — container is invisible, buttons render
-    //     flat on the primaryBackground.
-    //   • Buttons stack (KMo-iR-2JY): 61×24, horizontal, spacing 16,
-    //     leading = label.trailing + 16, trailing = safeArea.trailing − 24
-    //     (constant `btnProfileIconRightConstraint`). In iOS 26+ that
-    //     constant is mutated to 40pt so the stack sits inside the
-    //     glass pill with 10pt of breathing room left/right.
-    //       – favoriteButton (Olb-vg-yIQ): 21×24, image "favoriteIcon".
-    //       – profileButton (iar-p5-T3L):  24×24, image "profileIcon".
-    private var topBar: some View {
-        HStack(spacing: 16) {
-            // Explore button — `O3O-bl-vqo`, 18×22 imgExploreSmall asset.
-            // Wrapped in the shared `NavigationLeadingGlassButton` so it
-            // matches the glass chrome on the right side
-            // (`NavigationRightGlassButtons`) and the leading button
-            // on ControlCenterView.
-            NavigationLeadingGlassButton(
-                imageName: "imgExploreSmall",
-                iconSize: CGSize(width: 18, height: 22),
-                accessibilityLabel: "Explore"
-            ) {
-                router.selectedTab = .explore
-            }
-
-            // "Hi {name}" — `lUD-VJ-a4r`, system 17pt, 2 lines, leading 16.
-            Text("Hi \(displayName)")
-                .font(.system(size: 17))
-                .foregroundStyle(Color("appBlackColor"))
-                .lineLimit(2)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
-
-            // navigationRightGlassView — shared 100×48 glass pill
-            // (iOS 26+) or bare 61×24 icon stack (pre-26). Factored
-            // into `NavigationRightGlassButtons` so every top-level
-            // screen renders the identical UIKit-parity chrome.
-            NavigationRightGlassButtons(
-                onFavorites: { router.push(.favorites) },
-                onProfile: {
-                    withAnimation(.easeInOut(duration: 0.4)) {
-                        router.showSideMenu = true
-                    }
-                }
-            )
-        }
-    }
+    // HomeView no longer renders a custom top-bar HStack. The Explore
+    // button + heart/profile pill now live in the system `.toolbar` on
+    // the body (see above), which gives iOS 26 a chance to wrap each
+    // item in its native Liquid Glass — matching PairYourDevice /
+    // Explore / MyBar / Mixlists / Recipes pixel-for-pixel. The
+    // "Hi {name}" greeting moved into the content `VStack` as the
+    // first row, same pattern PairYourDevice uses for its
+    // "Pair your device" title.
 
     /// 1:1 with UIKit `bottomConstraintMain` set in viewDidLoad:
     ///   • iOS 26+ → 30pt
@@ -611,16 +601,28 @@ struct NavigationRightGlassButtons: View {
     /// is displayed or both".
     let showsLeading: Bool
 
+    /// When `true`, the two-button pill draws its own
+    /// `.ultraThinMaterial` + 1pt white stroke + shadow. Defaults to
+    /// `false` because every call site in the app is now hosted inside
+    /// a system `ToolbarItemGroup(.topBarTrailing)` (HomeView included,
+    /// after the PairYourDevice-parity refactor), and iOS 26 auto-wraps
+    /// toolbar items in the native Liquid Glass capsule — drawing an
+    /// explicit background on top of that would double-stack the
+    /// effect. Left as an escape hatch for any future non-toolbar host.
+    let rendersOwnPillBackground: Bool
+
     init(leadingImageName: String = "favoriteIcon",
          leadingSystemImage: String? = nil,
          leadingAccessibilityLabel: String = "Favorites",
          showsLeading: Bool = true,
+         rendersOwnPillBackground: Bool = false,
          onFavorites: @escaping () -> Void,
          onProfile: @escaping () -> Void) {
         self.leadingImageName = leadingImageName
         self.leadingSystemImage = leadingSystemImage
         self.leadingAccessibilityLabel = leadingAccessibilityLabel
         self.showsLeading = showsLeading
+        self.rendersOwnPillBackground = rendersOwnPillBackground
         self.onFavorites = onFavorites
         self.onProfile = onProfile
     }
@@ -690,8 +692,26 @@ struct NavigationRightGlassButtons: View {
             }
             .padding(.horizontal, 14)
             .frame(width: 100, height: 48)
-//            .background(glassStyledBackground(capsule: true))
-//            .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 4)
+            // Render the explicit glass pill background on every call
+            // site by default so HomeView's custom top bar and the
+            // toolbar-hosted screens (Explore / PairDevice / MyBar /
+            // Mixlists / Recipes / Favorites / MyProfile / ControlCenter)
+            // all look identical. iOS 26 system-toolbar auto-glass
+            // alone was rendering differently from HomeView's custom
+            // top bar, which is what the user flagged.
+            .background(
+                Group {
+                    if rendersOwnPillBackground {
+                        glassStyledBackground(capsule: true)
+                    }
+                }
+            )
+            .shadow(
+                color: rendersOwnPillBackground ? .black.opacity(0.14) : .clear,
+                radius: rendersOwnPillBackground ? 10 : 0,
+                x: 0,
+                y: rendersOwnPillBackground ? 4 : 0
+            )
         } else {
             // Pre-iOS 26: **exactly 61×24** — icons on the flat
             // primaryBackground. No glass effect, no border, no
