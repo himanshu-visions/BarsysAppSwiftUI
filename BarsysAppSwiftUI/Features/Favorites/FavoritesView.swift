@@ -118,6 +118,17 @@ struct FavoritesView: View {
     @State private var didTrackView = false
     @State private var recipeToEdit: Recipe? = nil
 
+    /// Forces `rows` to re-evaluate after a mutation that doesn't go
+    /// through a `@Published` source. `MockStorageService` is plain
+    /// (not `ObservableObject`) so calls to `env.storage.toggleFavorite`
+    /// don't broadcast — without this trigger the heart-tap on the
+    /// Barsys Recipes tab would update storage but the row would stay
+    /// on screen until the user navigated away and back. UIKit
+    /// `getMyFavouritesDataToShow(indexToLike:)` re-fetches the
+    /// favourites array after the success alert is dismissed; this
+    /// trigger plays the same role for the SwiftUI port.
+    @State private var favouritesRefreshTick: Int = 0
+
     // MARK: - My Drinks Pagination State
     // 1:1 port of UIKit FavouritesRecipesAndDrinksViewModel pagination:
     //   var myDrinksResponseModel: MyDrinksDataModel? = nil
@@ -150,6 +161,15 @@ struct FavoritesView: View {
     ///       ORDER BY r.barsys360Compatible DESC, r.favCreatedAt DESC
     ///   • My Drinks: uses API response order (server-sorted)
     private var rows: [Recipe] {
+        // Reading `favouritesRefreshTick` here forces SwiftUI to re-evaluate
+        // this computed property whenever the tick changes — required
+        // because `env.storage.favorites()` reads from a non-observable
+        // service (`MockStorageService` isn't an ObservableObject), so
+        // the toggle would otherwise leave the row visible until the
+        // next external trigger. This is the SwiftUI equivalent of
+        // UIKit's explicit `tblFavouritesRecipesAndDrinks.reloadData()`
+        // call after `applyLikeResult`.
+        _ = favouritesRefreshTick
         let pool: [Recipe]
         switch selectedTab {
         case .barsysRecipes:
@@ -530,61 +550,101 @@ struct FavoritesView: View {
     ///   **Tab 1 (My Drinks)**: `isLike` TOGGLES the `isMyDrinkFavourite`
     ///     flag. Only the in-memory response model is updated — NO DB
     ///     write (unlike Tab 0).
+    /// 1:1 port of UIKit `favouriteAction(_ sender:)`
+    /// (FavouritesRecipesAndDrinksViewController+TableView.swift L55-108)
+    /// chained with `viewModel.performLikeUnlike` +
+    /// `viewModel.applyLikeResult` + `getMyFavouritesDataToShow(indexToLike:)`.
+    ///
+    /// UIKit sequence:
+    ///   1. Haptic .light(); disable user interaction.
+    ///   2. Check connectivity → show offline alert if needed.
+    ///   3. Call API likeUnlikeApi (Tab 0 always isLike=false; Tab 1 toggles).
+    ///   4. On API success → showDefaultAlert(message: ..., okTitle: "OK")
+    ///      → on OK callback:
+    ///        a. applyLikeResult — Tab 0: DB update remove from favourites;
+    ///                              Tab 1: flip `isMyDrinkFavourite` in-memory.
+    ///        b. Tab 0 → getMyFavouritesDataToShow(indexToLike: index) — RE-FETCH
+    ///                    the favourites array so the unfavourited row drops out.
+    ///        c. Tab 1 → reloadData() (no re-fetch — local toggle suffices).
+    ///   5. On API failure → showDefaultAlert("Operation failed").
+    ///
+    /// **Bug fixed**: previously the storage toggle ran BEFORE the alert
+    /// and the row stayed visible because `MockStorageService` is not
+    /// observable. Now the toggle runs INSIDE the alert's OK callback
+    /// AND `favouritesRefreshTick` is incremented to force `rows` to
+    /// re-evaluate — exactly mirroring UIKit's "alert OK → reload"
+    /// sequence so the row disappears on the same gesture as in UIKit.
     private func toggleFavourite(_ recipe: Recipe) {
         HapticService.light()
 
         if selectedTab == .barsysRecipes {
-            // ── Tab 0: ALWAYS unlike (UIKit L342: isLike = false) ──
-            env.storage.toggleFavorite(recipe.id)  // DB update (UIKit: applyLikeResult → updateFavouriteStatus)
-            Task {
+            // ── Tab 0: UNLIKE (UIKit L342: isLike = false) ──
+            // Fire the API request first, then defer the local mutation
+            // until the user dismisses the success alert. Optimistic
+            // local removal is intentionally avoided so the user sees
+            // the row disappear AS THEY DISMISS the alert (matches UIKit
+            // exactly, where the row stays visible during the OK alert
+            // and only drops out when getMyFavouritesDataToShow runs).
+            Task { @MainActor in
                 do {
                     _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: false)
+                    env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)
+                    // UIKit: showDefaultAlert(message: responseMessage,
+                    //                         okTitle: "OK") { okAction in ... }
+                    env.alerts.show(message: Constants.unlikeSuccessMessage) {
+                        // applyLikeResult (UIKit L370-372 Tab 0):
+                        //   storage.updateFavouriteStatus(forRecipeId: recipeId, isFavourite: false)
+                        env.storage.toggleFavorite(recipe.id)
+                        // getMyFavouritesDataToShow(indexToLike: index)
+                        //   — re-fetch the favourites listing so the
+                        //   removed row drops out. SwiftUI parity:
+                        //   bump the refresh tick to force `rows` to
+                        //   re-evaluate against the now-updated storage.
+                        favouritesRefreshTick &+= 1
+                    }
                 } catch {
-                    env.storage.toggleFavorite(recipe.id)  // Revert on failure
+                    // UIKit failure path — generic error alert.
+                    env.alerts.show(message: Constants.recipeFavouriteError)
                 }
             }
-            env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)
-            env.alerts.show(message: Constants.unlikeSuccessMessage)
         } else {
-            // ── Tab 1: TOGGLE isMyDrinkFavourite (UIKit L350-356) ──
+            // ── Tab 1: TOGGLE isMyDrinkFavourite (UIKit L344-352) ──
             let willBeFav: Bool
             if let idx = myDrinksLoaded.firstIndex(where: { $0.id == recipe.id }) {
                 willBeFav = !(myDrinksLoaded[idx].isMyDrinkFavourite ?? false)
-                myDrinksLoaded[idx].isMyDrinkFavourite = willBeFav
-                myDrinksLoaded[idx].isFavourite = willBeFav
             } else {
                 willBeFav = true
             }
-            // In-memory only — UIKit Tab 1 does NOT write to DB
-            // (applyLikeResult L374: myDrinksResponseModel?.data?[index].isMyDrinkFavourite = isLike)
-            if var model = myDrinksResponseModel {
-                if let idx = model.data?.firstIndex(where: { $0.id == recipe.id }) {
-                    model.data?[idx].isMyDrinkFavourite = willBeFav
-                    myDrinksResponseModel = model
-                }
-            }
-            // Also update storage for consistency across screens
-            env.storage.toggleFavorite(recipe.id)
-
-            Task {
+            Task { @MainActor in
                 do {
                     _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: willBeFav)
-                } catch {
-                    // Revert on failure
-                    if let idx = myDrinksLoaded.firstIndex(where: { $0.id == recipe.id }) {
-                        myDrinksLoaded[idx].isMyDrinkFavourite = !willBeFav
-                        myDrinksLoaded[idx].isFavourite = !willBeFav
+                    env.analytics.track(
+                        (willBeFav ? TrackEventName.favouriteRecipeAdded
+                                   : TrackEventName.favouriteRecipeRemoved).rawValue
+                    )
+                    env.alerts.show(message: willBeFav
+                                    ? Constants.likeSuccessMessage
+                                    : Constants.unlikeSuccessMessage) {
+                        // applyLikeResult (UIKit L373-374 Tab 1):
+                        //   myDrinksResponseModel.data[index].isMyDrinkFavourite = isLike
+                        //   (in-memory only, no DB write)
+                        if let idx = myDrinksLoaded.firstIndex(where: { $0.id == recipe.id }) {
+                            myDrinksLoaded[idx].isMyDrinkFavourite = willBeFav
+                            myDrinksLoaded[idx].isFavourite = willBeFav
+                        }
+                        if var model = myDrinksResponseModel {
+                            if let idx = model.data?.firstIndex(where: { $0.id == recipe.id }) {
+                                model.data?[idx].isMyDrinkFavourite = willBeFav
+                                myDrinksResponseModel = model
+                            }
+                        }
+                        // UIKit Tab 1: tblFavouritesRecipesAndDrinks.reloadData()
+                        // — local @State writes already trigger SwiftUI re-render.
                     }
-                    env.storage.toggleFavorite(recipe.id)
+                } catch {
+                    env.alerts.show(message: Constants.recipeFavouriteError)
                 }
             }
-            env.analytics.track(
-                (willBeFav ? TrackEventName.favouriteRecipeAdded
-                           : TrackEventName.favouriteRecipeRemoved).rawValue
-            )
-            env.alerts.show(message: willBeFav
-                            ? Constants.likeSuccessMessage
-                            : Constants.unlikeSuccessMessage)
         }
     }
 
