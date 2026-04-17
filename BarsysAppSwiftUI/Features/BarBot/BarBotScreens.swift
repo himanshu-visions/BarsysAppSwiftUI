@@ -1972,20 +1972,30 @@ struct BarBotCraftView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        // Principal: device icon + name when connected
-        // (UIKit BarBotViewController shows the connected device
-        // badge in the nav bar centre).
+        // Principal: device icon ONLY when connected.
+        //
+        // 1:1 port of UIKit BarBotViewController centre-nav composite:
+        //   BarBot.storyboard L711-727 — UIStackView `H4q-Nd-6Zi`
+        //   containing `imgDevice` (25×25 scaleAspectFit) +
+        //   `lblDeviceName` (12pt, sibling in the stack).
+        //
+        //   BarBotViewController.swift L252-257 — `updateDeviceInfo()`
+        //   called from `viewWillAppear` (L115) unconditionally sets
+        //   `lblDeviceName.isHidden = true`. There is NO code path in
+        //   the controller or view model that ever sets
+        //   `lblDeviceName.isHidden = false` — the device name is
+        //   never rendered, even though the text is assigned.
+        //
+        // Match: render only the 25×25 icon here (no accompanying
+        // device-name label). The HStack + device-kind label is NOT
+        // present in the visible UIKit output.
         if isConnected && !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    Image(deviceIconName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
-                    Text(deviceKindName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel(deviceKindName)
             }
         }
              
