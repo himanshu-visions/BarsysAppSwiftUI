@@ -2953,19 +2953,7 @@ struct BarBotCraftingView: View {
         }
         .frame(height: 452)
         .frame(maxWidth: .infinity)
-        .background(
-            // Top-corners-only radius 24 (UIKit `BarsysCornerRadius.pill`,
-            // `maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]`).
-            UnevenRoundedRectangle(
-                topLeadingRadius: 24,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 24,
-                style: .continuous
-            )
-            .fill(Color(.systemBackground))
-            .ignoresSafeArea(edges: .bottom)
-        )
+        .background(sheetGlassBackground)
         .overlay(alignment: .topTrailing) {
             // btnCross hides during `.awaitingGlassRemoval` — UIKit L245.
             if viewModel.state != .awaitingGlassRemoval {
@@ -3054,6 +3042,69 @@ struct BarBotCraftingView: View {
     // UIKit storyboard default for lblGarnishesDescription (L1211-1216).
     private static let garnishDescription =
         "Garnish to your heart's content. Your drink is now complete. Enjoy!"
+
+    // Sheet glass background — 1:1 port of UIKit
+    // `BarBotCraftingViewController.swift` L216-218:
+    //
+    //     mainSheetView.layer.maskedCorners = [.layerMinXMinYCorner,
+    //                                           .layerMaxXMinYCorner]
+    //     mainSheetView.roundCorners = BarsysCornerRadius.pill   // = 24
+    //     mainSheetView.addGlassEffect(cornerRadius: BarsysCornerRadius.pill)
+    //
+    // The underlying `addGlassEffect` with all defaults (tintColor: .clear,
+    // isBorderEnabled: false, alpha: 1.0, effect: "regular") creates a
+    // `UIGlassEffect(style: .regular)` UIVisualEffectView — iOS 26+ Liquid
+    // Glass with the default regular translucency. Pre-iOS 26 the call
+    // is a no-op (the guard `if #available(iOS 26.0, *)`) so the sheet
+    // falls back to its storyboard `.systemBackground` fill.
+    //
+    // SwiftUI recipe for the same visual family:
+    //   • iOS 26+ → `.regularMaterial` (SwiftUI's closest analogue to
+    //               `UIGlassEffect(style: .regular)` — frosted, more
+    //               opaque than `.ultraThinMaterial` which models
+    //               UIGlassEffect's `.clear` style instead).
+    //   • Pre-26  → solid `Color(.systemBackground)` (identical to the
+    //               UIKit pre-26 fallback where the glass call is
+    //               compiled out).
+    //
+    // Only top-left + top-right corners are rounded — matches the UIKit
+    // `maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]`
+    // directive that keeps the sheet bottom flush with the screen edge.
+    @ViewBuilder
+    private var sheetGlassBackground: some View {
+        let shape = UnevenRoundedRectangle(
+            topLeadingRadius: 24,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 24,
+            style: .continuous
+        )
+        if #available(iOS 26.0, *) {
+            shape
+                .fill(.regularMaterial)
+                // Subtle white tint overlay so the sheet reads as a
+                // bright glass card against dark backdrops — matches
+                // the `addGlassEffect` regular-style visual with clear
+                // tintColor default.
+                .overlay(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 24,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: 24,
+                        style: .continuous
+                    )
+                    .fill(Color(.systemBackground).opacity(0.45))
+                )
+                .ignoresSafeArea(edges: .bottom)
+        } else {
+            // Pre-iOS 26 — UIKit's addGlassEffect is a no-op, so the
+            // sheet shows only the storyboard systemBackground.
+            shape
+                .fill(Color(.systemBackground))
+                .ignoresSafeArea(edges: .bottom)
+        }
+    }
 
     private var recipeImage: some View {
         ZStack {
