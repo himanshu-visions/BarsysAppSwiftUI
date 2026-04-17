@@ -173,6 +173,13 @@ enum TrackEventName: String {
     case systemResetControlCenter = "system_reset_control_center"
     case controlCenterCleanStationViewed = "view_clean_station_control_center"
     case controlCenterStationMenuViewed = "view_station_menu_control_center"
+    /// Fires when the user opens the device-specific tutorial video from
+    /// the Control Center menu. 1:1 with UIKit
+    /// `ControlCenterViewController` L201:
+    ///   TrackEventsClass().addBrazeCustomEventWithEventName(
+    ///       eventName: TrackEventName.controlCenterTutorialsViewed.rawValue
+    ///   )
+    case controlCenterTutorialsViewed = "view_tutorial_control_center"
 
     // BarBot
     case viewBarBotViewedFromTabBar = "view_barbot_nav_bar"

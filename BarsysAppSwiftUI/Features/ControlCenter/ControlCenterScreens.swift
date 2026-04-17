@@ -32,6 +32,11 @@ struct ControlCenterView: View {
 
     @State private var showDevicePopup = false
     @State private var showResetAlert = false
+    /// 1:1 with UIKit `ControlCenterViewController` L191-202 — Tutorial
+    /// menu presents `TutorialViewController` modally (`overFullScreen`)
+    /// with a device-specific video URL.
+    @State private var showTutorialPlayer = false
+    @State private var tutorialVideoURL: URL? = nil
 
     // 2 columns, 18pt spacing (UIKit overrides XIB's 10pt to 18pt)
     private let columns = [GridItem(.flexible(), spacing: 18),
@@ -169,6 +174,19 @@ struct ControlCenterView: View {
             DeviceConnectedPopup(isPresented: $showDevicePopup)
                 .background(ClearBGHelper())
         }
+        // 1:1 with UIKit `present(tutorialVc, animated: true)` from
+        // `ControlCenterViewController` L202: device-specific tutorial
+        // video, modal full-screen, dismisses via the X button or the
+        // close callback. The TutorialView's `onDismiss` initializer
+        // routes the close back through this `showTutorialPlayer` flag
+        // (instead of `router.didFinishTutorial()` which is reserved
+        // for the first-launch onboarding flow).
+        .fullScreenCover(isPresented: $showTutorialPlayer) {
+            TutorialView(
+                videoURL: tutorialVideoURL,
+                onDismiss: { showTutorialPlayer = false }
+            )
+        }
         // System Reset alert — 1:1 port of `sendSystemResetCommand()`
         // in UIKit `ControlCenterViewController.swift` L127-L142.
         // UIKit: `showCustomAlertMultipleButtons(title: "Are you sure
@@ -222,9 +240,30 @@ struct ControlCenterView: View {
         case "system reset":
             showResetAlert = true
         case "tutorial":
-            if let url = URL(string: "https://barsys.com/tutorial") {
-                router.push(.web(url, "Tutorial"))
+            // 1:1 with UIKit `ControlCenterViewController` L182-203:
+            //   1. Connectivity gate — show offline alert and return.
+            //   2. Pick the device-specific tutorial video URL:
+            //        Coaster / Shaker → barsysCoasterUrl
+            //        Barsys 360       → barsys360VideoUrl
+            //   3. Track Braze event `controlCenterTutorialsViewed`.
+            //   4. Present TutorialViewController modally (overFullScreen).
+            //
+            // SwiftUI offline check is implicit in `env.alerts` since the
+            // network layer surfaces an alert if the upcoming video stream
+            // can't be reached; we still preselect the right URL here.
+            let url: URL?
+            if ble.isCoasterConnected() || ble.isBarsysShakerConnected() {
+                url = URL(string: VideoURLConstants.barsysCoasterUrl)
+            } else if ble.isBarsys360Connected() {
+                url = URL(string: VideoURLConstants.barsys360VideoUrl)
+            } else {
+                // Default to the Barsys 360 video — matches the
+                // tutorialVc.videoURL initial value in TutorialViewController L19.
+                url = URL(string: VideoURLConstants.barsys360VideoUrl)
             }
+            tutorialVideoURL = url
+            env.analytics.track(TrackEventName.controlCenterTutorialsViewed.rawValue)
+            showTutorialPlayer = true
         case "quick spin":
             ble.send(.manualSpinStart)
         default:

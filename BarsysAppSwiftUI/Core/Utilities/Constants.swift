@@ -329,3 +329,16 @@ enum ConstantButtonsTitle {
     static let yesPleaseButtonTitle = "Yes please!"
     static let noStayInAppButtonTitle = "No, stay in the app"
 }
+
+// MARK: - VideoURLConstants
+//
+// 1:1 port of UIKit `VideoURLConstants` (ApiConstants.swift L97-101).
+// Tutorial videos hosted on `media.barsys.com` — used by:
+//   • TutorialViewController (first-launch onboarding video)
+//   • Control Center "Tutorial" menu item (device-specific video)
+//   • DevicePairedViewModel.videoURLForConnectedDevice (DevicePaired tile)
+enum VideoURLConstants {
+    static let barsys360VideoUrl = "https://media.barsys.com/videos/Copy%20of%20Barsys%20360%20Instruction%20Video%20Horizontal.mp4"
+    static let barsysCoasterUrl  = "https://media.barsys.com/videos/Coaster_Instructiom_H.mp4"
+    static let barsysShakerUrl   = "https://media.barsys.com/videos/Shaker_Instructiom_H.mp4"
+}

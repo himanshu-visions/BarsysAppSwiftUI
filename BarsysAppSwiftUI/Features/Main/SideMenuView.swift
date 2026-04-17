@@ -985,11 +985,16 @@ struct DeviceConnectedPopup: View {
 
     var body: some View {
         ZStack {
-            // Full-screen frosted backdrop — UIKit
-            // `jVb-RO-feQ.blurEffect = .prominent`. Tap anywhere to
-            // dismiss.
+            // Full-screen frosted backdrop — 1:1 with UIKit
+            // `jVb-RO-feQ.blurEffect = .prominent` (a heavier frost than
+            // `.thin` / `.regular`). SwiftUI's `.regularMaterial` is the
+            // closest documented bridge to the iOS `prominent` blur
+            // intensity — `.thinMaterial` was too subtle and let the
+            // page background bleed through cleanly enough to make the
+            // popup card lose contrast against the connected-device
+            // illustration. Tap anywhere outside the card to dismiss.
             Rectangle()
-                .fill(.thinMaterial)
+                .fill(.regularMaterial)
                 .ignoresSafeArea()
                 .onTapGesture { isPresented = false }
                 .transition(.opacity)
