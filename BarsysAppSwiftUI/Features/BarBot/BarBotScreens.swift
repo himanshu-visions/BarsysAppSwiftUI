@@ -1728,6 +1728,15 @@ struct BarBotCraftView: View {
     @State private var historyCloseDragProgress: CGFloat = 0
     @State private var pendingHistoryOpen = false
 
+    // BarBot crafting modal — 1:1 with UIKit
+    // `BarBotCoordinator.showBarBotCrafting(...)` which presents
+    // `BarBotCraftingViewController` as `.overFullScreen` with a
+    // fade-zoom transitioning delegate. In SwiftUI we use a
+    // `.fullScreenCover(item:)` bound to the recipe; the presented view
+    // (`BarBotCraftingView`) renders the 30% black backdrop + bottom
+    // sheet itself so the cover's underlying host stays clear.
+    @State private var craftingRecipe: BarBotRecipeElement?
+
     private var isConnected: Bool { ble.isAnyDeviceConnected }
     private var deviceIconName: String {
         if ble.isBarsys360Connected() { return "icon_barsys_360" }
@@ -1842,6 +1851,13 @@ struct BarBotCraftView: View {
         .toolbar(showHistory ? .hidden : .visible, for: .navigationBar)
         .toolbar(showHistory ? .hidden : .visible, for: .tabBar)
         .onAppear { if viewModel.messages.isEmpty { viewModel.setupNewChat() } }
+        // BarBot crafting modal — see `craftingRecipe` state var.
+        .fullScreenCover(item: $craftingRecipe) { r in
+            BarBotCraftingView(recipe: r) {
+                craftingRecipe = nil
+            }
+            .background(ClearBackgroundView())
+        }
         .confirmationDialog("Select Image", isPresented: $showAttachmentSheet, titleVisibility: .hidden) {
             Button("Camera") {
                 imagePickerSource = .camera
@@ -2077,11 +2093,12 @@ struct BarBotCraftView: View {
             router.push(.pairDevice, in: .barBot)
             return
         }
-        // Note: quantities already normalized via recipe.normalizedIngredients.
-        // With no backend full-recipe fetch available here, we route to the
-        // crafting screen using a new RecipeID; the crafting flow handles the
-        // fallback (matches UIKit behavior when full_recipe_id lookup fails).
-        router.push(.crafting(RecipeID()), in: .barBot)
+        // Present BarBotCraftingView as a full-screen cover over the
+        // BarBot chat — mirrors UIKit
+        // `BarBotCoordinator.showBarBotCrafting(...)` which uses
+        // `.overFullScreen` + `FadeZoomTransitioningDelegate`.
+        HapticService.light()
+        craftingRecipe = recipe
     }
 
     private func handleMixlist(_ m: BarBotMixlistElement) {
@@ -2605,6 +2622,676 @@ struct QRReaderView: View {
         .navigationTitle("QR Reader")
         .navigationBarTitleDisplayMode(.inline)
     }
+}
+
+// MARK: - BarBotCraftingView
+//
+// 1:1 port of UIKit `BarBotCraftingViewController`
+//   Controllers/BarBot/BarBotCraft/BarBotCraftingViewController.swift
+//   Controllers/BarBot/BarBotCraft/BarBotCraftingViewController+Actions.swift
+//   Controllers/BarBot/BarBotCraft/BarBotCraftingViewController+BleResponse.swift
+//   StoryBoards/Base.lproj/BarBot.storyboard (scene `uAy-Xq-2jT`)
+//
+// Presentation
+// -------------
+// UIKit: `.overFullScreen` modal with `FadeZoomTransitioningDelegate`,
+// `view.backgroundColor = .clear`. The scene hosts:
+//   • `btnDismiss` — full-screen black overlay at α=0.30 (UIKit L1118)
+//   • `mainSheetView` — 393×452 bottom sheet, corner radius 24 (top-left
+//     + top-right only), `.systemBackground`, glass effect border
+//
+// SwiftUI port: `.fullScreenCover` with a transparent background
+// (`ClearBackgroundView`) so the dim scrim and sheet composition are
+// rendered by this view. The sheet is animated into place with a spring
+// (match UIKit's fade-zoom feel).
+//
+// UI elements (per storyboard + BarBotCraftingViewController.swift setupView)
+// --------------------------------------------------------------------------
+//   lblRecipeName          SFProDisplay 20pt,    grayBorderColor
+//   lblGlassStatusText     SFProDisplay-SB 30pt, barbotBorderColor
+//   lblIngredientName      SFProDisplay-SB 30pt, barbotBorderColor
+//   lblIngredientQuantity  SFProDisplay-SB 28pt, barbotBorderColor
+//   lblGarnishTitle        SFProDisplay-Bold 24, barbotBorderColor
+//   lblGarnishesText       SFProDisplay-Med 18,  barbotBorderColor
+//   lblGarnishesDescription SFProDisplay-Med 16, barbotBorderColor
+//   imgRecipe              120×120 circle, scaleAspectFill
+//   collectionViewProgress 10pt-tall horizontal segments
+//   btnCross               33×33, rounded 10, grayBorderColor 1pt border
+//   saveButton             168×48, rounded 24, grayBorderColor 1pt border
+//                          "Save", bold system 15, grayBorderColor text
+//   btnMakeItAgain         168×48, rounded 24, grayBorderColor bg
+//                          "Make it Again", bold system 15, white text
+//
+// State → visibility (UIKit `updateIngredientsUI`, BleResponse handlers)
+// ---------------------------------------------------------------------
+// Pouring (.idle / .waitingForGlass / .dispensing / .glassLifted):
+//   viewGlassStatus: visible (hidden for Shaker)
+//   viewIngredients: visible
+//   viewGarnish:     hidden
+//   viewImageSuperView: hidden
+//   bottomButtonsView:  hidden
+//   btnCross:        visible
+//
+// Awaiting glass removal (.awaitingGlassRemoval):
+//   lblGlassStatusText: "Remove Glass"
+//   btnCross:         hidden (UIKit L245)
+//
+// Completed (.completed):
+//   viewGlassStatus: hidden
+//   viewIngredients: hidden
+//   viewGarnish:     visible (if garnish list non-empty)
+//   viewImageSuperView: visible
+//   bottomButtonsView:  visible
+//   btnCross:        visible
+//
+// BLE wiring
+// ----------
+// Reuses `CraftingViewModel` so the 9-state machine + every BleResponse
+// branch (glassLifted / glassPlaced / dispensingStarted / dispensingComplete
+// / allIngredientsPoured / cancelAcknowledged / dataFlushed /
+// shakerNotFlat / shakerFlat / quantityFeedback) are handled identically
+// to the main CraftingView — same as UIKit, which shares the same
+// command/response code path between `CraftingViewController` and
+// `BarBotCraftingViewController`.
+//
+// BLE commands sent:
+//   • Craft:  `200,q1,q2,…,q14` (Coaster/Shaker) or
+//             `200,s1,q1,…,s6,q6` padded to 15 (Barsys 360)
+//     → `ble.send(.craftRaw(command:))` via CraftingViewModel.start(...)
+//   • Cancel: `202` → `ble.send(.cancel)` via CraftingViewModel.cancel(ble:)
+
+struct BarBotCraftingView: View {
+
+    // MARK: - Inputs
+
+    let recipe: BarBotRecipeElement
+    let onDismiss: () -> Void
+
+    // MARK: - Environment
+
+    @EnvironmentObject private var ble: BLEService
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var router: AppRouter
+
+    // MARK: - State
+
+    @StateObject private var viewModel = CraftingViewModel()
+    @State private var didStart = false
+    /// Drives sheet slide-up on appear.
+    @State private var sheetOffsetY: CGFloat = 600
+    /// `true` once the cross button was tapped — covers UIKit
+    /// `strGlassStatusText == removeGlassToCompleteTheDrink` guard so a
+    /// second tap is a no-op. Reset by `onMakeItAgainTap` so the cancel
+    /// button remains functional across multiple craft sessions.
+    @State private var cancelRequested = false
+    /// Shaker-flat-surface alert — 1:1 port of UIKit
+    /// `ShakerFlatSurfacePopUpViewController` (BarBotCraftingViewController
+    /// +Actions.swift L172-197). Shown on `.shakerNotFlat` + `.glassWaiting`
+    /// (Shaker only), dismissed on `.shakerFlat` + `.glassPlaced(is219:true)`
+    /// + `.cancelAcknowledged`.
+    @State private var showShakerFlatAlert = false
+
+    // MARK: - Derived inputs
+    //
+    // UIKit `BarBotCoordinator.showBarBotCrafting(...)` splits the recipe
+    // into three lists before presenting the crafting VC:
+    //
+    //     garnishIngredientsArr / additionalIngredientsArr / recipeIngredientsArr
+    //
+    // In the BarBot chat flow we only have the normalized ingredient list.
+    // Port the UIKit category-based split by inspecting unit + name:
+    //
+    //   • unit == "pc" / "piece" / "each" → garnish (not pourable)
+    //   • name contains "garnish"         → garnish
+    //   • everything else                 → main pour
+
+    /// Main pour ingredients — quantities drive the `200,…` command.
+    private var mainIngredients: [BarBotIngredient] {
+        recipe.normalizedIngredients.filter { !Self.isGarnishIngredient($0) }
+    }
+
+    /// Garnish ingredients — shown in the post-completion garnish block.
+    private var garnishIngredients: [BarBotIngredient] {
+        recipe.normalizedIngredients.filter { Self.isGarnishIngredient($0) }
+    }
+
+    private var garnishDisplayText: String {
+        garnishIngredients
+            .compactMap { $0.name?.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
+
+    private static func isGarnishIngredient(_ ing: BarBotIngredient) -> Bool {
+        let unit = (ing.unit ?? "").lowercased()
+        if unit == "pc" || unit == "piece" || unit == "each" { return true }
+        let name = (ing.name ?? "").lowercased()
+        return name.contains("garnish")
+    }
+
+    /// Convert BarBot ingredients into the storage `Recipe` format so
+    /// `CraftingViewModel.start(recipe:ble:)` can drive the same command
+    /// builder used by the main CraftingView.
+    private var workingRecipe: Recipe {
+        let ingredients: [Ingredient] = mainIngredients.map { ing in
+            Ingredient(
+                localID: IngredientID(),
+                name: ing.name ?? "",
+                unit: ing.unit ?? "ml",
+                notes: nil,
+                category: nil,
+                quantity: ing.quantity ?? 0,
+                perishable: nil,
+                substitutes: nil,
+                ingredientOptional: nil
+            )
+        }
+        return Recipe(
+            id: RecipeID(recipe.full_recipe_id ?? UUID().uuidString),
+            name: recipe.name,
+            description: recipe.descriptions,
+            image: ImageModel(url: recipe.imageModel?.url, alt: nil),
+            ingredients: ingredients,
+            instructions: []
+        )
+    }
+
+    // MARK: - Shaker-hides-glass-status
+    //
+    // UIKit `updateIngredientsUI` L205-211: `viewGlassStatus` is hidden
+    // when a Shaker is connected (the Shaker firmware never prompts for
+    // glass placement before dispensing — it reports its own flat-surface
+    // state instead).
+    private var shouldShowGlassStatus: Bool {
+        !ble.isBarsysShakerConnected()
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            // UIKit `btnDismiss` — full-screen 30% black overlay
+            // (BarBot.storyboard L1118).
+            Color.black.opacity(0.30)
+                .ignoresSafeArea()
+
+            sheet
+                .offset(y: sheetOffsetY)
+                .animation(.spring(response: 0.45, dampingFraction: 0.85),
+                           value: sheetOffsetY)
+        }
+        .background(ClearBackgroundView())
+        .onAppear {
+            // Slide up.
+            sheetOffsetY = 0
+            guard !didStart else { return }
+            didStart = true
+            // Set active crafting screen so BLE disconnect alerts use the
+            // "during crafting" copy path (AppRouter.swift L230).
+            router.activeCraftingScreen = .barBotCrafting
+            // Fire analytics (UIKit trackEventCraftBegin).
+            Task { @MainActor in
+                await viewModel.start(recipe: workingRecipe, ble: ble)
+            }
+        }
+        .onDisappear {
+            if router.activeCraftingScreen == .barBotCrafting {
+                router.activeCraftingScreen = nil
+            }
+            env.loading.hide()
+        }
+        // Re-drive the state machine from BLE responses. Wiring matches
+        // CraftingScreens.swift `CraftingView` body.
+        .onReceive(ble.$lastResponse.compactMap { $0 }) { response in
+            // Shaker-only flat-surface handling — UIKit
+            // `BarBotCraftingViewController+BleResponse.swift` L269-353
+            // and `+Actions.swift` L172-197. The flat-surface alert is
+            // independent of the 9-state machine, so handle it here
+            // BEFORE delegating to CraftingViewModel.dispatch.
+            if ble.isBarsysShakerConnected() {
+                switch response {
+                case .shakerNotFlat:
+                    showShakerFlatAlert = true
+                case .shakerFlat, .glassPlaced(is219: true):
+                    showShakerFlatAlert = false
+                case .glassWaiting:
+                    // UIKit: `.glassWaiting` on Shaker also shows the popup
+                    // (firmware emits `219,405` instead of `200,410`).
+                    showShakerFlatAlert = true
+                case .cancelAcknowledged:
+                    // Dismiss the popup if the cancel path acknowledges.
+                    showShakerFlatAlert = false
+                default:
+                    break
+                }
+            }
+
+            viewModel.dispatch(
+                response,
+                ble: ble,
+                onCompleted: nil,    // BarBot stays on the sheet → show
+                                     // Save / Make it Again bottom buttons.
+                onDismiss: { finishDismiss() }
+            )
+        }
+        // Mid-craft disconnect — mirrors UIKit disconnect alert path which
+        // also dismisses the modal.
+        .onChange(of: ble.isAnyDeviceConnected) { connected in
+            if !connected { finishDismiss() }
+        }
+        // Shaker flat-surface popup — mirrors UIKit
+        // `ShakerFlatSurfacePopUpViewController` (alert storyboard /
+        // `Controller.shakerFlatSurfacePopUpVc`). The UIKit popup is a
+        // `.overFullScreen` clear-background alert with a single
+        // "Cancel Drink" action that sends `.cancel` + starts the
+        // "Canceling drink" loader — ported below.
+        .alert(
+            "Place shaker on a flat surface",
+            isPresented: $showShakerFlatAlert,
+            actions: {
+                Button("Cancel Drink", role: .destructive) {
+                    onCancelTap()
+                }
+                Button("OK", role: .cancel) { }
+            },
+            message: {
+                Text("Your Barsys Shaker is tilted. Please place it on a flat surface to continue.")
+            }
+        )
+    }
+
+    // MARK: - Sheet body
+    //
+    // UIKit `mainSheetView` geometry:
+    //   height = 452, corner radius = 24 (top-only), bg = systemBackground.
+    // Stack spacing = 20, inset = 24 (top/leading/trailing).
+    // `collectionViewProgress` anchored to bottom of content stack.
+    // `bottomButtonsView` bottom-offset 60 from sheet bottom.
+
+    private var sheet: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .center, spacing: 20) {
+                // lblRecipeName
+                Text(recipe.name ?? "")
+                    .font(Theme.Font.of(.title2))
+                    .foregroundStyle(Color("grayBorderColor"))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 24)
+
+                // Content container (viewGlassStatus + viewIngredients, OR
+                // viewGarnish + viewImageSuperView after completion).
+                contentContainer
+                    .frame(height: 210)
+
+                // collectionViewProgress — 10pt horizontal segment bar.
+                progressBar
+                    .frame(height: 10)
+            }
+            .padding(.top, 24)
+            .padding(.horizontal, 24)
+
+            Spacer(minLength: 0)
+
+            // UIKit `bottomButtonsView` appears only after completion.
+            if viewModel.state == .completed {
+                bottomButtons
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 60)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .frame(height: 452)
+        .frame(maxWidth: .infinity)
+        .background(
+            // Top-corners-only radius 24 (UIKit `BarsysCornerRadius.pill`,
+            // `maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]`).
+            UnevenRoundedRectangle(
+                topLeadingRadius: 24,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 24,
+                style: .continuous
+            )
+            .fill(Color(.systemBackground))
+            .ignoresSafeArea(edges: .bottom)
+        )
+        .overlay(alignment: .topTrailing) {
+            // btnCross hides during `.awaitingGlassRemoval` — UIKit L245.
+            if viewModel.state != .awaitingGlassRemoval {
+                crossButton
+                    .padding(.top, 12)
+                    .padding(.trailing, 12)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.state)
+    }
+
+    // MARK: - Content container
+
+    @ViewBuilder
+    private var contentContainer: some View {
+        if viewModel.state == .completed {
+            completedContent
+        } else {
+            pouringContent
+        }
+    }
+
+    // Pouring state: glass status prompt + ingredient info.
+    private var pouringContent: some View {
+        VStack(spacing: 24) {
+            // viewGlassStatus
+            if shouldShowGlassStatus {
+                Text(glassStatusDisplayText)
+                    .font(Theme.Font.of(.largeTitle, .semibold))
+                    .foregroundStyle(Color("barbotBorderColor"))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 43)
+                    .accessibilityLabel("Glass status")
+            }
+
+            // viewIngredients — lblIngredientName + lblIngredientQuantity
+            VStack(spacing: 0) {
+                Text(currentIngredientName)
+                    .font(Theme.Font.of(.largeTitle, .semibold))
+                    .foregroundStyle(Color("barbotBorderColor"))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 42)
+
+                Text(currentIngredientQuantityText)
+                    .font(Theme.Font.of(.largeTitleSmall, .semibold))
+                    .foregroundStyle(Color("barbotBorderColor"))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 37)
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    // Completed state: garnish block + recipe image.
+    private var completedContent: some View {
+        VStack(spacing: 24) {
+            // viewGarnish (only if garnish list non-empty).
+            if !garnishDisplayText.isEmpty {
+                VStack(spacing: 12) {
+                    Text("Garnish")
+                        .font(Theme.Font.of(.title1, .bold))
+                        .foregroundStyle(Color("barbotBorderColor"))
+
+                    Text(garnishDisplayText)
+                        .font(Theme.Font.of(.title3, .medium))
+                        .foregroundStyle(Color("barbotBorderColor"))
+                        .multilineTextAlignment(.center)
+
+                    Text(Self.garnishDescription)
+                        .font(Theme.Font.of(.body, .medium))
+                        .foregroundStyle(Color("barbotBorderColor"))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                }
+            }
+
+            // viewImageSuperView — 120pt circle with recipe image.
+            recipeImage
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    // UIKit storyboard default for lblGarnishesDescription (L1211-1216).
+    private static let garnishDescription =
+        "Garnish to your heart's content. Your drink is now complete. Enjoy!"
+
+    private var recipeImage: some View {
+        ZStack {
+            Circle().fill(Color("lightBorderGrayColor"))
+            AsyncImage(url: URL(string: recipe.imageModel?.url ?? "")) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                default:
+                    Image("myDrink").resizable().scaledToFill()
+                }
+            }
+            .clipShape(Circle())
+        }
+        .frame(width: 120, height: 120)
+        .accessibilityLabel("Recipe image")
+    }
+
+    // MARK: - Progress bar
+    //
+    // UIKit `collectionViewProgress`: horizontal collection view with one
+    // cell per recipe ingredient. Cell is 10pt tall, inner bar 5pt tall
+    // with 5pt horizontal inset, roundCorners 2. Color logic:
+    //   • poured (index < currentIngredient) → grayBorderColor
+    //   • not yet (iOS < 26)                  → grayColorForBarBot
+    //   • not yet (iOS 26+)                   → grayBorderColor.α=0.30
+
+    private var progressBar: some View {
+        GeometryReader { proxy in
+            let count = max(mainIngredients.count, 1)
+            let cellWidth = proxy.size.width / CGFloat(count)
+            HStack(spacing: 0) {
+                ForEach(0..<count, id: \.self) { idx in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(progressCellColor(at: idx))
+                        .frame(width: cellWidth - 10, height: 5)
+                        .frame(width: cellWidth, height: 10)
+                }
+            }
+        }
+        .frame(height: 10)
+        .accessibilityLabel("Crafting progress")
+    }
+
+    private func progressCellColor(at index: Int) -> Color {
+        if index < viewModel.currentIngredient {
+            return Color("grayBorderColor")
+        }
+        if #available(iOS 26.0, *) {
+            return Color("grayBorderColor").opacity(0.30)
+        } else {
+            return Color("grayColorForBarBot")
+        }
+    }
+
+    // MARK: - Cross button
+
+    private var crossButton: some View {
+        Button {
+            HapticService.light()
+            onCancelTap()
+        } label: {
+            Image("crossIcon")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 12, height: 12)
+                .frame(width: 33, height: 33)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color("grayBorderColor"), lineWidth: 1)
+                )
+        }
+        .accessibilityLabel("Cancel")
+        .accessibilityHint("Cancels the current drink crafting")
+    }
+
+    // MARK: - Bottom buttons
+
+    private var bottomButtons: some View {
+        HStack(spacing: 8) {
+            // saveButton — border style
+            Button {
+                HapticService.success()
+                onSaveTap()
+            } label: {
+                Text("Save")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color("grayBorderColor"))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24)
+                            .stroke(Color("grayBorderColor"), lineWidth: 1)
+                    )
+            }
+            .accessibilityLabel("Save")
+            .accessibilityHint("Saves this drink to favourites")
+
+            // btnMakeItAgain — filled style
+            Button {
+                HapticService.light()
+                onMakeItAgainTap()
+            } label: {
+                Text("Make it Again")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24)
+                            .fill(Color("grayBorderColor"))
+                    )
+            }
+            .accessibilityLabel("Make it again")
+            .accessibilityHint("Crafts the same drink again")
+        }
+    }
+
+    // MARK: - Runtime text
+
+    /// Mirrors UIKit `lblGlassStatusText.text` — defaults to "Place Glass"
+    /// before pour starts; becomes "Remove Glass" during
+    /// `.awaitingGlassRemoval`. The verbose `Remove glass to cancel…` /
+    /// `Remove glass from device to complete` strings stay in
+    /// `viewModel.glassStatusText` (used by VoiceOver) — the visible label
+    /// keeps the short form to match UIKit.
+    private var glassStatusDisplayText: String {
+        switch viewModel.state {
+        case .awaitingGlassRemoval: return "Remove Glass"
+        default:                    return "Place Glass"
+        }
+    }
+
+    /// Currently-pouring ingredient name; falls back to an empty string
+    /// while idle so the pouring block doesn't flash stale text.
+    private var currentIngredientName: String {
+        let idx = viewModel.currentIngredient
+        guard idx >= 0, idx < viewModel.recipeIngredients.count else { return "" }
+        return viewModel.recipeIngredients[idx].ingredientName
+    }
+
+    private var currentIngredientQuantityText: String {
+        let idx = viewModel.currentIngredient
+        guard idx >= 0, idx < viewModel.recipeIngredients.count else { return "" }
+        let q = Int(viewModel.recipeIngredients[idx].ingredientQuantity)
+        return "\(q) ml"
+    }
+
+    // MARK: - Actions
+
+    // Cross / backdrop tap.
+    private func onCancelTap() {
+        // UIKit L21-23: guard — cannot cancel once `strGlassStatusText ==
+        // removeGlassToCompleteTheDrink`. i.e. when .awaitingGlassRemoval.
+        if viewModel.state == .awaitingGlassRemoval { return }
+        if cancelRequested { return }
+        cancelRequested = true
+
+        env.loading.show("Cancelling drink...")
+        viewModel.cancel(ble: ble)
+    }
+
+    // saveButton tap — UIKit L94-131 ports.
+    private func onSaveTap() {
+        // Validation (UIKit L99-107).
+        if mainIngredients.isEmpty {
+            env.alerts.show(title: "", message: Constants.pleaseAddIngredients)
+            return
+        }
+        let nonZero = mainIngredients.filter { ($0.quantity ?? 0) > 0 }
+        if nonZero.isEmpty {
+            env.alerts.show(title: "", message: Constants.ingredientsCantBeZero)
+            return
+        }
+
+        env.loading.show("Saving Recipe")
+        let toSave = workingRecipe
+        Task {
+            do {
+                try await env.api.saveOrUpdateMyDrink(
+                    recipe: toSave, image: nil, isCustomizing: true
+                )
+                await MainActor.run {
+                    env.loading.hide()
+                    env.toast.show(
+                        "Your drink has been saved successfully.",
+                        color: Color("segmentSelectionColor"),
+                        duration: 3
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    env.loading.hide()
+                    env.alerts.show(
+                        title: "Unable to save recipe",
+                        message: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    // btnMakeItAgain tap — UIKit L45-92 ports.
+    private func onMakeItAgainTap() {
+        // Reset then re-send craft command after a short hardware-settle
+        // delay (UIKit uses `DelayedAction.afterBleResponse(1.0s)` so the
+        // device is ready to accept a second `200,…` frame).
+        viewModel.resetForMakeAgain()
+        // Re-arm the cancel button for the new session — otherwise a
+        // previously-tapped cross would leave the button permanently
+        // disabled across the "Make it Again" transition.
+        cancelRequested = false
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await viewModel.start(recipe: workingRecipe, ble: ble)
+        }
+    }
+
+    // Called from BLE onDismiss and disconnect observer.
+    private func finishDismiss() {
+        env.loading.hide()
+        sheetOffsetY = 600
+        // Give the slide-down a moment before popping.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            onDismiss()
+        }
+    }
+}
+
+// MARK: - ClearBackgroundView (transparent fullScreenCover host)
+//
+// Makes the UIKit host view behind `fullScreenCover` transparent so our
+// dim-scrim + bottom-sheet composition renders on top of the presenting
+// view (UIKit parity with `.overFullScreen` + clear `view.backgroundColor`).
+//
+// Mirrors `DeviceScreens.swift` ClearBackgroundView — redeclared here
+// (file-scope private) because that one is private to its own file.
+
+private struct ClearBackgroundView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        DispatchQueue.main.async {
+            view.superview?.superview?.backgroundColor = .clear
+        }
+        return view
+    }
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 // MARK: - Notifications (kept for back-compat; VM now handles state directly)
