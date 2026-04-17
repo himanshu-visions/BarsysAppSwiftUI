@@ -214,18 +214,18 @@ struct HomeView: View {
     //       – profileButton (iar-p5-T3L):  24×24, image "profileIcon".
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Explore button — `O3O-bl-vqo`, 18×22, imgExploreSmall.
-            Button {
-                HapticService.light()
+            // Explore button — `O3O-bl-vqo`, 18×22 imgExploreSmall asset.
+            // Wrapped in the shared `NavigationLeadingGlassButton` so it
+            // matches the glass chrome on the right side
+            // (`NavigationRightGlassButtons`) and the leading button
+            // on ControlCenterView.
+            NavigationLeadingGlassButton(
+                imageName: "imgExploreSmall",
+                iconSize: CGSize(width: 18, height: 22),
+                accessibilityLabel: "Explore"
+            ) {
                 router.selectedTab = .explore
-            } label: {
-                Image("imgExploreSmall")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 18, height: 22)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Explore")
 
             // "Hi {name}" — `lUD-VJ-a4r`, system 17pt, 2 lines, leading 16.
             Text("Hi \(displayName)")
@@ -830,6 +830,94 @@ extension View {
     /// HomeView on any toolbar-hosted screen.
     func chooseOptionsStyleNavBar() -> some View {
         modifier(ChooseOptionsStyleNavBar())
+    }
+}
+
+// MARK: - NavigationLeadingGlassButton
+//
+// Shared top-left button used on ChooseOptions (HomeView) and
+// ControlCenterView. Mirrors the visual family of
+// `NavigationRightGlassButtons.singleButtonGroup` — a 48×48 glass
+// CIRCLE on iOS 26+, plain 30×30 icon on older iOS — so the left and
+// right ends of the nav bar feel like the same chrome.
+//
+// Why a CIRCLE (not the 100×48 pill on the right): UIKit's single-item
+// left-hand affordance is one icon with one action; the right-hand
+// capsule hosts TWO icons. Reusing the pill shape for a single icon
+// would look visually heavy. The `singleButtonGroup` branch of
+// `NavigationRightGlassButtons` uses the same 48×48 circle recipe
+// (lines 712–726) on RecipeDetail / MixlistDetail — we reuse it here
+// for symmetry.
+//
+// Material recipe matches the right-hand pill:
+//   • fill:   `.ultraThinMaterial`   (closest SwiftUI match to UIKit's
+//                                      `UIGlassEffect(style: .clear)`)
+//   • stroke: `Color.white.opacity(0.25)`, 1pt  (UIKit border colour)
+//   • shadow: `black 0.14, r:10, y:4`           (matches pill shadow)
+//
+// Pre-iOS 26: plain bare icon, no glass container — matches the
+// pre-26 branch of NavigationRightGlassButtons which also drops the
+// glass shell.
+
+struct NavigationLeadingGlassButton: View {
+    /// Asset catalog name of the icon (e.g. `"imgExploreSmall"`).
+    let imageName: String
+    /// Icon rendered size inside the glass circle. UIKit imgExploreSmall
+    /// is 18×22; Control Center uses it at 25×25. Caller decides.
+    let iconSize: CGSize
+    /// Tap handler.
+    let action: () -> Void
+    /// VoiceOver label.
+    let accessibilityLabel: String
+
+    init(imageName: String,
+         iconSize: CGSize = CGSize(width: 18, height: 22),
+         accessibilityLabel: String,
+         action: @escaping () -> Void) {
+        self.imageName = imageName
+        self.iconSize = iconSize
+        self.accessibilityLabel = accessibilityLabel
+        self.action = action
+    }
+
+    var body: some View {
+        Button {
+            HapticService.light()
+            action()
+        } label: {
+            iconView
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if #available(iOS 26.0, *) {
+            // 48×48 glass circle — same recipe as
+            // NavigationRightGlassButtons.singleButtonGroup (HomeView.swift
+            // L712-726).
+            Image(imageName)
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: iconSize.width, height: iconSize.height)
+                .foregroundStyle(Color("appBlackColor"))
+                .frame(width: 48, height: 48)
+                .background(
+                    Circle().fill(.ultraThinMaterial)
+                        .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                )
+                .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 4)
+        } else {
+            // Pre-iOS 26: plain icon on the flat nav bar background.
+            Image(imageName)
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: iconSize.width, height: iconSize.height)
+                .foregroundStyle(Color("appBlackColor"))
+        }
     }
 }
 
