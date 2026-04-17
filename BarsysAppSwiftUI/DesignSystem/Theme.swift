@@ -65,7 +65,61 @@ enum Theme {
         static let warmGray             = SwiftUI.Color("warmGrayColor")
         static let craftButtonBorder    = SwiftUI.Color("craftButtonBorderColor")
         static let otpPlaceholder       = SwiftUI.Color("otpPlaceHolderColor")
+
+        // 1:1 with UIKit `UIColor.swift` cancel-button + loader colors.
+        // These are the exact dynamic light/dark tokens used by
+        // `applyCancelCapsuleGradientBorderStyle()` (border, tint, fill)
+        // and `showGlassLoader()` (text). They were referenced by hex
+        // values inline before — exposing them as Theme tokens guarantees
+        // dark-mode parity with UIKit instead of hard-coded RGB.
+        static let cancelBorderGray     = SwiftUI.Color(
+            UIColor(named: "cancelBorderGray")
+                ?? UIColor.dynamic(light: UIColor(red: 0.851, green: 0.851, blue: 0.851, alpha: 1),  // #D9D9D9
+                                   dark:  UIColor(red: 0.282, green: 0.282, blue: 0.290, alpha: 1)) // #48484A
+        )
+        static let cancelButtonGray     = SwiftUI.Color(
+            UIColor(named: "cancelButtonGray")
+                ?? UIColor.dynamic(light: UIColor(red: 0.949, green: 0.949, blue: 0.949, alpha: 1),  // #F2F2F2
+                                   dark:  UIColor(red: 0.227, green: 0.227, blue: 0.235, alpha: 1)) // #3A3A3C
+        )
+        static let cancelBgTop          = SwiftUI.Color(
+            UIColor(named: "cancelBgTop")
+                ?? UIColor.dynamic(light: UIColor(red: 0.969, green: 0.969, blue: 0.969, alpha: 1),  // #F7F7F7
+                                   dark:  UIColor(red: 0.173, green: 0.173, blue: 0.180, alpha: 1)) // #2C2C2E
+        )
+        static let cancelBgBottom       = SwiftUI.Color(
+            UIColor(named: "cancelBgBottom")
+                ?? UIColor.dynamic(light: UIColor(red: 0.898, green: 0.898, blue: 0.898, alpha: 1),  // #E5E5E5
+                                   dark:  UIColor(red: 0.110, green: 0.110, blue: 0.118, alpha: 1)) // #1C1C1E
+        )
+        static let loaderText           = SwiftUI.Color(
+            UIColor(named: "loaderTextColor")
+                ?? UIColor.dynamic(light: UIColor(red: 0.20,  green: 0.20,  blue: 0.20,  alpha: 1),  // #333333
+                                   dark:  UIColor(red: 0.820, green: 0.820, blue: 0.839, alpha: 1)) // #D1D1D6
+        )
+        static let veryDarkGray         = SwiftUI.Color(
+            UIColor(named: "veryDarkGrayColor")
+                ?? UIColor.dynamic(light: UIColor(red: 0.149, green: 0.149, blue: 0.149, alpha: 1),  // #262626
+                                   dark:  UIColor(red: 0.898, green: 0.898, blue: 0.918, alpha: 1)) // #E5E5EA
+        )
     }
+}
+
+// MARK: - UIColor.dynamic(light:dark:)
+//
+// 1:1 port of UIKit `UIColor.dynamic(light:dark:)` from
+// `Helpers/Colors/UIColor.swift`. Used as a runtime fallback for the
+// few cancel-button + loader colors that may not have asset entries —
+// guarantees light/dark parity with the UIKit colour pipeline.
+extension UIColor {
+    static func dynamic(light: UIColor, dark: UIColor) -> UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? dark : light
+        }
+    }
+}
+
+extension Theme {
 
     // MARK: - Fonts
     //

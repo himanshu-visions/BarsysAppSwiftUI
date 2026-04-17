@@ -1581,10 +1581,22 @@ struct EditRecipeView: View {
     }
 
     var body: some View {
-        // Panel container mirrors UIKit EditViewController mainView:
-        // top-rounded BarsysCornerRadius.medium (12pt) + `addGlassEffect()`
-        // + shadow. The inner VStack holds the same Edit / cross / name /
-        // image / ingredients / bottom-buttons hierarchy as the storyboard.
+        // 1:1 with UIKit `EditViewController.mainView` setup
+        // (EditViewController.swift L124-130):
+        //
+        //   mainView.roundCorners = BarsysCornerRadius.medium      // 12pt
+        //   mainView.layer.maskedCorners = [.layerMaxXMinYCorner,
+        //                                   .layerMinXMinYCorner]  // top-only
+        //   mainView.addGlassEffect()                              // regular glass
+        //
+        // `addGlassEffect()` defaults: tint=.clear, border=false,
+        // cornerRadius=0 (already on view), alpha=1, effect="regular".
+        //   iOS 26+ → UIGlassEffect(.regular) overlay (frosted)
+        //   pre-26  → NO-OP, white storyboard background visible
+        //
+        // The ZStack layers a base `primaryBackgroundColor` so any safe-area
+        // overflow (status bar / home indicator) reads as the page-tint
+        // gray rather than pure black.
         ZStack {
             Color("primaryBackgroundColor").ignoresSafeArea()
 
@@ -1604,28 +1616,16 @@ struct EditRecipeView: View {
                 }
                 .padding(.top, 24)
             }
-            .background(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 12,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: 12,
-                    style: .continuous
-                )
-                .fill(.regularMaterial)
-            )
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 12,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: 12,
-                    style: .continuous
-                )
-            )
-            // Lifts the panel off the parent — maps the UIKit glass
-            // `shadowColor=black@0.20, opacity 0.30, offset (0,10), radius 25`
-            // (UIViewClass+GlassEffects.swift L137-140) to SwiftUI.
+            .background(panelBackground)
+            .clipShape(panelShape)
+            // UIKit `addGlassStyleShadow()` (UIViewClass+GlassEffects.swift
+            // L160-174): black@0.15 color, 0.35 opacity, offset (0,4),
+            // radius 12. Composed alpha ≈ 0.05, very subtle. We use a
+            // slightly heavier 0.18 / radius 20 / offset (0,10) so the
+            // panel reads as elevated above the FavoritesView the user
+            // is editing from — UIKit gets that pop from the system's
+            // automatic modal-presentation shadow which SwiftUI
+            // `.fullScreenCover` doesn't add.
             .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 10)
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -2065,20 +2065,28 @@ struct EditRecipeView: View {
     // (`viewWillAppear` in EditViewController.swift L196-L200).
     private var bottomButtons: some View {
         HStack(spacing: 8) {
-            // Save — ports applyCancelCapsuleGradientBorderStyle():
-            //   iOS 26+: Capsule glass + 1.5pt gradient border
-            //   Pre-26:  White bg + craftButtonBorderColor 1pt stroke
+            // Save — 1:1 with UIKit `addToFavouritesButton`
+            // (EditViewController.swift L88-94):
+            //   iOS 26+ → applyCancelCapsuleGradientBorderStyle()
+            //             — capsule (height/2 corner) + glass + 1.5pt
+            //               cancel-gradient border (white/cancelBorderGray
+            //               alternating sheen).
+            //   Pre-26  → makeBorder(width: 1, color: .craftButtonBorderColor)
+            //             — white background + plain 1pt border, 8pt corner.
+            //   Title font: storyboard default (matches body 14pt).
+            //   Title color: black (storyboard normal title color).
             Button {
                 HapticService.light()
                 save()
             } label: {
                 Text(ConstantButtonsTitle.saveButtonTitle)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(editCancelCapsuleBackground)
                     .overlay(editCancelCapsuleBorder)
+                    .clipShape(editButtonShape)
                     .opacity(canSave ? 1.0 : 0.5)
             }
             .buttonStyle(BounceButtonStyle())
@@ -2086,19 +2094,25 @@ struct EditRecipeView: View {
             .accessibilityLabel("Save to My Drinks")
             .accessibilityHint("Saves the recipe to your drinks list")
 
-            // Craft — ports makeOrangeStyle():
-            //   iOS 26+: Capsule with brand gradient #FAE0CC → #F2C2A1
-            //   Pre-26:  Flat segmentSelectionColor, 8pt corners
+            // Craft — 1:1 with UIKit `craftButton: PrimaryOrangeButton`
+            // (EditViewController.swift L89, L95):
+            //   iOS 26+ → makeOrangeStyle() — capsule (height/2 corner) +
+            //             vertical brand gradient (brandGradientTop=#FAE0CC →
+            //             brandGradientBottom=#F2C2A1).
+            //   Pre-26  → backgroundColor = .segmentSelectionColor (#E0B392),
+            //             8pt corner.
+            //   Title font + color match Save button.
             Button {
                 HapticService.light()
                 craft()
             } label: {
                 Text("Craft")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(editOrangeButtonBackground)
+                    .clipShape(editButtonShape)
                     .opacity(canSave ? 1.0 : 0.5)
             }
             .buttonStyle(BounceButtonStyle())
@@ -2111,8 +2125,70 @@ struct EditRecipeView: View {
         // (plus 27pt if a custom tab-bar is visible; our SwiftUI tab bar
         // is already excluded from the inset stack so 12/36 is fine).
         .padding(.bottom, iOS26BottomInset)
-        .padding(.top, 8)
-        .background(Theme.Gradient.bottomScrim)
+        .padding(.top, 12)
+        // No bottomScrim background — UIKit's bottom button bar sits
+        // directly on the glass panel with no fade gradient. The previous
+        // `Theme.Gradient.bottomScrim` produced a visible horizontal band
+        // above the buttons (clearly visible in user's screenshot above
+        // the Save / Craft row) that doesn't exist in the UIKit storyboard.
+    }
+
+    /// 1:1 with UIKit button `roundCorners` runtime attribute on
+    /// `addToFavouritesButton` / `craftButton`:
+    ///   iOS 26+ → capsule (height/2 = 22.5 for our 45pt buttons)
+    ///   Pre-26  → 8pt rounded rect (BarsysCornerRadius.small)
+    private var editButtonShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    /// 1:1 with UIKit `mainView.addGlassEffect()` (no-arg defaults).
+    ///
+    ///   iOS 26+ → `.regularMaterial` glass (UIGlassEffect(.regular)
+    ///             equivalent). The material renders the FavoritesView
+    ///             behind the cover blurred, exactly like UIKit's child
+    ///             VC overlay.
+    ///   Pre-26  → solid white (UIKit `mainView.backgroundColor` is
+    ///             storyboard-default white — `addGlassEffect()` is a
+    ///             no-op on iOS < 26 so the view shows the white fill).
+    @ViewBuilder
+    private var panelBackground: some View {
+        if #available(iOS 26.0, *) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 12,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 12,
+                style: .continuous
+            )
+            .fill(.regularMaterial)
+        } else {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 12,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 12,
+                style: .continuous
+            )
+            .fill(Color.white)
+        }
+    }
+
+    /// Top-only rounded clipping shape — 1:1 with UIKit storyboard
+    /// `mainView.layer.maskedCorners = [.layerMaxXMinYCorner,
+    ///                                   .layerMinXMinYCorner]` (top
+    /// corners only, bottom flush with safe area).
+    private var panelShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 12,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 12,
+            style: .continuous
+        )
     }
 
     /// Mirrors `viewWillAppear` branch on `EditViewController.swift`
@@ -2276,10 +2352,135 @@ struct EditRecipeView: View {
         }
     }
 
+    /// 1:1 port of UIKit `EditViewController.didPressCraftButton(_:)`
+    /// (EditViewController.swift L332-368) chained with
+    /// `EditViewModel.validateForCraft(recipeName:)` and
+    /// `craftActionInEditScreen()`.
+    ///
+    /// Validation cascade (matches UIKit `CraftValidationResult` enum
+    /// and switch on it L336-367):
+    ///   1. recipeIngredientsArrayToShow.count == 0
+    ///        → showDefaultAlert("Please add ingredients")
+    ///   2. base/mixer with quantity > 0 count == 0
+    ///        → showDefaultAlert("Ingredient quantity cannot be zero")
+    ///   3. !isDeviceConnected (BLE Barsys360 / Coaster / Shaker all off)
+    ///        → AppNavigationState.pendingConnectionSource = .recipeCrafting
+    ///          openPairYourDeviceWhenNotConnected() (push pair device)
+    ///   4. determineCraftTarget == .barsys360 && ingredientCount > 6
+    ///        → showDefaultAlert("Maximum ingredients allowed are 6")
+    ///   5. Has unsaved changes (name/ingredients/image differ from initial)
+    ///        → showCustomAlertMultipleButtons(
+    ///             title: "Your changes will not be saved...",
+    ///             cancelButtonTitle: "Save", continueButtonTitle: "Continue"
+    ///          ) → onSave: didPressAddToFavouriteButton (save first),
+    ///              onContinue: craftActionInEditScreen() (discard + craft)
+    ///   6. No unsaved changes → craftActionInEditScreen() → push crafting.
     private func craft() {
-        guard validate() else { return }
-        if let id = recipeID { env.alerts.show(message: "Crafting \(name)…") ; _ = id }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let baseAndMixerWithQty = ingredients.filter { ($0.quantity ?? 0) > 0 }
+
+        // Step 1 — validate ingredient set (UIKit
+        // EditViewModel.validateForCraft L257-264).
+        if ingredients.isEmpty {
+            env.alerts.show(message: Constants.pleaseAddIngredients)
+            return
+        }
+        if baseAndMixerWithQty.isEmpty {
+            env.alerts.show(message: Constants.ingredientsCantBeZero)
+            return
+        }
+
+        // Step 2 — device gate (UIKit L270-272). When no Barsys device is
+        // connected, route the user to the pair-device flow with the
+        // "recipeCrafting" source flag set. Without a connected device
+        // there's nothing to craft on.
+        let deviceConnected = ble.isAnyDeviceConnected
+            || ble.isBarsys360Connected()
+            || ble.isCoasterConnected()
+            || ble.isBarsysShakerConnected()
+        guard deviceConnected else {
+            router.push(.pairDevice)
+            dismiss()
+            return
+        }
+
+        // Step 3 — Barsys 360 ingredient cap (UIKit
+        // EditViewModel.validate360IngredientCount L286-291 + the
+        // craftActionInEditScreen branch L312).
+        if ble.isBarsys360Connected() && baseAndMixerWithQty.count > 6 {
+            env.alerts.show(message: Constants.maximumQtyIs6)
+            return
+        }
+
+        // Step 4 — unsaved-changes gate (UIKit L274-282). When the user
+        // has touched name / ingredients / image, ask before committing
+        // to craft (which would discard the changes by default).
+        if hasUnsavedChanges(currentName: trimmed) {
+            // 1:1 with UIKit `showCustomAlertMultipleButtons(
+            //     title: yourChangesWillNotSavedAlert,
+            //     cancelButtonTitle: "Save",
+            //     continueButtonTitle: "Continue",
+            //     cancelButtonColor: .segmentSelectionColor,
+            //     isCloseButtonHidden: false)`
+            //
+            // primaryTitle = "Save" (orange, fires save flow)
+            // secondaryTitle = "Continue" (neutral, discards + crafts)
+            env.alerts.show(
+                title: Constants.yourChangesWillNotSavedAlert,
+                message: "",
+                primaryTitle: ConstantButtonsTitle.saveButtonTitle,
+                secondaryTitle: ConstantButtonsTitle.continueButtonTitle,
+                onPrimary: { [weak env] in
+                    _ = env
+                    save()                               // Save first, then craft from favorites
+                },
+                onSecondary: {
+                    proceedToCraft()                    // Discard + craft
+                }
+            )
+            return
+        }
+
+        // Step 5 — no unsaved changes, craft directly.
+        proceedToCraft()
+    }
+
+    /// Pushes the crafting screen — UIKit `craftActionInEditScreen()`
+    /// (L304-326) → `RecipeCraftingClass.craftCoasterRecipeWithUpdatedQuantity`
+    /// or `craft360RecipeForUpdatedQuantity`. The SwiftUI `CraftingView`
+    /// route handles the device-specific dispatch internally.
+    private func proceedToCraft() {
+        let id = recipeID ?? RecipeID()
         dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            router.push(.crafting(id))
+        }
+    }
+
+    /// 1:1 port of UIKit `EditViewModel.hasUnsavedChanges(currentName:)`
+    /// (EditViewModel.swift L337-346): compares ingredient name + rounded
+    /// quantity against the initial snapshot, plus checks the recipe
+    /// name and image URL.
+    private func hasUnsavedChanges(currentName: String) -> Bool {
+        guard let original = existingRecipe else {
+            // Brand-new recipe — anything entered counts as a change.
+            return !currentName.isEmpty || !ingredients.isEmpty
+        }
+        let originalName = (original.name ?? "").trimmingCharacters(in: .whitespaces)
+        if currentName != originalName { return true }
+        let originalIngredients = original.ingredients ?? []
+        if ingredients.count != originalIngredients.count { return true }
+        // Compare by name + rounded ml (matches UIKit's loose equality).
+        for (idx, ing) in ingredients.enumerated() {
+            let other = originalIngredients[idx]
+            if ing.name != other.name { return true }
+            let lhsQty = Int((ing.quantity ?? 0).rounded())
+            let rhsQty = Int((other.quantity ?? 0).rounded())
+            if lhsQty != rhsQty { return true }
+        }
+        // Image change — a newly picked `selectedImage` always counts.
+        if selectedImage != nil { return true }
+        return false
     }
 
     // MARK: - Button style helpers (ports PrimaryOrangeButton + applyCancelCapsuleGradientBorderStyle)
@@ -2304,8 +2505,17 @@ struct EditRecipeView: View {
     @ViewBuilder
     private var editCancelCapsuleBackground: some View {
         if #available(iOS 26.0, *) {
+            // 1:1 with UIKit `applyCancelCapsuleGradientBorderStyle()` →
+            // `addGlassEffect(tintColor: .cancelButtonGray, cornerRadius: h/2)`.
+            // `.regularMaterial` is the SwiftUI bridge for `UIGlassEffect(.regular)`,
+            // and the cancelButtonGray @ 12% tint reproduces the warm-grey
+            // wash UIKit applies to the glass.
             Capsule(style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(.regularMaterial)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .fill(Theme.Color.cancelButtonGray.opacity(0.12))
+                )
         } else {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.white)
@@ -2315,13 +2525,21 @@ struct EditRecipeView: View {
     @ViewBuilder
     private var editCancelCapsuleBorder: some View {
         if #available(iOS 26.0, *) {
+            // 1:1 with UIKit `applyCancelCapsuleGradientBorderStyle(borderColors:)`
+            // (UIViewClass+GradientStyles.swift L92-110): 8-stop alternating
+            // white(@0.95) ↔ cancelBorderGray(@0.9) sheen on a diagonal,
+            // 1.5pt line width. Reproduces the etched-glass border effect
+            // UIKit applies to the Save / Cancel capsule on iOS 26+.
             Capsule(style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.95),
-                            Color(white: 0.85).opacity(0.9),
-                            Color.white.opacity(0.95)
+                        stops: [
+                            .init(color: .white.opacity(0.95),                       location: 0.00),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9),  location: 0.20),
+                            .init(color: .white.opacity(0.95),                       location: 0.40),
+                            .init(color: .white.opacity(0.95),                       location: 0.60),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9),  location: 0.80),
+                            .init(color: .white.opacity(0.95),                       location: 1.00)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing

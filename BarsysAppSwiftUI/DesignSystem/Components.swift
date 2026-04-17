@@ -428,21 +428,79 @@ struct LoadingOverlayModifier: ViewModifier {
         content
             .overlay {
                 if state.isVisible {
+                    // 1:1 with UIKit `showGlassLoader(message:)` from
+                    // `UIViewController+GlassLoader.swift`:
+                    //   • Backdrop: black @ 0.30 alpha (UIKit L26-29)
+                    //   • Card: 200pt × 150pt, centered (UIKit L31-37)
+                    //   • Corner: BarsysCornerRadius.xlarge = 20pt (UIKit L34)
+                    //   • Shadow: black, opacity 0.18, radius 18, offset (0,10) (UIKit L40-44)
+                    //   • Glass: GlassEffectView.apply(to:) — UIGlassEffect on iOS 26+,
+                    //            UIBlurEffect(.systemMaterial) + vibrancy on iOS <26
+                    //   • Inner content: 60×60 GIF spinner over a 15pt-medium
+                    //     loaderTextColor message label, 10pt vertical spacing,
+                    //     centered inside the card.
                     ZStack {
-                        Color.black.opacity(0.45).ignoresSafeArea()
-                        VStack(spacing: Theme.Spacing.m) {
-                            ProgressView().controlSize(.large).tint(.white)
+                        Color.black.opacity(0.30).ignoresSafeArea()
+
+                        VStack(spacing: 10) {
+                            // GIF placeholder — SwiftUI doesn't ship an
+                            // animated GIF view, so we render a brand-tinted
+                            // ProgressView at the same 60×60pt footprint
+                            // UIKit reserves for `BarsysLoader.gif`.
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .scaleEffect(1.6)
+                                .tint(Theme.Color.brand)
+                                .frame(width: 60, height: 60)
+
                             if !state.message.isEmpty {
-                                Text(state.message).font(Theme.Font.body(14)).foregroundStyle(.white)
+                                // UIKit message label: AppFontClass.font(.subheadline, weight: .medium)
+                                // = SF Pro Display Medium 15pt, color .loaderTextColor,
+                                // centered, 2-line max.
+                                Text(state.message)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(Theme.Color.loaderText)
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                    .padding(.horizontal, 16)
                             }
                         }
-                        .padding(Theme.Spacing.l)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+                        .frame(width: 200, height: 150)
+                        .background(loaderCardBackground)
+                        .overlay(loaderCardBorder)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 10)
                     }
                     .transition(.opacity)
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: state.isVisible)
+    }
+
+    /// `GlassEffectView.apply(to:)` (UIKit) — frosted card.
+    /// iOS 26+ → `.regularMaterial` (matches UIGlassEffect(style: .regular))
+    /// Pre-26  → `.thinMaterial` (matches UIBlurEffect(style: .systemMaterial))
+    @ViewBuilder
+    private var loaderCardBackground: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.regularMaterial)
+        } else {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.thinMaterial)
+        }
+    }
+
+    /// `GlassEffectView` border — 1pt, white@0.25 (iOS 26) or white@0.22 (pre-26).
+    @ViewBuilder
+    private var loaderCardBorder: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.25), lineWidth: 1)
+        } else {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+        }
     }
 }
 
@@ -569,64 +627,74 @@ struct BarsysAlertOverlay: View {
                 // horizontal two-button variant; otherwise the single
                 // full-width orange continue button.
                 if let secondaryTitle = item.secondaryActionTitle {
-                    // AlertPopUpHorizontalStackController layout:
-                    // LEFT = continueButton (secondary) — border only
-                    // RIGHT = cancelButton (primary) — brand gradient fill
-                    // UIKit ALWAYS passes cancelButtonColor: .segmentSelectionColor
-                    // Both: capsule shape (height/2 corners), 12pt font
+                    // 1:1 with UIKit `AlertPopUpHorizontalStackController.viewSetup()`
+                    // (AlertPopUpHorizontalStackController.swift L60-100):
+                    //   • Both buttons: 45pt tall (storyboard constraints
+                    //     `M7r-qm-fEL` / `MQx-vd-d9j`), 8pt corner radius
+                    //     (`roundCorners = BarsysCornerRadius.small`), 12pt
+                    //     `.caption1` font, black title color, distributed
+                    //     fillEqually with 10pt spacing (storyboard SHM-jX-PBk).
+                    //   • LEFT (storyboard `S94-K7-bsR`, btnContinue) →
+                    //     `continueAction` handler → onComplete callback.
+                    //     Style: when `continueButtonColor` is set → fill;
+                    //     when nil → glass-bordered (iOS 26) or
+                    //     craftButtonBorderColor 1pt border (pre-26).
+                    //   • RIGHT (storyboard `O9K-cF-5wQ`, btnCancel) →
+                    //     `cancelButtonClicked` handler → onCancel callback.
+                    //     Same fill/border decision tree against
+                    //     `cancelButtonColor`.
+                    //
+                    // SwiftUI maps:
+                    //   item.primaryActionTitle / primaryAction → RIGHT (the
+                    //     filled / "tinted" button — UIKit pattern is to
+                    //     pass cancelButtonColor=.segmentSelectionColor for
+                    //     the primary action of a decision alert).
+                    //   item.secondaryActionTitle / secondaryAction → LEFT
+                    //     (the neutral / cancel button).
                     HStack(spacing: 10) {
-                        // LEFT secondary — border only (cancelCapsule style)
+                        // LEFT — neutral / cancel button (btnContinue slot
+                        // when continueButtonColor is nil). UIKit fallback:
+                        //   iOS 26+ → `applyCancelCapsuleGradientBorderStyle()`
+                        //              with 8pt CORNER (alertPopupButtonBackgroundStyle
+                        //              passes BarsysCornerRadius.small)
+                        //   Pre-26  → `makeBorder(1, .craftButtonBorderColor)`
                         Button {
                             HapticService.light()
                             item.secondaryAction?()
                             onDismiss()
                         } label: {
                             Text(secondaryTitle)
-                                .cancelCapsule(height: 40, textColor: Color("appBlackColor"))
-                                .font(.system(size: 12))
+                                .modifier(AlertPopupButtonStyle(fill: nil))
                         }
                         .buttonStyle(.plain)
 
-                        // RIGHT primary — brand gradient fill (makeOrangeStyle)
+                        // RIGHT — primary / tinted button. UIKit:
+                        //   alertPopUpButtonBackgroundStyle(cornerRadius: 8,
+                        //                                   fillColor: cancelButtonColor)
+                        // Fill = `.segmentSelectionColor` (the orange tint).
                         Button {
                             HapticService.light()
                             item.primaryAction?()
                             onDismiss()
                         } label: {
                             Text(item.primaryActionTitle)
-                                .brandCapsule(height: 40)
-                                .font(.system(size: 12))
+                                .modifier(AlertPopupButtonStyle(fill: Theme.Color.segmentSelection))
                         }
                         .buttonStyle(.plain)
                     }
                 } else if item.singlePrimaryStyle == .popup {
                     // 1:1 UIKit `AlertPopUpHorizontalStackController` SINGLE
-                    // continue-button layout (success popup style).
-                    //
-                    // Storyboard: `S94-K7-bsR` (btnContinue) — 109×45pt
-                    // (full-width when btnCancel is hidden), 8pt corner
-                    // radius (BarsysCornerRadius.small), 12pt system font,
-                    // black title, fill = continueButtonColor (the
-                    // EditViewController save-success path passes
-                    // `.segmentSelectionColor`).
-                    //
-                    // Used by `EditViewController.didPressAddToFavouriteButton`
-                    // L271 → "Your drink has been added/updated".
+                    // continue-button layout (success popup). Routes through
+                    // the same `AlertPopupButtonStyle` as the two-button
+                    // variant so the corners / font / height / glass treatment
+                    // are byte-identical between alert types.
                     Button {
                         HapticService.light()
                         item.primaryAction?()
                         onDismiss()
                     } label: {
                         Text(item.primaryActionTitle)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color("appBlackColor"))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 45)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(primaryOrange)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .modifier(AlertPopupButtonStyle(fill: Theme.Color.segmentSelection))
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -651,17 +719,29 @@ struct BarsysAlertOverlay: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 20)
-            .frame(maxWidth: 320)
+            // 1:1 UIKit storyboard `t2p-he-XsL` (popupContainerView):
+            //   • Outer card: 277pt wide × 158pt tall (single button)
+            //   • Inner content view `mnn-57-zFZ`: 229pt wide × 120pt tall
+            //     (24pt margin from card edges)
+            //   • Title-stack to button-stack vertical spacing: 31pt
+            //   • Button stack: 45pt tall, 10pt inter-button spacing
+            //   • Card corner radius: 12 (BarsysCornerRadius.medium)
+            //   • Centered on screen with 49pt left/right margin from
+            //     safeArea (375 - 277 = 98 / 2 = 49pt per side on iPhone X)
+            //   • Glass background via alertPopUpBackgroundStyle
+            .padding(.horizontal, 24)        // UIKit `mnn-57-zFZ` 24pt margin
+            .padding(.vertical, 24)
+            .frame(width: 277)               // UIKit `t2p-he-XsL` exact width
             .background(alertCardBackground)
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(Color.white.opacity(0.3), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 4)
-            .padding(.horizontal, 40)
+            // UIKit shadow on the alert card matches the glass-card
+            // shadow used app-wide: lighter, larger blur than the previous
+            // SwiftUI value (0.2 was too dark, made the popup look heavier
+            // than the UIKit native alert).
+            .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 10)
         }
     }
 
@@ -748,22 +828,156 @@ struct ToastModifier: ViewModifier {
     @ObservedObject var manager: ToastManager
 
     func body(content: Content) -> some View {
+        // 1:1 with UIKit `UIView.showToast(message:duration:textColor:)`
+        // (UIViewClass.swift L30-69):
+        //   • PaddingLabel — 24pt left/right, multiline, centered
+        //   • Font: AppFontClass.font(.footnote, weight: .bold) = 13pt bold
+        //   • Background: UIColor.white @ 100% alpha (NOT translucent)
+        //   • Corner: BarsysCornerRadius.medium = 12pt
+        //   • Position: 40pt from safeArea top, centerX
+        //   • Min height: 50pt (greaterThanOrEqualToConstant)
+        //   • Side margins: 20pt min (greaterThanOrEqual / lessThanOrEqual)
+        //   • Animation IN: 0.45s spring, damping 0.75, velocity 0.5,
+        //                    transform y: -20 → 0, alpha 0 → 1
+        //   • Animation OUT: 0.3s spring, damping 0.85 (subtle), velocity 0.5,
+        //                    transform y: 0 → -12, alpha 1 → 0
+        //   • Haptic: .light() on show (HapticService.shared.light())
         content.overlay(alignment: .top) {
             if let toast = manager.current {
                 Text(toast.message)
                     .font(Theme.Font.of(.footnote, .bold))
                     .foregroundStyle(toast.color)
+                    .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
+                    .frame(minHeight: 50)              // UIKit min-height 50pt
                     .background(
+                        // White @ 100% — UIKit explicitly uses
+                        // `UIColor.white.withAlphaComponent(1.0)`, not a
+                        // translucent material. Keep it opaque for parity.
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.white)
                             .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
                     )
-                    .padding(.top, 40)
+                    .padding(.horizontal, 20)         // UIKit min-margin 20pt
+                    .padding(.top, 40)                // UIKit safeArea top + 40
+                    // UIKit slides from y=-20 → y=0 — `.move(edge: .top)`
+                    // is the SwiftUI equivalent vertical translate.
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: manager.current?.id)
+        // UIKit timing: 0.45s in / 0.3s out springs. The spring
+        // (response: 0.45, damping: 0.75) approximates the in-curve
+        // closely; the out gets the same animation here for symmetry.
+        .animation(.spring(response: 0.45, dampingFraction: 0.75), value: manager.current?.id)
+    }
+}
+
+// MARK: - AlertPopupButtonStyle
+//
+// 1:1 port of UIKit `alertPopUpButtonBackgroundStyle(cornerRadius:fillColor:)`
+// + `applyCancelCapsuleGradientBorderStyle()` decision tree as used in
+// `AlertPopUpHorizontalStackController.viewSetup()` (L60-100).
+//
+// UIKit logic per button (LEFT continue, RIGHT cancel — both treated the same):
+//
+//   roundCorners = BarsysCornerRadius.small  // 8pt
+//   if let fillColor {
+//       alertPopUpButtonBackgroundStyle(cornerRadius: 8, fillColor: fillColor)
+//       // iOS 26: capsule glass + brand gradient + glass clear effect with bg @ 0.2
+//       // pre-26: backgroundColor = fillColor
+//   } else {
+//       if #available(iOS 26.0, *) {
+//           applyCancelCapsuleGradientBorderStyle()
+//           // → addGlassEffect(tintColor: .cancelButtonGray, cornerRadius: h/2)
+//       } else {
+//           makeBorder(width: 1, color: .craftButtonBorderColor)
+//           alertPopUpButtonBackgroundStyle(cornerRadius: 8, fillColor: nil)
+//       }
+//   }
+//   titleLabel.font = AppFontClass.font(.caption1)  // 12pt regular
+//   title.color = .black  (storyboard normal title color)
+//   height = 45  (storyboard constraint)
+//
+// SwiftUI mirrors this decision tree exactly: filled buttons get the
+// orange tint via `Theme.Color.segmentSelection`; bordered buttons get
+// either an iOS 26 glass material with the cancel gradient stroke, or a
+// pre-26 white-fill + 1pt craftButtonBorder stroke.
+private struct AlertPopupButtonStyle: ViewModifier {
+    /// Optional fill color — when non-nil, renders the FILLED variant
+    /// (right-side cancel/primary button). When nil, renders the
+    /// BORDERED variant (left-side continue/neutral button).
+    let fill: Color?
+
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 12))                          // .caption1 = 12pt
+            .foregroundStyle(Color("appBlackColor"))          // black title
+            .frame(maxWidth: .infinity)
+            .frame(height: 45)                                // storyboard constraint
+            .background(buttonBackground)
+            .overlay(buttonBorder)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var buttonBackground: some View {
+        if let fill {
+            // FILLED variant — UIKit `alertPopUpButtonBackgroundStyle`
+            // with non-nil fillColor. Solid fill on both iOS versions.
+            // The UIKit iOS 26 path also adds a glass overlay for sheen
+            // but the dominant visual is the orange tint.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(fill)
+        } else if #available(iOS 26.0, *) {
+            // iOS 26 BORDERED variant — UIKit `applyCancelCapsuleGradientBorderStyle()`
+            // applies a glass effect with `cancelButtonGray` tint. We
+            // approximate with `.regularMaterial` + a subtle white tint
+            // so the button reads as a frosted pill on the popup card.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.Color.cancelButtonGray.opacity(0.15))
+                )
+        } else {
+            // Pre-26 BORDERED variant — UIKit
+            // `makeBorder(1, .craftButtonBorderColor)` + clear bg.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white)
+        }
+    }
+
+    @ViewBuilder
+    private var buttonBorder: some View {
+        if fill != nil {
+            // No border on filled buttons (UIKit only sets fill).
+            EmptyView()
+        } else if #available(iOS 26.0, *) {
+            // iOS 26 cancel-capsule border gradient — same 8-stop
+            // alternating white / cancelBorderGray sheen UIKit applies
+            // via `applyCancelCapsuleGradientBorderStyle(borderColors:)`
+            // (UIViewClass+GradientStyles.swift L92-110).
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0.95),                       location: 0.00),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9),  location: 0.20),
+                            .init(color: .white.opacity(0.95),                       location: 0.40),
+                            .init(color: .white.opacity(0.95),                       location: 0.60),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9),  location: 0.80),
+                            .init(color: .white.opacity(0.95),                       location: 1.00)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        } else {
+            // Pre-26 — plain 1pt craftButtonBorderColor stroke.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.Color.craftButtonBorder, lineWidth: 1)
+        }
     }
 }

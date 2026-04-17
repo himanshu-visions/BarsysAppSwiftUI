@@ -115,6 +115,16 @@ enum Constants {
     static let moreThanOneIngredientIdentified = "More than one ingredient identified in the image. Please scan one ingredient at a time."
     static let addingIngredientLoaderText = "Adding ingredients"
 
+    // 1:1 ports of UIKit Craft-validation copy
+    // (EditViewController.didPressCraftButton + craftActionInEditScreen).
+    /// Shown when Barsys 360 is connected and the user has > 6
+    /// non-garnish ingredients. Mirrors UIKit `Constants.maximumQtyIs6`.
+    static let maximumQtyIs6 = "Maximum ingredients allowed are 6."
+    /// Shown when the user taps Craft on an EDIT recipe with unsaved
+    /// changes — gives them a Save / Continue choice. Mirrors UIKit
+    /// `Constants.yourChangesWillNotSavedAlert`.
+    static let yourChangesWillNotSavedAlert = "Your changes will not be saved. Would you like to continue?"
+
     static let unsavedChangesForRecipe = "You have unsaved changes. If you leave this page, your changes will be lost."
     static let systemReset = "Are you sure you want to reset the system?"
     static let doYouWantToDeleteIngredient = "Are you sure you want to delete this ingredient?"
