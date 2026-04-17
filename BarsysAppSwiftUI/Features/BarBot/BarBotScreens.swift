@@ -1956,18 +1956,19 @@ struct BarBotCraftView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if isConnected {
+        // Principal: device icon + name when connected
+        // (UIKit BarBotViewController shows the connected device
+        // badge in the nav bar centre).
+        if isConnected && !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                    }
+                    Image(deviceIconName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 24, height: 24)
                     Text(deviceKindName)
-                        .font(Theme.Font.of(.caption1, .medium))
-                        .foregroundStyle(Theme.Color.textPrimary)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color("appBlackColor"))
                 }
             }
         }

@@ -350,6 +350,24 @@ struct MainTabView: View {
     private func wireBLECallbacks() {
         ble.onDeviceConnected = { [weak router, weak env] deviceName in
             guard let router, let env else { return }
+
+            // Switch to Explore tab FIRST — synchronously, before any other state
+            // change. This mirrors the UIKit order in
+            // BleManagerDelegate+Connect.swift L177-182:
+            //
+            //     tab.selectedIndex = TabBarViewController.Tab.explore.rawValue   // sync
+            //     tab.updateTabImageAccordingToConnection()
+            //     DispatchQueue.main.async {
+            //         tab.replaceTabsAfterConnections(tab: tab)                    // async
+            //     }
+            //
+            // If we let `isAnyDeviceConnected` flip first, SwiftUI reactively
+            // swaps HomeView → ControlCenterView on the currently-selected
+            // `.homeOrControlCenter` tab, and the user sees ControlCenter flash
+            // before the tab switch happens. Selecting Explore first ensures
+            // that reactive swap occurs on an off-screen tab.
+            router.selectedTab = .explore
+
             // Toast: "{name} is Connected." (UIKit: 6s, segmentSelectionColor)
             env.toast.show("\(deviceName) is Connected.", color: Color("segmentSelectionColor"), duration: 6)
             // Haptic success (UIKit: HapticService.shared.success())
@@ -365,11 +383,6 @@ struct MainTabView: View {
             // This ensures recipes and mixlists are fresh after device connects.
             Task {
                 await env.catalog.preload()
-            }
-
-            // Switch to Explore tab (UIKit: tab.selectedIndex = Tab.explore.rawValue)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                router.selectedTab = .explore
             }
         }
 
