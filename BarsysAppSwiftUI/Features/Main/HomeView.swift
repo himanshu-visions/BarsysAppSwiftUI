@@ -690,8 +690,8 @@ struct NavigationRightGlassButtons: View {
             }
             .padding(.horizontal, 14)
             .frame(width: 100, height: 48)
-            .background(glassStyledBackground(capsule: true))
-            .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 4)
+//            .background(glassStyledBackground(capsule: true))
+//            .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 4)
         } else {
             // Pre-iOS 26: **exactly 61×24** — icons on the flat
             // primaryBackground. No glass effect, no border, no
