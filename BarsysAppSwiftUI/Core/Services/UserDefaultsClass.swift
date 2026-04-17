@@ -151,6 +151,37 @@ enum UserDefaultsClass {
         defaults.set(value, forKey: Keys.hasSeenTutorial)
     }
 
+    // MARK: - Per-device first-time tutorial flags
+    //
+    // 1:1 ports of UIKit
+    // `UserDefaultsClass.{save,get}{Coaster,Shaker,Barsys360}ConnectedNotFirstTime`.
+    // Drive `DevicePairedViewModel.shouldHideTutorial()` and
+    // `tutorialVideoURLAndMarkShown()` so the Explore-screen tutorial
+    // card only appears the FIRST time a user connects each device kind.
+    // Once the tutorial is shown, the flag is set to `true` and the
+    // card stays hidden on subsequent connections.
+
+    static func saveCoasterConnectedNotFirstTime(_ value: Bool) {
+        defaults.set(value, forKey: Keys.coasterConnectedNotFirstTime)
+    }
+    static func getCoasterConnectedNotFirstTime() -> Bool {
+        defaults.bool(forKey: Keys.coasterConnectedNotFirstTime)
+    }
+
+    static func saveShakerConnectedNotFirstTime(_ value: Bool) {
+        defaults.set(value, forKey: Keys.shakerConnectedNotFirstTime)
+    }
+    static func getShakerConnectedNotFirstTime() -> Bool {
+        defaults.bool(forKey: Keys.shakerConnectedNotFirstTime)
+    }
+
+    static func saveBarsys360ConnectedNotFirstTime(_ value: Bool) {
+        defaults.set(value, forKey: Keys.barsys360ConnectedNotFirstTime)
+    }
+    static func getBarsys360ConnectedNotFirstTime() -> Bool {
+        defaults.bool(forKey: Keys.barsys360ConnectedNotFirstTime)
+    }
+
     // MARK: - Clear (logout)
 
     /// Ports `UserDefaultsClass.clearAll()` — wipes every key this class

@@ -240,25 +240,30 @@ struct ControlCenterView: View {
         case "system reset":
             showResetAlert = true
         case "tutorial":
-            // 1:1 with UIKit `ControlCenterViewController` L182-203:
-            //   1. Connectivity gate — show offline alert and return.
-            //   2. Pick the device-specific tutorial video URL:
-            //        Coaster / Shaker → barsysCoasterUrl
-            //        Barsys 360       → barsys360VideoUrl
-            //   3. Track Braze event `controlCenterTutorialsViewed`.
-            //   4. Present TutorialViewController modally (overFullScreen).
+            // 1:1 with UIKit `ControlCenterViewController` L182-203.
             //
-            // SwiftUI offline check is implicit in `env.alerts` since the
-            // network layer surfaces an alert if the upcoming video stream
-            // can't be reached; we still preselect the right URL here.
+            // **Important** — Control Center's Tutorial menu does NOT
+            // use the first-time `getXxxConnectedNotFirstTime()` flag.
+            // That logic ONLY belongs to the Explore screen
+            // (`DevicePairedView.decideTutorialOnAppear`), which auto-
+            // shows the tutorial card the first time a user pairs each
+            // device kind, then hides it on subsequent visits.
+            //
+            // Control Center's Tutorial menu is a USER-INITIATED action
+            // (tap the menu item) and ALWAYS opens the modal — the only
+            // logic here is picking which device-specific video URL to
+            // play:
+            //   • Coaster or Shaker connected → barsysCoasterUrl
+            //   • Barsys 360 connected         → barsys360VideoUrl
+            //   • Otherwise (defensive)        → barsys360VideoUrl
+            //   (matches `tutorialVc.videoURL` initial value in
+            //    `TutorialViewController.swift` L19).
             let url: URL?
             if ble.isCoasterConnected() || ble.isBarsysShakerConnected() {
                 url = URL(string: VideoURLConstants.barsysCoasterUrl)
             } else if ble.isBarsys360Connected() {
                 url = URL(string: VideoURLConstants.barsys360VideoUrl)
             } else {
-                // Default to the Barsys 360 video — matches the
-                // tutorialVc.videoURL initial value in TutorialViewController L19.
                 url = URL(string: VideoURLConstants.barsys360VideoUrl)
             }
             tutorialVideoURL = url
@@ -349,10 +354,139 @@ struct DevicePairedView: View {
     @State private var showDevicePopup = false
     @State private var favourites: Set<Int> = []
 
+    // MARK: - Tutorial-card session state
+    //
+    // 1:1 port of UIKit `DevicePairedViewController` Tutorial flow:
+    //
+    //   override func viewDidLoad() {
+    //       // 1. Snapshot visibility ONCE on load
+    //       viewTutorial.isHidden = viewModel.shouldHideTutorial()
+    //   }
+    //
+    //   private func setupTutorialVideoIfNeeded() {
+    //       // 2. Get URL AND flip the per-device "seen" flag
+    //       if let videoURL = viewModel.tutorialVideoURLAndMarkShown() {
+    //           viewTutorial.isHidden = false
+    //           playerView?.setupPlayer(with: videoURL, ...)
+    //       } else {
+    //           viewTutorial.isHidden = true
+    //       }
+    //   }
+    //
+    // CRITICAL — UIKit flips the "seen" flag AS THE SCREEN LOADS, NOT
+    // when the user taps the play button. The tutorial card stays
+    // visible for the WHOLE session even after the flag is flipped;
+    // it only hides on the NEXT visit.
+    //
+    // SwiftUI mirror:
+    //   • `tutorialDecisionMade` — guards the one-time `onAppear`
+    //     side effect so re-renders don't re-flip the flag.
+    //   • `hideTutorialThisSession` — snapshot of `shouldHideTutorial`
+    //     at first appear; the card binds to THIS, not the live
+    //     UserDefaults value. So once the screen has decided "show",
+    //     the card stays visible until the user navigates away.
+    //   • `tutorialVideoURL` — URL captured on first appear, used by
+    //     the play-button tap to feed the modal `TutorialView`.
+
+    @State private var tutorialDecisionMade: Bool = false
+    @State private var hideTutorialThisSession: Bool = true
+    @State private var tutorialVideoURL: URL? = nil
+    /// Drives the modal `TutorialView` cover when the user taps the
+    /// inline play card. Mirrors UIKit's `present(tutorialVc, animated: true)`.
+    @State private var showTutorialPlayer = false
+
     // MARK: - Computed state
 
     /// Whether any BLE device is currently connected.
     private var isConnected: Bool { ble.isAnyDeviceConnected }
+
+    /// 1:1 port of UIKit
+    /// `DevicePairedViewModel.shouldHideTutorial()` (L149-158):
+    ///
+    ///   if isShakerConnected   → return getShakerConnectedNotFirstTime()
+    ///   if isCoasterConnected  → return getCoasterConnectedNotFirstTime()
+    ///   if isBarsys360Connected → return getBarsys360ConnectedNotFirstTime()
+    ///   else                    → return true (no device → no tutorial)
+    ///
+    /// PURE READER — does not mutate any UserDefaults state. Called
+    /// once per session by `decideTutorialOnAppear()` to snapshot the
+    /// initial "show or hide" decision.
+    private func shouldHideTutorialNow() -> Bool {
+        if ble.isBarsysShakerConnected() {
+            return UserDefaultsClass.getShakerConnectedNotFirstTime()
+        } else if ble.isCoasterConnected() {
+            return UserDefaultsClass.getCoasterConnectedNotFirstTime()
+        } else if ble.isBarsys360Connected() {
+            return UserDefaultsClass.getBarsys360ConnectedNotFirstTime()
+        }
+        return true
+    }
+
+    /// 1:1 port of UIKit
+    /// `DevicePairedViewModel.tutorialVideoURLAndMarkShown()` (L162-177):
+    /// returns the device-specific video URL AND marks the device as
+    /// "shown" in UserDefaults so subsequent connections skip the card.
+    /// CALLED EXACTLY ONCE per Explore-screen session via
+    /// `decideTutorialOnAppear()`.
+    private func tutorialVideoURLAndMarkShown() -> URL? {
+        if ble.isBarsysShakerConnected() {
+            if UserDefaultsClass.getShakerConnectedNotFirstTime() { return nil }
+            UserDefaultsClass.saveShakerConnectedNotFirstTime(true)
+            return URL(string: VideoURLConstants.barsysShakerUrl)
+        } else if ble.isCoasterConnected() {
+            if UserDefaultsClass.getCoasterConnectedNotFirstTime() { return nil }
+            UserDefaultsClass.saveCoasterConnectedNotFirstTime(true)
+            return URL(string: VideoURLConstants.barsysCoasterUrl)
+        } else if ble.isBarsys360Connected() {
+            if UserDefaultsClass.getBarsys360ConnectedNotFirstTime() { return nil }
+            UserDefaultsClass.saveBarsys360ConnectedNotFirstTime(true)
+            return URL(string: VideoURLConstants.barsys360VideoUrl)
+        }
+        return nil
+    }
+
+    /// Returns the device-specific tutorial URL WITHOUT marking it shown.
+    /// Used as a fallback when the play-button tap fires AFTER the
+    /// first-time flag has already been consumed by `decideTutorialOnAppear`
+    /// (the card stays visible during the same session even though the
+    /// flag now reads true).
+    private var tutorialVideoURLForCurrentDevice: URL? {
+        if ble.isBarsys360Connected() {
+            return URL(string: VideoURLConstants.barsys360VideoUrl)
+        } else if ble.isCoasterConnected() {
+            return URL(string: VideoURLConstants.barsysCoasterUrl)
+        } else if ble.isBarsysShakerConnected() {
+            return URL(string: VideoURLConstants.barsysShakerUrl)
+        }
+        return nil
+    }
+
+    /// 1:1 with UIKit
+    /// `DevicePairedViewController.viewDidLoad` + `setupTutorialVideoIfNeeded`
+    /// chain. Runs ONCE per Explore-screen appearance:
+    ///   1. Snapshot `shouldHideTutorialNow()` into `hideTutorialThisSession`
+    ///      (the card visibility binding for this session).
+    ///   2. Call `tutorialVideoURLAndMarkShown()` to get the device URL
+    ///      AND flip the per-device "seen" flag — exact UIKit semantics.
+    ///   3. Set the `tutorialDecisionMade` guard so re-renders / tab
+    ///      switches do NOT re-flip the flag.
+    ///
+    /// On NEXT Explore visit the snapshot reads the flipped flag → card
+    /// hides automatically — matching UIKit's "tutorial only shown on
+    /// first connection per device kind" rule.
+    private func decideTutorialOnAppear() {
+        guard !tutorialDecisionMade else { return }
+        tutorialDecisionMade = true
+        // Read the flag BEFORE the mark-shown call.
+        hideTutorialThisSession = shouldHideTutorialNow()
+        // Mark this device kind as "tutorial seen" — only mutates if
+        // the flag was previously false (the per-device guard inside).
+        // Captures the URL so the play-button tap can present the
+        // modal with the right video.
+        let url = tutorialVideoURLAndMarkShown()
+                  ?? tutorialVideoURLForCurrentDevice
+        tutorialVideoURL = url
+    }
 
     // MARK: - Data (ports DevicePairedViewModel.buildDevicePairedArray)
     //
@@ -427,10 +561,28 @@ struct DevicePairedView: View {
 
                 // ══════════════════════════════════════════════════
                 // TUTORIAL SECTION (zhz-bS-M3B)
-                // Only shown when connected (ports viewTutorial.isHidden = shouldHideTutorial())
-                // "Tutorial" 20pt bold, 12pt description, video 345×194
+                //
+                // 1:1 with UIKit `DevicePairedViewController.viewTutorial`:
+                //   • Visibility gated by `viewModel.shouldHideTutorial()` —
+                //     hidden once the user has been shown the per-device
+                //     tutorial (UserDefaults flag), shown otherwise.
+                //   • Video container 345×194, 20pt corners, BLACK bg.
+                //   • Play/Pause button (`SX9-es-vHC`) covers the full
+                //     345×194 area, image `play_thumb` (24×24 natural size,
+                //     scaled to 60pt for inline preview), wired to
+                //     `didPressPlayPauseButton:` which presents the
+                //     modal `TutorialViewController` via the SAME video
+                //     URL (device-specific).
+                //   • Tapping anywhere on the video card opens the
+                //     full-screen TutorialView modal.
                 // ══════════════════════════════════════════════════
-                if isConnected {
+                // 1:1 with UIKit `viewTutorial.isHidden` snapshot:
+                // visibility uses the SESSION snapshot, not a live read.
+                // Once the screen decides "show", the card stays for
+                // this whole session even though the per-device flag
+                // has already been flipped to true by
+                // `decideTutorialOnAppear()`.
+                if isConnected && !hideTutorialThisSession {
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Tutorial")
                             .font(.system(size: 20, weight: .bold))
@@ -442,17 +594,49 @@ struct DevicePairedView: View {
                             .foregroundStyle(Color("charcoalGrayColor"))
                             .padding(.top, 4)
 
-                        // Video: 345×194, 20pt corners, black bg, play button centered
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(Color.black)
-                            Image("play_thumb")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 60, height: 60)
+                        // 1:1 with UIKit `SX9-es-vHC` — full-frame
+                        // play/pause button (345×194). UIKit storyboard
+                        // wires this to `didPressPlayPauseButton:` which
+                        // routes to the inline VideoPlayerManager. We
+                        // present the modal `TutorialView` instead so the
+                        // user gets the same tutorial experience as the
+                        // Control Center → Tutorial menu (no inline
+                        // player needed).
+                        //
+                        // The URL was already captured by
+                        // `decideTutorialOnAppear()` (which also flipped
+                        // the per-device "seen" flag). The tap just
+                        // presents the modal — NO second mark-shown call.
+                        Button {
+                            HapticService.light()
+                            // Fallback to live-resolved URL if the cached
+                            // value is somehow nil (defensive — shouldn't
+                            // happen since `decideTutorialOnAppear` runs
+                            // before the card is rendered).
+                            if tutorialVideoURL == nil {
+                                tutorialVideoURL = tutorialVideoURLForCurrentDevice
+                            }
+                            showTutorialPlayer = true
+                        } label: {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 20)
+                                    .fill(Color.black)
+                                // 60pt visual scale of the 24×24 play_thumb
+                                // asset, white tint to match UIKit's button
+                                // tintColor (white=1, alpha=1).
+                                Image("play_thumb")
+                                    .resizable()
+                                    .renderingMode(.template)
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 60, height: 60)
+                                    .foregroundStyle(.white)
+                            }
+                            .frame(height: 194)
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
                         }
-                        .frame(height: 194)
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .buttonStyle(BounceButtonStyle())
+                        .accessibilityLabel("Play tutorial video")
+                        .accessibilityHint("Opens the tutorial video for the connected device")
                         .padding(.top, 15)
                     }
                     .padding(.horizontal, 24)
@@ -715,6 +899,38 @@ struct DevicePairedView: View {
         .fullScreenCover(isPresented: $showDevicePopup) {
             DeviceConnectedPopup(isPresented: $showDevicePopup)
                 .background(ClearBGHelper())
+        }
+        // Tutorial modal — 1:1 with UIKit
+        // `present(tutorialVc, animated: true)` from
+        // `DevicePairedViewController.didPressPlayPauseButton(_:)`
+        // (the inline play card on the Explore screen tutorial section).
+        // Routes through the same `TutorialView(videoURL:onDismiss:)`
+        // initializer the Control Center tutorial menu uses.
+        .fullScreenCover(isPresented: $showTutorialPlayer) {
+            TutorialView(
+                videoURL: tutorialVideoURL,
+                onDismiss: { showTutorialPlayer = false }
+            )
+        }
+        // 1:1 with UIKit `DevicePairedViewController.viewDidLoad`
+        // → `setupTutorialVideoIfNeeded()`: snapshot the show/hide
+        // decision AND flip the per-device "seen" flag exactly once
+        // per Explore-screen appearance. Re-renders / tab swaps don't
+        // re-trigger because of the `tutorialDecisionMade` guard
+        // inside `decideTutorialOnAppear()`.
+        .onAppear {
+            decideTutorialOnAppear()
+        }
+        // Re-decide if the user reconnects to a different device kind
+        // mid-session (e.g. switches from Coaster → Barsys 360). Each
+        // device kind has its own first-time flag, so a new connection
+        // gets its own evaluation.
+        .onChange(of: ble.isAnyDeviceConnected) { connected in
+            if connected {
+                // Reset the guard so the new device kind re-evaluates.
+                tutorialDecisionMade = false
+                decideTutorialOnAppear()
+            }
         }
     }
 
