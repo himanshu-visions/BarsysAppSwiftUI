@@ -26,19 +26,34 @@
 import SwiftUI
 import UIKit
 
-/// Which of the two SideMenuSwift gestures this host should drive.
+/// Which of the four SideMenuSwift gestures this host should drive.
 ///
 /// - `.openFromRightEdge`: installs `UIScreenEdgePanGestureRecognizer(.right)`
-///   only. Used when the menu is closed — a right-edge pan drags the panel
-///   in from the right. Matches `addScreenEdgePanGesturesToPresent(forMenu: .right)`.
+///   only. Used when the right menu is closed — a right-edge pan drags
+///   the panel in from the right. Matches
+///   `addScreenEdgePanGesturesToPresent(forMenu: .right)`.
 ///
 /// - `.closeFromAnywhere`: installs a plain `UIPanGestureRecognizer` that
-///   listens everywhere on its view. Used when the menu is open — a
-///   rightward pan anywhere on the panel drags it back offscreen. Matches
-///   `addPanGestureToPresent` inverted for the right-menu dismiss case.
+///   listens everywhere on its view. Used when the right menu is open —
+///   a rightward pan anywhere on the panel drags it back offscreen.
+///   Matches `addPanGestureToPresent` for the right-menu dismiss case.
+///
+/// - `.openFromLeftEdge`: installs `UIScreenEdgePanGestureRecognizer(.left)`.
+///   Used when the BarBot history (LEFT-side menu) is closed — a left-edge
+///   pan drags the history panel in from the left. Matches UIKit
+///   `setupSideMenuForSwipeForBarBotHistory()` →
+///   `SideMenuManager.default.addScreenEdgePanGesturesToPresent(toView: self.view, forMenu: .left)`.
+///
+/// - `.closeLeftFromAnywhere`: installs a `UIPanGestureRecognizer` that
+///   listens everywhere on its view. Used when the BarBot history is
+///   open — a LEFTWARD pan anywhere drags the panel back off-screen
+///   to the left. Matches the SideMenuSwift dismiss-pan behaviour for
+///   a LEFT menu (panel at x=0, swipe-left moves it to x=-panelWidth).
 enum SideMenuGestureMode {
     case openFromRightEdge
     case closeFromAnywhere
+    case openFromLeftEdge
+    case closeLeftFromAnywhere
 }
 
 struct ScreenEdgePanGesture: UIViewRepresentable {
@@ -83,7 +98,20 @@ struct ScreenEdgePanGesture: UIViewRepresentable {
             recognizer.delegate = context.coordinator
             view.addGestureRecognizer(recognizer)
 
-        case .closeFromAnywhere:
+        case .openFromLeftEdge:
+            // 1:1 with UIKit `addScreenEdgePanGesturesToPresent(forMenu: .left)`
+            // — `UIScreenEdgePanGestureRecognizer(edges: .left)` filters to
+            // touches that start within the system-defined left edge zone
+            // and drives the BarBot history panel slide-in interactively.
+            let recognizer = UIScreenEdgePanGestureRecognizer(
+                target: context.coordinator,
+                action: #selector(Coordinator.handlePan(_:))
+            )
+            recognizer.edges = .left
+            recognizer.delegate = context.coordinator
+            view.addGestureRecognizer(recognizer)
+
+        case .closeFromAnywhere, .closeLeftFromAnywhere:
             let recognizer = UIPanGestureRecognizer(
                 target: context.coordinator,
                 action: #selector(Coordinator.handlePan(_:))
@@ -117,25 +145,33 @@ struct ScreenEdgePanGesture: UIViewRepresentable {
             let translation = recognizer.translation(in: view)
             let velocity = recognizer.velocity(in: view)
 
-            // For .openFromRightEdge: a rightward edge pan produces a NEGATIVE
-            // translation.x (finger moves leftward toward center).
-            //   travel = -translation.x ∈ [0, totalWidth]
+            // Convert raw translation/velocity to a SIGNED quantity in the
+            // direction that COMPLETES the gesture, so `progress == 1` always
+            // means "fully committed" regardless of which edge the panel is on.
             //
-            // For .closeFromAnywhere: a rightward pan on an already-open menu
-            // produces a POSITIVE translation.x (finger moves rightward).
-            //   travel = translation.x ∈ [0, totalWidth]
-            //
-            // In both cases progress == 1 means the full commit distance has
-            // been travelled in the direction that finishes the gesture.
+            //   .openFromRightEdge:    finger moves LEFT  (translation.x < 0)
+            //                          → travel = -translation.x
+            //   .openFromLeftEdge:     finger moves RIGHT (translation.x > 0)
+            //                          → travel = +translation.x
+            //   .closeFromAnywhere:    right-menu dismiss = pan RIGHT (translation.x > 0)
+            //                          → travel = +translation.x
+            //   .closeLeftFromAnywhere: left-menu dismiss = pan LEFT (translation.x < 0)
+            //                          → travel = -translation.x
             let signedTravel: CGFloat
             let signedVelocity: CGFloat
             switch owner.mode {
             case .openFromRightEdge:
                 signedTravel = -translation.x
                 signedVelocity = -velocity.x
+            case .openFromLeftEdge:
+                signedTravel = translation.x
+                signedVelocity = velocity.x
             case .closeFromAnywhere:
                 signedTravel = translation.x
                 signedVelocity = velocity.x
+            case .closeLeftFromAnywhere:
+                signedTravel = -translation.x
+                signedVelocity = -velocity.x
             }
             let travel = max(0, signedTravel)
             let progress = min(1, travel / owner.totalWidth)
@@ -186,12 +222,21 @@ struct ScreenEdgePanGesture: UIViewRepresentable {
             guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
                   let view = pan.view else { return true }
             switch owner.mode {
-            case .openFromRightEdge:
-                // Trust UIKit — no additional filtering.
+            case .openFromRightEdge, .openFromLeftEdge:
+                // Trust UIKit — `UIScreenEdgePanGestureRecognizer` already
+                // filters to its edge zone and discriminates against vertical
+                // pans internally. Adding velocity gating on top causes
+                // intermittent rejections at touch-down (velocity is ~0).
                 return true
             case .closeFromAnywhere:
+                // Right menu dismiss: must be primarily rightward.
                 let v = pan.velocity(in: view)
                 return abs(v.x) > abs(v.y) && v.x > 0
+            case .closeLeftFromAnywhere:
+                // Left menu dismiss: must be primarily LEFTWARD so a vertical
+                // scroll on the history rows doesn't accidentally close it.
+                let v = pan.velocity(in: view)
+                return abs(v.x) > abs(v.y) && v.x < 0
             }
         }
     }
@@ -220,7 +265,16 @@ struct ScreenEdgePanGesture: UIViewRepresentable {
                     return self
                 }
                 return nil
-            case .closeFromAnywhere:
+            case .openFromLeftEdge:
+                // Mirror image of the right-edge hit zone — capture touches
+                // that START within the leftmost `edgeHitWidth` points so
+                // the rest of the screen (tab bar, scroll views, buttons)
+                // stays interactive when the BarBot history is closed.
+                if point.x <= edgeHitWidth {
+                    return self
+                }
+                return nil
+            case .closeFromAnywhere, .closeLeftFromAnywhere:
                 // Capture everywhere — the overlay scrim sits under this
                 // view and the panel sits above it in the z-order.
                 return self

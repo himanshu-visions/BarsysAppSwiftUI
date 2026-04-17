@@ -633,105 +633,232 @@ final class OryAPIClient: APIClient {
         }
     }
 
-    /// Ports FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe().
+    /// 1:1 port of FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe()
+    /// (FavoriteRecipeApiService.swift L25-129).
     ///
-    /// UIKit decision logic:
-    ///   • isCustomizing == true → POST /my/recipes (create new from existing)
-    ///   • isCustomizing == false && recipeID exists → PATCH /my/recipes/{id}
-    ///   • isCustomizing == false && no recipeID → POST /my/recipes (brand new)
+    /// **URL & method** (UIKit L34-53):
+    ///   • mode == .update && !isCustomizing → PATCH /my/recipes/{id}
+    ///   • else                              → POST  /my/recipes
     ///
-    /// Request body: Recipe JSON with image as base64. UIKit removes
-    /// `created_at`, `variations`, `mixing_technique`, `ice`, `isFavourite`
-    /// and computes `barsys_360_compatible` (non-garnish ingredients <= 6).
+    /// **Body construction strategy** (UIKit L57-103):
+    ///   1. Encode the FULL Recipe model with `JSONEncoder` so EVERY
+    ///      Codable field (id, name, slug, description, image, glassware,
+    ///      tags, instructions, ingredients, etc.) lands in the payload.
+    ///   2. Convert to a mutable [String: Any] dictionary.
+    ///   3. Override the `image` key per the priority rules below.
+    ///   4. Strip server-managed / unsupported keys before sending.
+    ///
+    /// The previous SwiftUI port hand-built the payload from a small set
+    /// of explicit keys, which dropped `tags`, `ice`, `mixing_technique`,
+    /// the rich `glassware` object, and the full Ingredient encoding
+    /// (including `substitutes`). The server returned 4xx because the
+    /// payload was incomplete — surfacing as the "Unable to save recipe"
+    /// error in the UI even when the request reached the backend.
+    ///
+    /// **Image priority** (UIKit L67-79):
+    ///   1. isCustomizing && recipe.image.url non-empty && image == nil
+    ///         → reuse existing recipe.image.url
+    ///   2. mode == .update && recipe.image.url non-empty
+    ///         → reuse existing recipe.image.url
+    ///   3. otherwise → base64 the new image with prefix
+    ///         `Constants.sourceTypeBase64Str` (= "data:image/png;base64,")
+    ///         OR empty string if no image was supplied.
+    ///
+    /// **Stripped keys** (UIKit L82-94):
+    ///   • `tags` (only if empty)
+    ///   • `created_at`
+    ///   • `variations`
+    ///   • `mixing_technique`
+    ///   • `ice`
+    ///   • `isFavourite`
+    ///   • `id` + `updated_at` (only when mode == .create)
+    ///
+    /// **Computed key**: `barsys_360_compatible` — true when the count
+    /// of non-garnish / non-additional ingredients is ≤ 6 (UIKit L95-97).
+    ///
+    /// **Instructions split** (UIKit L28-32): if `recipe.instructions`
+    /// has only one entry, split it on " | " into multiple steps so the
+    /// server stores them as a list, not a single concatenated string.
     func saveOrUpdateMyDrink(recipe: Recipe, image: Data?, isCustomizing: Bool) async throws {
         let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
         guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
 
-        // Determine HTTP method + URL (matches UIKit L34-47)
-        let isUpdate = !isCustomizing && !recipe.id.value.isEmpty
+        // Mutable copy so we can apply the UIKit instructions split.
+        var workingRecipe = recipe
+
+        // UIKit L28-32: split `recipe.instructions[0]` on " | " when the
+        // array has only one entry. Preserves multi-step recipes coming
+        // from the BarBot AI which arrive joined with " | ".
+        if workingRecipe.instructions.count <= 1 {
+            workingRecipe.instructions = workingRecipe.instructions.first?
+                .components(separatedBy: " | ") ?? []
+        }
+
+        // UIKit L57-58: sort ingredients alphabetically (case-insensitive).
+        if let ingredients = workingRecipe.ingredients {
+            workingRecipe.ingredients = ingredients.sorted {
+                $0.name.lowercased() < $1.name.lowercased()
+            }
+        }
+
+        // UIKit L34-53: URL + HTTP method.
+        let isUpdate = !isCustomizing && !workingRecipe.id.value.isEmpty
         let endpoint = isUpdate
-            ? "my/recipes/\(recipe.id.value)"
+            ? "my/recipes/\(workingRecipe.id.value)"
             : "my/recipes"
         let httpMethod = isUpdate ? "PATCH" : "POST"
         let urlStr = Self.recipesBaseURL + endpoint
         guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
 
-        // Build JSON payload (matches UIKit L48-107)
-        var params: [String: Any] = [:]
-        params["name"] = recipe.name ?? ""
-        params["description"] = recipe.description ?? ""
-        params["slug"] = recipe.slug ?? ""
+        // UIKit L60-64: encode the WHOLE Recipe Codable, then convert to
+        // a mutable dictionary so we can patch image / strip keys / add
+        // computed flags. This guarantees parity with the server's
+        // expected schema for EVERY field declared on Recipe — not just
+        // the handful we'd remember to whitelist by hand.
+        let encoded = try JSONEncoder().encode(workingRecipe)
+        guard var params = try JSONSerialization.jsonObject(with: encoded, options: []) as? [String: Any] else {
+            throw AppError.network("Encode failed")
+        }
 
-        // Image handling (UIKit L72-95): base64 or existing URL
-        var imageDict: [String: String] = ["alt": "iOS"]
-        if let imageData = image {
-            imageDict["url"] = "data:image/jpeg;base64," + imageData.base64EncodedString()
-        } else if let existingUrl = recipe.image?.url, !existingUrl.isEmpty {
-            imageDict["url"] = existingUrl
+        // UIKit L65-79: image priority.
+        //
+        // `Constants.sourceTypeBase64Str = "data:image/png;base64,"`
+        // (UIKit Constants.swift L310). UIKit uses the PNG mime even
+        // though `UIImage.toBase64()` returns JPEG bytes — the server
+        // accepts either, so we match the UIKit literal exactly.
+        let base64Prefix = "data:image/png;base64,"
+        let existingURL = (workingRecipe.image?.url ?? "")
+        let imageURL: String
+        if isCustomizing && !existingURL.isEmpty && image == nil {
+            imageURL = existingURL
+        } else if isUpdate && !existingURL.isEmpty {
+            imageURL = existingURL
+        } else if let imageData = image {
+            imageURL = base64Prefix + imageData.base64EncodedString()
         } else {
-            imageDict["url"] = ""
+            imageURL = ""
         }
-        params["image"] = imageDict
+        params["image"] = ["alt": "iOS", "url": imageURL]
 
-        // Ingredients — sorted alphabetically (UIKit L57)
-        let sortedIngredients = (recipe.ingredients ?? []).sorted {
-            $0.name.lowercased() < $1.name.lowercased()
-        }
-        params["ingredients"] = sortedIngredients.map { ing -> [String: Any] in
-            var d: [String: Any] = ["name": ing.name]
-            d["unit"] = ing.unit ?? ""
-            d["quantity"] = ing.quantity ?? 0
-            d["notes"] = ing.notes ?? ""
-            d["perishable"] = ing.perishable ?? false
-            d["optional"] = ing.ingredientOptional ?? false
-            if let cat = ing.category {
-                d["category"] = [
-                    "primary": cat.primary ?? "",
-                    "secondary": cat.secondary ?? ""
-                ]
-            }
-            return d
+        // UIKit L81-83: strip empty `tags`.
+        if let tags = params["tags"] as? [String], tags.isEmpty {
+            params.removeValue(forKey: "tags")
+        } else if let tags = params["tags"] as? [Any], tags.isEmpty {
+            params.removeValue(forKey: "tags")
         }
 
-        // barsys_360_compatible — UIKit L96: non-garnish/non-additional <= 6
-        let baseCount = sortedIngredients.filter {
-            let p = ($0.category?.primary ?? "").lowercased()
-            return p != "garnish" && p != "additional"
-        }.count
-        params["barsys_360_compatible"] = baseCount <= 6
+        // UIKit L85-89: strip server-managed / unsupported keys.
+        params.removeValue(forKey: "created_at")
+        params.removeValue(forKey: "variations")
+        params.removeValue(forKey: "mixing_technique")
+        params.removeValue(forKey: "ice")
+        params.removeValue(forKey: "isFavourite")
 
-        // Glassware
-        if let g = recipe.glassware {
-            params["glassware"] = [
-                "type": g.type ?? "",
-                "chilled": g.chilled ?? false,
-                "rimmed": g.rimmed ?? false,
-                "notes": g.notes ?? ""
-            ]
-        }
-
-        // Instructions
-        params["instructions"] = recipe.instructions
-
-        // Remove `id` for create mode (UIKit L106)
+        // UIKit L91-94: for create mode, also drop `updated_at` and `id`
+        // so the server generates them.
         if !isUpdate {
+            params.removeValue(forKey: "updated_at")
             params.removeValue(forKey: "id")
         }
 
-        let body = try JSONSerialization.data(withJSONObject: params)
+        // UIKit L95-97: barsys_360_compatible flag.
+        let baseCount = (workingRecipe.ingredients ?? []).filter {
+            let primary = ($0.category?.primary ?? "").lowercased()
+            return primary != "garnish" && primary != "additional"
+        }.count
+        params["barsys_360_compatible"] = baseCount <= 6
+
+        // UIKit uses `.prettyPrinted` (L102) for the body — matches that
+        // so the wire format is byte-identical when comparing payloads
+        // during debugging.
+        let body = try JSONSerialization.data(withJSONObject: params, options: [.prettyPrinted])
 
         var request = URLRequest(url: url)
         request.httpMethod = httpMethod
         request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpShouldHandleCookies = false   // UIKit L107
         request.httpBody = body
 
         let (_, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         print("[OryAPIClient] saveOrUpdateMyDrink \(httpMethod) \(endpoint): HTTP \(status)")
+        // UIKit L120-127: only 200 / 201 are success.
         guard status == 200 || status == 201 else {
             throw AppError.network("HTTP \(status)")
         }
+    }
+
+    // MARK: - Ingredient image detection
+    //
+    // 1:1 port of UIKit `UploadIngredientsImage.uploadImageAndGetIngredientsResponse`
+    // (UploadIngredientsImage.swift L13-68).
+    //
+    // Endpoint: POST {baseUrlForBarBotActionCard}image/multipart
+    // Headers : Authorization: Bearer <session>, Content-Type: multipart/form-data,
+    //           Accept: application/json
+    // Body    : multipart form-data with text part `session_id`=`session_id`
+    //           and file part `image` (jpeg quality 0.7, filename imagefile.jpg).
+    // Response: [IngredientListResponseModel] — array whose first element
+    //           contains `ingredients: [StationIngredientFromImageModel]`.
+    private static let barBotActionCardBaseURL = "https://ci.bond-mvp1.barsys.com/api/"
+
+    func uploadIngredientImage(_ image: Data) async throws -> [IngredientFromImage] {
+        try await uploadMultipart(
+            image: image,
+            decode: [IngredientListResponse<IngredientFromImage>].self
+        ).first?.ingredients ?? []
+    }
+
+    func uploadIngredientImageForMyBar(_ image: Data) async throws -> [MyBarIngredientFromImage] {
+        try await uploadMultipart(
+            image: image,
+            decode: [IngredientListResponse<MyBarIngredientFromImage>].self
+        ).first?.ingredients ?? []
+    }
+
+    /// Shared multipart upload — the two callers differ only in the
+    /// response decoding model.
+    private func uploadMultipart<T: Decodable>(image: Data, decode: T.Type) async throws -> T {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
+
+        let urlStr = Self.barBotActionCardBaseURL + "image/multipart"
+        guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        var body = Data()
+        let lineBreak = "\r\n"
+
+        // text part: session_id=session_id (UIKit param literally uses this string)
+        body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"session_id\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        body.append("session_id\(lineBreak)".data(using: .utf8)!)
+
+        // file part: image
+        body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"image\"; filename=\"imagefile.jpg\"\(lineBreak)".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        body.append(image)
+        body.append(lineBreak.data(using: .utf8)!)
+
+        // closing boundary
+        body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+        request.httpBody = body
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] uploadIngredientImage: HTTP \(status)")
+        guard status == 200 || status == 201 else {
+            throw AppError.network("HTTP \(status)")
+        }
+        return try JSONDecoder().decode(T.self, from: data)
     }
 
     /// Ports FavoriteRecipeApiService.likeUnlikeApi().

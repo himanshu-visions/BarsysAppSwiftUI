@@ -234,7 +234,18 @@ struct SideMenuOverlay: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea()
-            .allowsHitTesting(!router.showSideMenu)
+            // Right-edge swipe is BLOCKED while:
+            //   • the right side menu is already open, OR
+            //   • the BarBot history (left menu) is open.
+            //
+            // UIKit SideMenuManager only allows one menu at a time; when
+            // the LEFT menu is on screen, swiping the right edge does
+            // NOT open the right menu — the user must dismiss the left
+            // panel first (by swiping left or tapping the dead-zone),
+            // and only then can a fresh right-edge swipe open the right
+            // menu. Mirroring that here so users can't end up with both
+            // panels mid-animation.
+            .allowsHitTesting(!router.showSideMenu && !router.showBarBotHistory)
             .zIndex(2)
         }
         // Zero implicit animation on the ZStack — all animations are
@@ -268,6 +279,9 @@ struct SideMenuOverlay: View {
     // `UIView.animate(usingSpringWithDamping: 1.0, initialSpringVelocity: V)`.
 
     /// Interactive open committed. Animate from current offset → 0 (fully open).
+    /// UIKit SideMenuManager mutex (BarBot history auto-dismiss) is now
+    /// enforced by `AppRouter.showSideMenu.didSet`, so we don't have to
+    /// clear `showBarBotHistory` explicitly here.
     private func completeOpen(velocity: CGFloat = 0) {
         HapticService.light()
         withAnimation(commitSpring(velocity: velocity)) {
@@ -303,6 +317,8 @@ struct SideMenuOverlay: View {
 
     /// Programmatic open from the hamburger button (no gesture velocity).
     /// Uses UIKit-matched `presentDuration = 0.4, curveEaseInOut`.
+    /// SideMenuManager mutex (BarBot history dismiss) is enforced by
+    /// `AppRouter.showSideMenu.didSet`.
     static func openMenu(router: AppRouter) {
         withAnimation(.easeInOut(duration: 0.4)) {
             router.showSideMenu = true

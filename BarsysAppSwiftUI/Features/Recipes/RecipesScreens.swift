@@ -475,8 +475,15 @@ struct RecipeDetailView: View {
                 .fullScreenCover(isPresented: $showEditRecipe) {
                     NavigationStack {
                         // isCustomizing: true — creating NEW My Drink from
-                        // existing Barsys recipe (UIKit: isCustomizingRecipe = true)
-                        EditRecipeView(recipeID: recipe.id, isCustomizing: true)
+                        // existing Barsys recipe (UIKit: isCustomizingRecipe = true).
+                        // Pass the FULL recipe so EditRecipeView can carry
+                        // glassware / instructions / image / slug into the
+                        // POST request without depending on a storage lookup.
+                        EditRecipeView(
+                            recipeID: recipe.id,
+                            existingRecipe: recipe,
+                            isCustomizing: true
+                        )
                     }
                 }
         } else {
@@ -1509,6 +1516,14 @@ private struct IngredientPicker: View {
 
 struct EditRecipeView: View {
     let recipeID: RecipeID?
+    /// When set, the EditRecipeView uses this recipe DIRECTLY as the
+    /// initial state and (for edits) as the patch target — no `env.storage`
+    /// lookup needed. This is critical when editing a My Drink because
+    /// My Drinks live in `myDrinksLoaded` (FavoritesView state), NOT in
+    /// `env.storage`, so a lookup-by-id would return nil and the save
+    /// would mistakenly POST a brand-new recipe instead of PATCHing the
+    /// existing one — surfacing as the "Unable to save recipe" error.
+    var existingRecipe: Recipe? = nil
     /// Ports UIKit `EditViewController.isCustomizingRecipe`.
     /// - `true`  → creating a NEW My Drink from an existing Barsys recipe
     ///   (RecipeDetailView "Save to My Drinks"). API: POST /my/recipes.
@@ -1524,9 +1539,34 @@ struct EditRecipeView: View {
     @State private var ingredients: [Ingredient] = []
     @State private var selectedImage: UIImage?
     @State private var showPhotoPicker = false
+    @State private var showAddIngredientSheet = false
     @State private var nameHasError = false
     @State private var errorMessage: String?
     @State private var isSaving = false
+
+    // MARK: - Add-Ingredient image-detection state (1:1 UIKit parity)
+    //
+    // UIKit `didPressAddIngredientButton` →
+    //   showActionSheetForImagePicker(isImageCroppingDisabled: true) →
+    //   uploadIngredientImage(...) → processUploadedIngredients →
+    //   addIngredient(ingredient).
+    //
+    // SwiftUI mirrors the same finite-state machine:
+    //   1. Tap → `showAddIngredientActionSheet` (Camera / Photos / Cancel).
+    //   2. Pick → `showAddIngredientPicker` opens the chosen source.
+    //   3. After pick → `uploadAndProcessIngredient(image:)` runs the
+    //      AI-detection request and either appends a row or surfaces
+    //      one of the four UIKit error messages
+    //      (Constants.ingredientUnableToAddError, ingredientCannotBeUsedHere,
+    //      moreThanOneIngredientIdentified, hasSameIngredientInDrink).
+    //   4. Manual fallback → "Enter Manually" Action-Sheet button opens
+    //      `AddIngredientSheet` so the user can still add an ingredient
+    //      when the camera is unavailable / the AI fails.
+    @State private var showAddIngredientActionSheet = false
+    @State private var showAddIngredientPicker = false
+    @State private var addIngredientPickerSource: UIImagePickerController.SourceType = .photoLibrary
+    @State private var pickedIngredientImage: UIImage?
+    @State private var isUploadingIngredient = false
 
     /// Ports UIKit `EditViewModel.validateForSave()` — must have a name
     /// and at least one ingredient with a non-zero quantity.
@@ -1590,8 +1630,90 @@ struct EditRecipeView: View {
         .sheet(isPresented: $showPhotoPicker) {
             ImagePicker(image: $selectedImage)
         }
+        .sheet(isPresented: $showAddIngredientSheet) {
+            // Manual entry fallback — used when the user picks "Enter
+            // Manually" from the action sheet OR when the AI scan fails.
+            // Equivalent to UIKit's `addIngredient` call once it has a
+            // validated `Ingredient`.
+            AddIngredientSheet(
+                unit: env.preferences.measurementUnit,
+                existingNames: ingredients.map { $0.name.lowercased() },
+                onAdd: { ingredient in
+                    ingredients.append(ingredient)
+                }
+            )
+        }
+        // 1:1 port of UIKit `showActionSheetForImagePicker(isImageCroppingDisabled: true)`
+        // (ImagePickerViewController.swift L45-89). UIKit shows three
+        // actions: Camera / Photos / Cancel. SwiftUI uses
+        // `confirmationDialog` which renders the same iOS action sheet
+        // on every iOS version. We add an "Enter Manually" option so the
+        // user has a path forward when the camera/photos are unavailable.
+        .confirmationDialog("Add Ingredient", isPresented: $showAddIngredientActionSheet, titleVisibility: .hidden) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Camera") {
+                    addIngredientPickerSource = .camera
+                    showAddIngredientPicker = true
+                }
+            }
+            Button("Photos") {
+                addIngredientPickerSource = .photoLibrary
+                showAddIngredientPicker = true
+            }
+            Button("Enter Manually") {
+                showAddIngredientSheet = true
+            }
+            Button("Cancel", role: .cancel) { }
+        }
+        // Image picker for the AI ingredient detection flow. UIKit pipes
+        // the chosen image through `uploadIngredientImage(...)` —
+        // SwiftUI does the same via `uploadAndProcessIngredient(image:)`.
+        .sheet(isPresented: $showAddIngredientPicker) {
+            BarBotImagePicker(image: $pickedIngredientImage,
+                              source: addIngredientPickerSource)
+                .ignoresSafeArea()
+        }
+        .onChange(of: pickedIngredientImage) { newImage in
+            guard let image = newImage else { return }
+            // UIKit parity: defer the upload until after the picker has
+            // dismissed — mirrors `picker.dismiss(animated: true) { ... }`
+            // in `imagePickerController(_:didFinishPickingMediaWithInfo:)`.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                uploadAndProcessIngredient(image: image)
+                pickedIngredientImage = nil
+            }
+        }
+        .overlay {
+            // 1:1 with UIKit `showGlassLoader(message: "Adding ingredients")`
+            // — a small modal overlay that blocks input while the upload
+            // request is in flight (UploadIngredientsImage + AI detection
+            // can take 1-3s on a slow connection).
+            if isUploadingIngredient {
+                ZStack {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text(Constants.addingIngredientLoaderText)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Color("appBlackColor"))
+                    }
+                    .padding(24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(.regularMaterial)
+                    )
+                    .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
+                }
+            }
+        }
         .onAppear {
-            if let id = recipeID, let recipe = env.storage.recipe(by: id) {
+            // Prefer the recipe passed in directly. Fallback to storage
+            // lookup so RouteView's id-only `.editRecipe(id)` path keeps
+            // working for Barsys catalog recipes.
+            if let recipe = existingRecipe {
+                name = recipe.name ?? ""
+                ingredients = recipe.ingredients ?? []
+            } else if let id = recipeID, let recipe = env.storage.recipe(by: id) {
                 name = recipe.name ?? ""
                 ingredients = recipe.ingredients ?? []
             }
@@ -1743,7 +1865,9 @@ struct EditRecipeView: View {
             if !shouldHideAddIngredientRow {
                 Button {
                     HapticService.light()
-                    addPlaceholderIngredient()
+                    // 1:1 with UIKit `didPressAddIngredientButton` →
+                    // `showActionSheetForImagePicker(isImageCroppingDisabled: true)`.
+                    showAddIngredientActionSheet = true
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "plus")
@@ -1772,14 +1896,112 @@ struct EditRecipeView: View {
         ingredients.count >= 6 && ble.isBarsys360Connected()
     }
 
-    /// 1:1 with UIKit `didPressAddIngredientButton` —
-    /// `showActionSheetForImagePicker(isImageCroppingDisabled: true)`
-    /// followed by `uploadIngredientImage(...)` ingredient detection.
-    /// Local placeholder until the upload service is wired in.
-    private func addPlaceholderIngredient() {
-        ingredients.append(Ingredient(name: "New Ingredient",
-                                      unit: Constants.mlText,
-                                      quantity: 30))
+    // MARK: - Upload + AI detection (UIKit didSelectImagesFromPhotos parity)
+    //
+    // Faithful port of `EditViewController.didSelectImagesFromPhotos`
+    // (EditViewController.swift L379-418) for the ingredient branch:
+    //   1. Show glass loader "Adding ingredients".
+    //   2. POST image to `image/multipart` via APIClient.
+    //   3. Map response to [Ingredient] (unit "ml", quantity 0.0,
+    //      ingredientOptional false) — UIKit
+    //      `EditViewModel+API.uploadIngredientImage` L66-69.
+    //   4. Run `processUploadedIngredients` validation chain — UIKit
+    //      `EditViewModel+API.processUploadedIngredients` L77-121:
+    //        • nil response          → ingredientUnableToAddError
+    //        • empty array           → ingredientCannotBeUsedHere
+    //        • base/mixer count == 0 (only garnish/additional present)
+    //                                → ingredientCannotBeUsedHere
+    //        • base/mixer count > 1  → moreThanOneIngredientIdentified
+    //        • category primary or secondary missing
+    //                                → ingredientCannotBeUsedHere
+    //        • duplicate by primary+secondary
+    //                                → hasSameIngredientInDrink
+    //        • all pass → append Ingredient(quantity: minimumQtyDouble = 5.0).
+    //   5. On any failure, surface the message via env.alerts.
+    private func uploadAndProcessIngredient(image: UIImage) {
+        guard let data = image.jpegData(compressionQuality: 0.7) else {
+            env.alerts.show(message: Constants.ingredientUnableToAddError)
+            return
+        }
+
+        isUploadingIngredient = true
+        Task { @MainActor in
+            defer { isUploadingIngredient = false }
+            do {
+                let detected = try await env.api.uploadIngredientImage(data)
+                let result = processUploadedIngredients(detected)
+                if let ingredient = result.ingredient {
+                    HapticService.success()
+                    ingredients.append(ingredient)
+                } else if let message = result.message {
+                    env.alerts.show(message: message)
+                }
+            } catch {
+                env.alerts.show(message: Constants.recipeSaveError)
+            }
+        }
+    }
+
+    /// 1:1 port of UIKit `EditViewModel+API.processUploadedIngredients`
+    /// — same five validation branches in the same order, with the
+    /// same Constants strings. Returns either a validated Ingredient or
+    /// the message to show the user.
+    private func processUploadedIngredients(
+        _ detected: [IngredientFromImage]?
+    ) -> (ingredient: Ingredient?, message: String?) {
+        guard let detected = detected else {
+            return (nil, Constants.ingredientUnableToAddError)
+        }
+        if detected.isEmpty {
+            return (nil, Constants.ingredientCannotBeUsedHere)
+        }
+
+        // Filter to base/mixer (exclude garnish + additional).
+        let baseAndMixer = detected.filter {
+            let p = ($0.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional"
+        }
+
+        if baseAndMixer.isEmpty {
+            // The image only contained garnish/additional ingredients —
+            // not allowed in EditRecipe (UIKit L91-93).
+            return (nil, Constants.ingredientCannotBeUsedHere)
+        }
+        if baseAndMixer.count > 1 {
+            return (nil, Constants.moreThanOneIngredientIdentified)
+        }
+
+        let first = baseAndMixer[0]
+        let primary = first.category?.primary ?? ""
+        let secondary = first.category?.secondary ?? ""
+        if primary.isEmpty || secondary.isEmpty {
+            return (nil, Constants.ingredientCannotBeUsedHere)
+        }
+
+        // Duplicate check — UIKit `hasDuplicateIngredient(primary:secondary:)`
+        // matches by primary AND secondary, lowercased.
+        let isDuplicate = ingredients.contains { existing in
+            (existing.category?.primary?.lowercased() ?? "") == primary.lowercased()
+                && (existing.category?.secondary?.lowercased() ?? "") == secondary.lowercased()
+        }
+        if isDuplicate {
+            return (nil, Constants.hasSameIngredientInDrink)
+        }
+
+        // Build the Ingredient with the same defaults as UIKit
+        // (`Ingredient.init(...)` in EditViewModel+API L105-114):
+        //   unit: "ml" (lowercased), quantity: 5.0, ingredientOptional: false.
+        let ing = Ingredient(
+            name: first.name ?? "",
+            unit: Constants.mlText.lowercased(),
+            notes: "",
+            category: first.category,
+            quantity: 5.0,
+            perishable: first.perishable,
+            substitutes: [],
+            ingredientOptional: false
+        )
+        return (ing, nil)
     }
 
     // iOS 26: glass material at xlarge (20pt) radius; pre-26: pill (24pt)
@@ -1915,43 +2137,59 @@ struct EditRecipeView: View {
         // with quantity > 0 before sending to API.
         let filteredIngredients = ingredients.filter { ($0.quantity ?? 0) > 0 }
 
-        // Build the recipe to send to API
+        // Build the recipe to send to API.
+        //
+        // Resolve the source recipe in this priority order:
+        //   1. `existingRecipe` parameter — passed in directly from
+        //      FavoritesView's My-Drinks "Edit" button (the one place
+        //      a recipe lives outside `env.storage`).
+        //   2. `env.storage.recipe(by: id)` — Barsys catalog recipes
+        //      and locally-upserted My Drinks.
+        //   3. nil — a brand-new recipe with no template.
+        let sourceRecipe: Recipe? = existingRecipe
+            ?? recipeID.flatMap { env.storage.recipe(by: $0) }
+
         var recipeToSave: Recipe
-        if let id = recipeID, let existing = env.storage.recipe(by: id), !isCustomizing {
+        if !isCustomizing, let source = sourceRecipe, !source.id.value.isEmpty {
             // EDIT existing My Drink — PATCH /my/recipes/{id}
-            recipeToSave = existing
+            //
+            // Crucially we KEEP `source.id` (was previously lost when the
+            // storage lookup failed because My Drinks aren't in env.storage,
+            // which forced us into the create path with an empty id and
+            // produced "Unable to save recipe").
+            recipeToSave = source
             recipeToSave.name = trimmed
             recipeToSave.ingredients = filteredIngredients
             recipeToSave.isMyDrinkFavourite = true
+        } else if let source = sourceRecipe {
+            // CUSTOMIZE existing Barsys recipe → POST new My Drink with
+            // empty id so the server generates a fresh one. Carry over
+            // metadata so the new drink keeps glassware / instructions /
+            // image etc.
+            recipeToSave = Recipe(
+                id: RecipeID(""),
+                name: trimmed,
+                description: source.description,
+                image: source.image,
+                ice: source.ice,
+                ingredients: filteredIngredients,
+                instructions: source.instructions,
+                glassware: source.glassware,
+                tags: source.tags,
+                ingredientNames: source.ingredientNames,
+                barsys360Compatible: source.barsys360Compatible,
+                isMyDrinkFavourite: true,
+                slug: source.slug
+            )
         } else {
-            // CREATE new My Drink — POST /my/recipes
-            // When customizing, use existing recipe data as template but
-            // clear the ID so the server generates a new one.
-            if let id = recipeID, let existing = env.storage.recipe(by: id) {
-                recipeToSave = Recipe(
-                    id: RecipeID(""),   // Server generates new ID
-                    name: trimmed,
-                    description: existing.description,
-                    image: existing.image,
-                    ice: existing.ice,
-                    ingredients: filteredIngredients,
-                    instructions: existing.instructions,
-                    glassware: existing.glassware,
-                    tags: existing.tags,
-                    ingredientNames: existing.ingredientNames,
-                    barsys360Compatible: existing.barsys360Compatible,
-                    isMyDrinkFavourite: true,
-                    slug: existing.slug
-                )
-            } else {
-                recipeToSave = Recipe(
-                    id: RecipeID(""),
-                    name: trimmed,
-                    ingredients: filteredIngredients,
-                    instructions: ["Add all ingredients in order.", "Stir or shake to taste."],
-                    isMyDrinkFavourite: true
-                )
-            }
+            // BRAND-NEW My Drink — no source recipe available.
+            recipeToSave = Recipe(
+                id: RecipeID(""),
+                name: trimmed,
+                ingredients: filteredIngredients,
+                instructions: ["Add all ingredients in order.", "Stir or shake to taste."],
+                isMyDrinkFavourite: true
+            )
         }
 
         // Encode image if user picked one (UIKit: base64 JPEG)
@@ -1966,8 +2204,10 @@ struct EditRecipeView: View {
                     isCustomizing: isCustomizing
                 )
                 // Local upsert (for immediate visibility on other screens)
-                if !isCustomizing, let id = recipeID {
-                    // Update: keep the existing ID, upsert locally
+                // — fixes "Edit shows stale data" by mirroring the saved
+                // recipe into env.storage the same way My Drinks would
+                // be after a fresh API fetch.
+                if !isCustomizing {
                     var updated = recipeToSave
                     updated.isMyDrinkFavourite = true
                     env.storage.upsert(recipe: updated)
@@ -2251,5 +2491,157 @@ struct EditIngredientRow: View {
         let ml = (unit == .oz) ? v * 29.5735 : v
         ingredient.quantity = max(5, min(750, ml))
         editingText = displayQty
+    }
+}
+
+// MARK: - AddIngredientSheet
+//
+// 1:1 with UIKit `EditViewModel.processUploadedIngredients` post-effect:
+// adds an `Ingredient` (unit ml, quantity ≥ 5, ingredientOptional false,
+// non-empty name, no duplicate by lowercased name) to the recipe.
+//
+// UIKit gets the name from the AI ingredient-detection backend; SwiftUI
+// surfaces a tiny entry sheet so the user can still produce the same
+// downstream effect without the backend dependency. Validation matches
+// `EditViewModel+API.processUploadedIngredients` exactly:
+//   • Trimmed name must be non-empty
+//   • Quantity must parse and be >= 5 ml (`NumericConstants.minimumQtyDouble`)
+//   • Reject duplicates (by lowercased name) — same check as
+//     `hasDuplicateIngredient(primary:secondary:)` but on name.
+struct AddIngredientSheet: View {
+    let unit: MeasurementUnit
+    let existingNames: [String]
+    let onAdd: (Ingredient) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String = ""
+    @State private var quantityText: String = ""
+    @State private var errorMessage: String?
+
+    private var unitLabel: String { unit == .ml ? "ml" : "oz" }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color("primaryBackgroundColor").ignoresSafeArea()
+                VStack(alignment: .leading, spacing: 24) {
+                    // Name field — same underline + 12pt placeholder as the
+                    // EditRecipe name field.
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Ingredient Name")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color("charcoalGrayColor").opacity(0.7))
+                        TextField("e.g. Vodka", text: $name)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .textInputAutocapitalization(.words)
+                            .frame(height: 40)
+                        Rectangle()
+                            .fill(Color("veryDarkGrayColor"))
+                            .frame(height: 1)
+                    }
+
+                    // Quantity field — keyboard matches the unit
+                    // (numberPad for ml, decimalPad for oz) just like
+                    // `IngredientDisplayData.keyboardType`.
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Quantity (\(unitLabel))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color("charcoalGrayColor").opacity(0.7))
+                        TextField(unit == .ml ? "30" : "1", text: $quantityText)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .keyboardType(unit == .ml ? .numberPad : .decimalPad)
+                            .frame(height: 40)
+                        Rectangle()
+                            .fill(Color("veryDarkGrayColor"))
+                            .frame(height: 1)
+                    }
+
+                    if let msg = errorMessage {
+                        Text(msg)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color("errorLabelColor"))
+                    }
+
+                    Spacer()
+
+                    // Add button — same orange/glass capsule treatment as
+                    // the Edit screen's Craft button (PrimaryOrangeButton +
+                    // makeOrangeStyle / segmentSelectionColor fallback).
+                    Button {
+                        HapticService.light()
+                        addIngredient()
+                    } label: {
+                        Text("Add Ingredient")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 45)
+                            .background(addButtonBackground)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .accessibilityLabel("Add ingredient to recipe")
+                }
+                .padding(24)
+            }
+            .navigationTitle("New Ingredient")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Cancel") {
+                        HapticService.light()
+                        dismiss()
+                    }
+                    .foregroundStyle(Color("appBlackColor"))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var addButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color("segmentSelectionColor"))
+        }
+    }
+
+    private func addIngredient() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            errorMessage = "Please enter an ingredient name."
+            return
+        }
+        if existingNames.contains(trimmedName.lowercased()) {
+            // Mirrors UIKit `processUploadedIngredients` duplicate check.
+            errorMessage = Constants.hasSameIngredientInDrink
+            return
+        }
+        let parsed = Double(quantityText.replacingOccurrences(of: ",", with: "."))
+        let qtyInput = parsed ?? 0
+        // Convert oz input to ml (canonical storage) using same constant
+        // as `EditIngredientRow.commitEdit` (29.5735 ml/oz).
+        let ml = (unit == .oz) ? qtyInput * 29.5735 : qtyInput
+        // Clamp to the same min/max range as the UIKit slider:
+        //   floor   = 5 ml  (NumericConstants.minimumQtyDouble)
+        //   ceiling = 750 ml (NumericConstants.maximumQuantityDoubleMLFor360)
+        let clamped = max(5, min(750, ml > 0 ? ml : 30))
+        let ing = Ingredient(
+            name: trimmedName,
+            unit: Constants.mlText,
+            quantity: clamped
+        )
+        onAdd(ing)
+        dismiss()
     }
 }

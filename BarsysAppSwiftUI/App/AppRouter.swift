@@ -155,7 +155,44 @@ final class AppRouter: ObservableObject {
 
     @Published var rootScreen: RootScreen = .splash
     @Published var selectedTab: AppTab = .homeOrControlCenter
-    @Published var showSideMenu: Bool = false
+
+    /// Right-side menu (profile / settings panel). UIKit
+    /// `rightMenuNavigationController`. The `didSet` enforces a STRICT
+    /// "history-first" gate that mirrors UIKit's user-reported
+    /// SideMenuManager behaviour: while BarBot history is open, ANY
+    /// attempt to open the right side menu is REJECTED — instead the
+    /// history is dismissed. The user has to retry the open gesture
+    /// after the history slides off, exactly as UIKit handled it.
+    @Published var showSideMenu: Bool = false {
+        didSet {
+            if showSideMenu && showBarBotHistory {
+                // Reject the open: dismiss the history first, leave the
+                // side menu CLOSED so the user has to deliberately
+                // reopen it after the history slide-off completes.
+                showSideMenu = false
+                showBarBotHistory = false
+            }
+        }
+    }
+
+    /// Mirrors UIKit SideMenuManager's "only one menu visible at a time"
+    /// invariant. UIKit registers BOTH `leftMenuNavigationController`
+    /// (BarBot history) and `rightMenuNavigationController` (profile/
+    /// side menu) on the SAME SideMenuManager, which internally enforces
+    /// mutual exclusion — opening one dismisses the other.
+    ///
+    /// In SwiftUI the two panels live in different parent views
+    /// (BarBotCraftView for history, MainTabView for the side menu) so
+    /// we hoist the BarBot history visibility to the router. The `didSet`
+    /// dismisses the right side menu when the history is opened so the
+    /// two panels never overlap.
+    @Published var showBarBotHistory: Bool = false {
+        didSet {
+            if showBarBotHistory && showSideMenu {
+                showSideMenu = false
+            }
+        }
+    }
 
     // One NavigationStack path per tab.
     @Published var barBotPath = NavigationPath()

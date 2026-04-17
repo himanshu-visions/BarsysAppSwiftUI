@@ -1703,7 +1703,30 @@ struct BarBotCraftView: View {
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showAttachmentSheet = false
     @State private var showScrollToBottom = false
-    @State private var showHistory = false
+    // `showHistory` lives on the router (`router.showBarBotHistory`) so
+    // cross-overlay coordination works (opening the right side menu must
+    // dismiss BarBot history first, mirroring UIKit SideMenuManager's
+    // single-menu-at-a-time invariant). Local computed mirror keeps
+    // existing read-sites unchanged; writes go through the router.
+    private var showHistory: Bool { router.showBarBotHistory }
+
+    // MARK: - Interactive history-pan state
+    //
+    // Replicates SideMenuSwift's interactive open/close: while the user is
+    // dragging from the left edge (or dragging the open panel leftward to
+    // dismiss), the panel position follows the finger LIVE — there is no
+    // binary "open/closed" jump. Two state vars track the live offset:
+    //
+    //   • `historyOpenDragProgress` — 0…1, set during the OPEN edge-pan
+    //     before `showHistory` flips to true. The panel renders at
+    //     `(progress - 1) * panelWidth` so it slides in from off-screen.
+    //
+    //   • `historyCloseDragProgress` — 0…1, set during the CLOSE pan
+    //     while `showHistory` is true. The panel renders at
+    //     `-progress * panelWidth` so it slides off to the left.
+    @State private var historyOpenDragProgress: CGFloat = 0
+    @State private var historyCloseDragProgress: CGFloat = 0
+    @State private var pendingHistoryOpen = false
 
     private var isConnected: Bool { ble.isAnyDeviceConnected }
     private var deviceIconName: String {
@@ -1834,38 +1857,101 @@ struct BarBotCraftView: View {
             BarBotImagePicker(image: $viewModel.selectedImage, source: imagePickerSource)
                 .ignoresSafeArea()
         }
-        // Left-edge swipe to OPEN history — ports UIKit
-        // `SideMenuManager.default.addScreenEdgePanGesturesToPresent(toView:forMenu:.left)`
-        // + `gestureRecognizerShouldBegin` which gates on `canProcessNewRequest`.
-        .gesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { value in
-                    // Only open if swipe starts near left edge and goes rightward
-                    let startX = value.startLocation.x
-                    let isEdgeSwipe = startX < 30
-                    let isRightward = value.translation.width > 60
-                    if isEdgeSwipe && isRightward && viewModel.canProcessNewRequest && !showHistory {
-                        HapticService.light()
-                        showHistory = true
-                        viewModel.fetchSessions()
-                    }
-                }
-        )
-        // BarBot History — ports `BarBotHistoryViewController` which UIKit
-        // presents as a left-edge slide-in side menu via SideMenuManager
-        // (`openSideMenuforBarBotHistory()`), NOT as a sheet. Drag-right
-        // dismisses it, mirroring UIKit's pan gesture.
+        // Left-edge interactive open — 1:1 port of UIKit
+        // `setupSideMenuForSwipeForBarBotHistory()` →
+        //   SideMenuManager.default.leftMenuNavigationController = menu
+        //   addScreenEdgePanGesturesToPresent(toView: self.view, forMenu: .left)
+        //
+        // SideMenuSwift drives the panel position LIVE during the edge pan
+        // — the panel follows the finger from x = -panelWidth (off-screen)
+        // toward x = 0 (visible). On release it commits if the user crossed
+        // 40 % of the menu width OR flicked at > 800 pts/sec. We mirror the
+        // exact heuristic via `ScreenEdgePanGesture(.openFromLeftEdge)`.
+        //
+        // Gating mirrors UIKit `gestureRecognizerShouldBegin` —
+        // `canProcessNewRequest && craftingInProgress == .no` so a mid-stream
+        // BarBot response can't be interrupted by an accidental edge pan.
         .overlay(alignment: .leading) {
-            if showHistory {
-                BarBotHistorySideMenuOverlay(
-                    isPresented: $showHistory,
-                    vm: viewModel
+            if !showHistory && viewModel.canProcessNewRequest {
+                ScreenEdgePanGesture(
+                    mode: .openFromLeftEdge,
+                    onProgress: { progress in
+                        if !pendingHistoryOpen {
+                            pendingHistoryOpen = true
+                            HapticService.light()
+                            viewModel.fetchSessions()
+                        }
+                        historyOpenDragProgress = progress
+                    },
+                    onEnded: { committed, _ in
+                        // SideMenuSwift commits when progress > 0.4 OR
+                        // flick velocity passes 800 pts/sec — both already
+                        // baked into `committed`. Use a spring to land on
+                        // the final position so the motion stays smooth
+                        // even if the finger lifts mid-travel.
+                        if committed {
+                            // UIKit `presentDuration = 0.4`. Match with a
+                            // gentle spring so it feels native, like the
+                            // UIPercentDrivenInteractiveTransition used by
+                            // SideMenuSwift internally.
+                            // SideMenuManager mutex (right menu auto-dismiss)
+                            // is enforced by `AppRouter.showBarBotHistory.didSet`.
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                                historyOpenDragProgress = 1
+                                router.showBarBotHistory = true
+                            }
+                            // Reset the live progress AFTER the panel is
+                            // marked visible, so the post-open layout reads
+                            // dragOffset == 0 (panel at x = 0).
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                                historyOpenDragProgress = 0
+                                pendingHistoryOpen = false
+                            }
+                        } else {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                historyOpenDragProgress = 0
+                            }
+                            pendingHistoryOpen = false
+                        }
+                    },
+                    totalWidth: UIScreen.main.bounds.width * (351.0 / 393.0)
                 )
-                .transition(.move(edge: .leading))
-                .zIndex(10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea()
+                .allowsHitTesting(true)
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: showHistory)
+        // BarBot History overlay — ALWAYS-mounted while either the panel
+        // is presented OR the user is mid-drag opening it, so the live
+        // offset can render the panel at intermediate positions. Mirrors
+        // UIKit's continuous interactive presentation.
+        .overlay(alignment: .leading) {
+            if showHistory || historyOpenDragProgress > 0 {
+                BarBotHistorySideMenuOverlay(
+                    isPresented: $router.showBarBotHistory,
+                    vm: viewModel,
+                    closeDragProgress: $historyCloseDragProgress,
+                    openDragProgress: historyOpenDragProgress,
+                    isFullyPresented: showHistory
+                )
+                .zIndex(10)
+                // Asymmetric transition so the interactive open
+                // (driven by `panelOffsetX`) keeps owning the slide-IN
+                // motion, while the external dismiss (e.g. mutex flip
+                // when right side menu opens) gets a SwiftUI-driven
+                // slide-OUT to the leading edge — matching UIKit
+                // SideMenuSwift's `dismissDuration = 0.3` slide-off.
+                .transition(.asymmetric(
+                    insertion: .identity,
+                    removal: .move(edge: .leading)
+                ))
+            }
+        }
+        // Animate the conditional overlay's INSERT/REMOVE driven by
+        // `router.showBarBotHistory` flips. Necessary so the .transition
+        // above plays when the mutex auto-dismisses BarBot history while
+        // opening the right side menu.
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: router.showBarBotHistory)
     }
 
     @ToolbarContentBuilder
@@ -1894,8 +1980,18 @@ struct BarBotCraftView: View {
             Button {
                 HapticService.light()
                 guard viewModel.canProcessNewRequest else { return }
-                showHistory = true
                 viewModel.fetchSessions()
+                // 1:1 with UIKit `openSideMenuforBarBotHistory()`
+                // → `present(menu, animated: true)` with
+                // `menu.presentDuration = 0.4`. Spring response 0.4 matches
+                // SideMenuSwift's interactive transition timing.
+                //
+                // SideMenuManager mutex (right menu auto-dismiss) is now
+                // enforced by `AppRouter.showBarBotHistory.didSet`, so we
+                // don't have to remember to clear `showSideMenu` here.
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                    router.showBarBotHistory = true
+                }
             } label: {
                 if #available(iOS 26.0, *) {
                     // iOS 26 `clearGlass()` config — translucent circular
@@ -2059,65 +2155,199 @@ private struct ScrollOffsetPreferenceKey: PreferenceKey {
 struct BarBotHistorySideMenuOverlay: View {
     @Binding var isPresented: Bool
     @ObservedObject var vm: BarBotViewModel
-    @State private var dragOffset: CGFloat = 0
+    /// Live close-pan progress (0…1) driven by the leftward dismissal pan
+    /// owned by this overlay. Stored on the parent so the pan host can
+    /// continue to receive events even while we're dismissing.
+    @Binding var closeDragProgress: CGFloat
+    /// Live open-pan progress (0…1) injected from the parent's
+    /// `ScreenEdgePanGesture(.openFromLeftEdge)` — used to render the
+    /// panel at intermediate offsets BEFORE `isPresented` flips true.
+    let openDragProgress: CGFloat
+    /// True once the panel is fully presented — controls whether the
+    /// scrim is interactive and whether the close pan gesture is mounted.
+    let isFullyPresented: Bool
 
     /// UIKit panel visible width = 351 / 393 ≈ 89.3% of screen width.
     private var panelWidth: CGFloat {
         UIScreen.main.bounds.width * (351.0 / 393.0)
     }
 
+    /// Computed offset (negative = panel partially or fully off-screen
+    /// to the left). Drives the LIVE follow-the-finger feel.
+    ///
+    /// Three states drive the offset:
+    ///   1. Mid-OPEN drag (openDragProgress > 0, !isFullyPresented):
+    ///      offset = (progress - 1) * panelWidth → -panelWidth at progress=0,
+    ///      0 at progress=1.
+    ///   2. Mid-CLOSE drag (closeDragProgress > 0, isFullyPresented):
+    ///      offset = -progress * panelWidth → 0 at progress=0,
+    ///      -panelWidth at progress=1.
+    ///   3. Idle (panel fully shown OR fully hidden): offset = 0.
+    private var panelOffsetX: CGFloat {
+        if !isFullyPresented {
+            return (openDragProgress - 1) * panelWidth
+        }
+        return -closeDragProgress * panelWidth
+    }
+
+    /// Scrim opacity follows the panel position so the dim builds in /
+    /// fades out smoothly during interactive drags.
+    private var scrimOpacity: Double {
+        let visible: CGFloat
+        if !isFullyPresented {
+            visible = max(0, min(1, openDragProgress))
+        } else {
+            visible = max(0, min(1, 1 - closeDragProgress))
+        }
+        return Double(visible) * 0.25
+    }
+
     var body: some View {
         ZStack(alignment: .leading) {
-            // Dim scrim over the whole screen — tap anywhere (including
-            // the trailing 42pt dead-zone) dismisses the panel. UIKit
-            // does this via `x13-qO-QTr` (a transparent full-screen btn).
-            Color.black.opacity(0.25)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture { dismiss() }
 
-            // The visible sliding panel (351pt of 393pt on iPhone 15).
-            BarBotHistoryView(vm: vm, dismiss: dismiss)
-                .frame(width: panelWidth)
-                .background(
-                    Color("primaryBackgroundColor")
-                        .ignoresSafeArea(edges: [.top, .bottom])
-                )
-                // Soft drop-shadow on the trailing edge of the panel,
-                // matching the SideMenuManager default.
-                .shadow(color: .black.opacity(0.18), radius: 8, x: 2, y: 0)
-                .offset(x: dragOffset)
-                // Swipe-right to dismiss — matches the SideMenuManager
-                // pan-dismiss gesture added in
-                // `setupSideMenuForSwipeForBarBotHistory()`.
-                .gesture(
-                    DragGesture(minimumDistance: 8)
-                        .onChanged { v in
-                            if v.translation.width > 0 {
-                                dragOffset = v.translation.width
+            // ---- Full-screen sizing proxy ----
+            // Forces the overlay to fill its parent so the scrim's hit
+            // area extends to the right edge of the screen. Without this
+            // the parent `.overlay(alignment: .leading)` may collapse the
+            // child to its intrinsic content size, leaving the right
+            // 42pt dead-zone outside the tap target.
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+
+            // ---- Dim scrim ----
+            // UIKit `x13-qO-QTr` is a transparent full-screen button
+            // wired to `didPressDismissButton`. Tapping ANYWHERE outside
+            // the visible panel — including the trailing 42pt dead-zone
+            // (panelWidth=351 of 393pt screen) — must dismiss. We wrap
+            // the scrim in a Button so the tap target is reliable across
+            // all iOS versions (more deterministic than `.onTapGesture`
+            // when stacked beneath a sibling view that owns gestures).
+            Button(action: {
+                guard isFullyPresented else { return }
+                dismiss()
+            }) {
+                Color.black
+                    .opacity(scrimOpacity)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .allowsHitTesting(isFullyPresented)
+            .accessibilityLabel("Close history")
+            .accessibilityHint("Closes the chat history menu")
+
+            // ---- Sliding panel ----
+            // The visible panel (351pt of 393pt on iPhone 15). Its outer
+            // frame is EXACTLY panelWidth so the scrim's right 42pt
+            // dead-zone receives taps. Hit testing on the panel itself
+            // is gated to the panelWidth area only — the close-pan
+            // recognizer below shares the same frame so it never claims
+            // touches in the dead-zone.
+            ZStack {
+                BarBotHistoryView(vm: vm, dismiss: dismiss)
+                    .frame(width: panelWidth)
+                    .background(
+                        Color("primaryBackgroundColor")
+                            .ignoresSafeArea(edges: [.top, .bottom])
+                    )
+                    // Soft drop-shadow on the trailing edge of the panel,
+                    // matching the SideMenuManager default.
+                    .shadow(color: .black.opacity(0.18), radius: 8, x: 2, y: 0)
+
+            }
+            .frame(width: panelWidth, alignment: .leading)
+            .offset(x: panelOffsetX)
+            // Interactive LEFTWARD-pan dismiss — 1:1 with UIKit
+            // SideMenuManager `addPanGestureToPresent` for a left menu.
+            //
+            // Uses SwiftUI `DragGesture(minimumDistance: 8)` as a
+            // `.simultaneousGesture` so it COEXISTS with the table's
+            // vertical scroll + the cell's tap (UIKit SideMenuSwift
+            // achieves this internally via UIGestureRecognizerDelegate's
+            // `shouldRecognizeSimultaneouslyWith`). A previous port used
+            // a UIKit `UIPanGestureRecognizer` mounted via
+            // `UIViewRepresentable` whose `hitTest` returned `self` for
+            // ALL touches, swallowing every tap and scroll regardless of
+            // direction. SwiftUI's gesture arbitration handles the same
+            // intent without monopolising the touch stream.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { v in
+                        guard isFullyPresented else { return }
+                        // Only react to LEFTWARD pans (negative .width).
+                        // Vertical scrolls + rightward overshoots stay
+                        // out of our way so the table remains scrollable.
+                        let dx = min(0, v.translation.width)
+                        let progress = min(1, max(0, -dx / panelWidth))
+                        closeDragProgress = progress
+                    }
+                    .onEnded { v in
+                        guard isFullyPresented else { return }
+                        let dx = -v.translation.width                  // positive when moving left
+                        let predictedDx = -v.predictedEndTranslation.width
+                        let past = dx > panelWidth * 0.4
+                        let fast = predictedDx > panelWidth * 0.6
+                        if past || fast {
+                            commitClose()
+                        } else {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                closeDragProgress = 0
                             }
                         }
-                        .onEnded { v in
-                            if v.translation.width > 80
-                                || v.predictedEndTranslation.width > panelWidth / 2 {
-                                dismiss()
-                            } else {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    dragOffset = 0
-                                }
-                            }
-                        }
-                )
+                    }
+            )
+            .zIndex(1)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { vm.fetchSessions() }
     }
 
-    /// UIKit `dismissDuration = 0.3`.
+    /// UIKit `dismissDuration = 0.3` + light haptic on close. Drives the
+    /// panel off-screen FIRST, then unmounts the overlay so the user sees
+    /// the slide-out finish before the view disappears.
     private func dismiss() {
         HapticService.light()
-        withAnimation(.easeInOut(duration: 0.3)) {
-            dragOffset = 0
-            isPresented = false
+        commitClose()
+    }
+
+    /// Two-step commit so the slide-off animation visibly completes
+    /// before the overlay unmounts. Mirrors UIKit's
+    /// `present(menu, animated: true)` ↔ `dismiss(animated: true)` where
+    /// the dismiss animation runs to completion before the panel VC is
+    /// removed from the hierarchy.
+    ///
+    /// **Critical**: the final `isPresented = false` flip must happen
+    /// inside a `Transaction(animation: nil)` / `disablesAnimations =
+    /// true` block. Otherwise the parent overlay's
+    /// `.animation(.spring(...), value: router.showBarBotHistory)` +
+    /// `.transition(.move(edge: .leading))` would replay the slide-off
+    /// AFTER our own offset-driven slide already completed, producing
+    /// the visible "panel slides off → reappears → slides off again"
+    /// double-animation the user reported. Suppressing the implicit
+    /// animation on the binding flip lets the offset animation own the
+    /// motion and lets the unmount happen invisibly while the panel is
+    /// already off-screen at x = -panelWidth.
+    private func commitClose() {
+        // Step 1: animate the panel off-screen to the left.
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            closeDragProgress = 1
+        }
+        // Step 2: AFTER the slide-off completes, unmount silently.
+        // The 0.32s delay matches `dismissDuration = 0.3` plus a small
+        // spring-tail buffer so the user reads the motion as completing
+        // rather than getting truncated by the overlay removal.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            // Suppress the parent's `.animation(value:)` on
+            // `router.showBarBotHistory` so the conditional unmount
+            // (and its `.transition(.move(edge:.leading))` removal)
+            // happens WITHOUT a second slide-off pass.
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                isPresented = false
+                closeDragProgress = 0
+            }
         }
     }
 }

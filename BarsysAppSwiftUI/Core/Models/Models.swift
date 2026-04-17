@@ -16,10 +16,57 @@ import SwiftUI
 
 // MARK: - Strong IDs
 
-struct RecipeID: Hashable, Codable { let value: String; init(_ value: String = UUID().uuidString) { self.value = value } }
-struct MixlistID: Hashable, Codable { let value: String; init(_ value: String = UUID().uuidString) { self.value = value } }
-struct DeviceID: Hashable, Codable { let value: String; init(_ value: String = UUID().uuidString) { self.value = value } }
-struct IngredientID: Hashable, Codable { let value: String; init(_ value: String = UUID().uuidString) { self.value = value } }
+// Strong-typed wrappers around the underlying server `id` strings.
+// CRITICAL: encode/decode as a SINGLE VALUE (the raw string) — without
+// this the JSON payload would contain `"id": {"value": "abc"}` instead
+// of `"id": "abc"`, which the recipes API rejects with a 4xx and which
+// surfaced as the persistent "Unable to save recipe" error during edits.
+// UIKit `Recipe.id` is a `String`, so the server only accepts the
+// scalar form on the wire.
+struct RecipeID: Hashable, Codable {
+    let value: String
+    init(_ value: String = UUID().uuidString) { self.value = value }
+    init(from decoder: Decoder) throws {
+        self.value = try decoder.singleValueContainer().decode(String.self)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(value)
+    }
+}
+struct MixlistID: Hashable, Codable {
+    let value: String
+    init(_ value: String = UUID().uuidString) { self.value = value }
+    init(from decoder: Decoder) throws {
+        self.value = try decoder.singleValueContainer().decode(String.self)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(value)
+    }
+}
+struct DeviceID: Hashable, Codable {
+    let value: String
+    init(_ value: String = UUID().uuidString) { self.value = value }
+    init(from decoder: Decoder) throws {
+        self.value = try decoder.singleValueContainer().decode(String.self)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(value)
+    }
+}
+struct IngredientID: Hashable, Codable {
+    let value: String
+    init(_ value: String = UUID().uuidString) { self.value = value }
+    init(from decoder: Decoder) throws {
+        self.value = try decoder.singleValueContainer().decode(String.self)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(value)
+    }
+}
 
 // MARK: - User / Profile
 
@@ -266,6 +313,25 @@ struct Recipe: Hashable, Identifiable, Codable {
         self.slug = slug
         self.userId = userId
         self.createdAt = createdAt
+    }
+
+    // 1:1 with UIKit `Recipe.CodingKeys` (MixlistModel.swift L77-91).
+    // Without these, JSONEncoder uses the Swift property names which
+    // would emit `barsys360Compatible` / `userId` / `created_at` etc.
+    // in the WRONG case — the server rejects the payload and the save
+    // fails with the generic "Unable to save recipe" message.
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, image, ice, ingredients, instructions
+        case mixingTechnique = "mixingTechnique"
+        case glassware, tags, variations
+        case createdAt = "created_at"
+        case ingredientNames = "ingredient_names"
+        case isFavourite
+        case barsys360Compatible = "barsys_360_compatible"
+        case favCreatedAt
+        case isMyDrinkFavourite = "favorite"
+        case slug
+        case userId = "user_id"
     }
 }
 

@@ -72,6 +72,53 @@ protocol APIClient: AnyObject {
     func saveOrUpdateMyDrink(recipe: Recipe, image: Data?, isCustomizing: Bool) async throws
     /// 1:1 port of UIKit `FavoriteRecipeApiService.likeUnlikeApi`.
     func likeUnlike(recipeId: String, isLike: Bool) async throws -> String
+
+    /// 1:1 port of UIKit `UploadIngredientsImage.uploadImageAndGetIngredientsResponse`.
+    /// POST `{baseUrlForBarBotActionCard}image/multipart` with multipart
+    /// form-data:
+    ///   • text part: `session_id`=`session_id`
+    ///   • file part: `image` (jpeg, quality 0.7)
+    /// Response: `[IngredientListResponseModel]` — an array whose first
+    /// element contains a `[StationIngredientFromImageModel]` list. Caller
+    /// (EditRecipeView / MakeMyOwn) maps to `[Ingredient]` and runs
+    /// `processUploadedIngredients` for validation + dedupe.
+    func uploadIngredientImage(_ image: Data) async throws -> [IngredientFromImage]
+
+    /// 1:1 port of UIKit `UploadIngredientsImage.uploadImageAndGetIngredientsResponseForMyBar`.
+    /// Same endpoint as above; response is `[MyBarIngredientListResponseModel]`
+    /// which adds `substitutes: [String]?`.
+    func uploadIngredientImageForMyBar(_ image: Data) async throws -> [MyBarIngredientFromImage]
+}
+
+// MARK: - Ingredient-detection response models
+//
+// 1:1 ports of UIKit `StationIngredientFromImageModel` and
+// `MyBarIngredientFromImageModel` (`UploadIngredientsImage.swift` L162-185).
+
+struct IngredientFromImage: Codable {
+    let name: String?
+    let type: String?
+    let confidence: Double?
+    let details: String?
+    let category: IngredientCategory?
+    let perishable: Bool?
+}
+
+struct MyBarIngredientFromImage: Codable {
+    let name: String?
+    let type: String?
+    let confidence: Double?
+    let details: String?
+    let category: IngredientCategory?
+    let perishable: Bool?
+    let substitutes: [String]?
+}
+
+/// Wrapper response — the API returns `[ { ingredients: [...] } ]`,
+/// the consumer reads `.first?.ingredients`. Matches UIKit
+/// `IngredientListResponseModel` / `MyBarIngredientListResponseModel`.
+struct IngredientListResponse<Item: Codable>: Codable {
+    let ingredients: [Item]?
 }
 
 final class MockAPIClient: APIClient {
@@ -148,6 +195,39 @@ final class MockAPIClient: APIClient {
     func likeUnlike(recipeId: String, isLike: Bool) async throws -> String {
         try await Task.sleep(nanoseconds: 300_000_000)
         return isLike ? Constants.likeSuccessMessage : Constants.unlikeSuccessMessage
+    }
+
+    // MARK: - Image-detection mocks
+    //
+    // Returns one canned ingredient so the UI flow exercises the same
+    // success path as UIKit (loader → result alert / row append).
+    func uploadIngredientImage(_ image: Data) async throws -> [IngredientFromImage] {
+        try await Task.sleep(nanoseconds: 800_000_000)
+        return [
+            IngredientFromImage(
+                name: "Vodka",
+                type: "spirit",
+                confidence: 0.95,
+                details: "Premium grade vodka",
+                category: IngredientCategory(primary: "base", secondary: "vodka"),
+                perishable: false
+            )
+        ]
+    }
+
+    func uploadIngredientImageForMyBar(_ image: Data) async throws -> [MyBarIngredientFromImage] {
+        try await Task.sleep(nanoseconds: 800_000_000)
+        return [
+            MyBarIngredientFromImage(
+                name: "Vodka",
+                type: "spirit",
+                confidence: 0.95,
+                details: "Premium grade vodka",
+                category: IngredientCategory(primary: "base", secondary: "vodka"),
+                perishable: false,
+                substitutes: ["Gin", "Rum"]
+            )
+        ]
     }
 }
 

@@ -245,9 +245,19 @@ struct FavoritesView: View {
         // returns to the My Drinks list exactly where they left off.
         .fullScreenCover(item: $recipeToEdit) { recipe in
             NavigationStack {
-                // isCustomizing: false (default) — editing an EXISTING My Drink
+                // isCustomizing: false — editing an EXISTING My Drink
                 // (UIKit: isCustomizingRecipe = false → PATCH /my/recipes/{id})
-                EditRecipeView(recipeID: recipe.id, isCustomizing: false)
+                //
+                // We pass the FULL recipe object (not just the id) because
+                // My Drinks live in `myDrinksLoaded`, NOT in `env.storage`.
+                // Without this the EditRecipeView's storage lookup would
+                // return nil and the save would fall through to POST,
+                // surfacing as the "Unable to save recipe" error.
+                EditRecipeView(
+                    recipeID: recipe.id,
+                    existingRecipe: recipe,
+                    isCustomizing: false
+                )
             }
             // Inherit environment objects so the modal can access the
             // same storage / analytics / BLE services as its parent.

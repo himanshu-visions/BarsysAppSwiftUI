@@ -108,6 +108,13 @@ enum Constants {
     static let hasSameIngredientInDrink = "A similar ingredient has already been added to this drink. Please select a different one."
     static let hasSameIngredientInMyBar = "A similar ingredient has already been added. Please select a different one."
 
+    // 1:1 ports of UIKit ingredient-detection error copy
+    // (EditViewModel+API.processUploadedIngredients).
+    static let ingredientUnableToAddError = "Unable to add ingredient. Please try again."
+    static let ingredientCannotBeUsedHere = "This ingredient cannot be used here."
+    static let moreThanOneIngredientIdentified = "More than one ingredient identified in the image. Please scan one ingredient at a time."
+    static let addingIngredientLoaderText = "Adding ingredients"
+
     static let unsavedChangesForRecipe = "You have unsaved changes. If you leave this page, your changes will be lost."
     static let systemReset = "Are you sure you want to reset the system?"
     static let doYouWantToDeleteIngredient = "Are you sure you want to delete this ingredient?"
