@@ -520,21 +520,41 @@ private struct SideMenuPanel: View {
             HStack(alignment: .center, spacing: 10) {
                 profileAvatar
 
-                VStack(alignment: .leading, spacing: 10) {
+                // VStack spacing tuned for visual parity with UIKit's
+                // `gVk-Ao-Hw7` constraint (`Edit Profile.top = lblName.bottom + 10`).
+                //
+                // SwiftUI's `Text` frame includes line-height + descender
+                // padding (~3-4pt past the visible baseline) AND the
+                // 70×28 Button frame centers its 13pt text vertically
+                // (≈ 7.5pt empty above the glyphs). With a literal
+                // `spacing: 10` the apparent gap measures ≈ 20pt — a
+                // few points wider than UIKit's tighter ≈ 17pt visual.
+                //
+                // Tightening the SwiftUI spacing to **4pt** restores the
+                // UIKit visual rhythm (Text descender + 4 + button top
+                // padding ≈ 14-15pt — matches what users see in the
+                // storyboard preview).
+                VStack(alignment: .leading, spacing: 4) {
                     // lblName — boldSystem 17pt, up to 3 lines,
                     // trailing = gND.trailing − 15 (iDc-ap-JHv).
+                    //
+                    // `.lineSpacing(0)` clamps any extra line-spacing
+                    // SwiftUI may add for multi-line wraps so the bottom
+                    // of the visible glyph block sits where UIKit's
+                    // `lblName.bottom` constraint anchor sits.
                     Text(displayName)
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(Color("appBlackColor"))
                         .lineLimit(3)
+                        .lineSpacing(0)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityAddTraits(.isHeader)
                         .accessibilityLabel("User name")
 
                     // Edit Profile button — leading aligned with lblName
-                    // (ZOv-t3-Hts), top = lblName.bottom + 10 (gVk-Ao-Hw7),
-                    // 70×28 fixed size (storyboard frame).
+                    // (ZOv-t3-Hts), 70×28 fixed size (storyboard frame).
+                    // Internal text padding centered (UIButton default).
                     Button {
                         HapticService.light()
                         onDismiss()
