@@ -654,6 +654,22 @@ private struct SideMenuPanel: View {
             DeviceConnectedPopup(isPresented: $showDeviceConnectedPopup)
                 .background(ClearBackgroundViewForSideMenu())
         }
+        // 1:1 with UIKit `SideMenuViewController.viewWillAppear`:
+        //   selectedSection = nil
+        //   tblMenu.reloadData()
+        // — every time the side menu opens, all expanded section rows
+        // collapse so the user starts from a clean state.
+        //
+        // SideMenuPanel is ALWAYS-mounted (not conditionally rendered)
+        // so its `@State selectedSection` would otherwise persist across
+        // open/close cycles. Observing `router.showSideMenu` and
+        // resetting on EVERY transition (open AND close) guarantees the
+        // collapsed state on re-open even if the user never went through
+        // the dismiss callback (e.g. swipe-to-close, scrim tap, mutex
+        // auto-dismiss when BarBot history opens).
+        .onChange(of: router.showSideMenu) { _ in
+            selectedSection = nil
+        }
     }
 
     // MARK: - Section header row (tap → expand or direct action)
