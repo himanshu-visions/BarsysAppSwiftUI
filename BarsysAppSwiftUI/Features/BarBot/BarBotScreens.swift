@@ -1971,57 +1971,28 @@ struct BarBotCraftView: View {
                 }
             }
         }
-        // HISTORY — LEFT side (matches UIKit `btnHistory` leading:24pt,
-        // 48×48 with `chatHistory` icon, iOS 26 `clearGlass()` button
-        // configuration, pre-26 plain clear bg with leading constraint 9pt).
-        // BarBotViewController.swift L182-L191 + storyboard constraint
-        // `U3j-dQ-Ihd`.
+             
         ToolbarItem(placement: .topBarLeading) {
             Button {
                 HapticService.light()
                 guard viewModel.canProcessNewRequest else { return }
                 viewModel.fetchSessions()
-                // 1:1 with UIKit `openSideMenuforBarBotHistory()`
-                // → `present(menu, animated: true)` with
-                // `menu.presentDuration = 0.4`. Spring response 0.4 matches
-                // SideMenuSwift's interactive transition timing.
-                //
-                // SideMenuManager mutex (right menu auto-dismiss) is now
-                // enforced by `AppRouter.showBarBotHistory.didSet`, so we
-                // don't have to remember to clear `showSideMenu` here.
+                // 1:1 with UIKit `openSideMenuforBarBotHistory()` →
+                // `present(menu, animated: true)` with
+                // `menu.presentDuration = 0.4`. SideMenuManager mutex
+                // (right menu auto-dismiss) is enforced by
+                // `AppRouter.showBarBotHistory.didSet`.
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                     router.showBarBotHistory = true
                 }
             } label: {
-                if #available(iOS 26.0, *) {
-                    // iOS 26 `clearGlass()` config — translucent circular
-                    // glass over the nav bar. 48×48 matches storyboard.
-                    // Border + shadow match `NavigationRightGlassButtons`
-                    // pill styling (UIGlassEffect .clear style).
-                    ZStack {
-                        Circle().fill(.ultraThinMaterial)
-                        Circle().stroke(Color.white.opacity(0.25), lineWidth: 1)
-                        Image("chatHistory")
-                            .resizable().renderingMode(.template)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                            .foregroundStyle(Color("appBlackColor"))
-                    }
-                    .frame(width: 48, height: 48)
-                    .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 4)
-                } else {
-                    // pre-26 plain — just the icon on the nav bar.
-                    Image("chatHistory")
-                        .resizable().renderingMode(.template)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 22, height: 22)
-                        .foregroundStyle(Color("appBlackColor"))
-                        .frame(width: 48, height: 48)
-                }
-            }
-            .buttonStyle(BounceButtonStyle())
-            .accessibilityLabel("History")
-            .accessibilityHint("View previous chat sessions")
+                Image("chatHistory")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .foregroundStyle(Color("appBlackColor"))
+            }.accessibilityHint("View previous chat sessions")
         }
 
         // FAVORITE + PROFILE — 1:1 port of UIKit `navigationRightGlassView`
