@@ -227,18 +227,16 @@ struct ReadyToPourView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if ble.isAnyDeviceConnected {
+        // UIKit parity — icon only, 25×25, name label hidden
+        // (ReadyToPourListViewController.swift:186 sets
+        // `lblDeviceName.isHidden = true` and never reverses it).
+        if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName)
-                            .resizable().aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                    }
-                    Text(deviceKindName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel(deviceKindName)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {

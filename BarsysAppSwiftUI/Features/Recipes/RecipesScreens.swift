@@ -139,18 +139,28 @@ struct ExploreRecipesView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
         .toolbar {
-            // Center: device icon + name (only when connected)
+            // Center: device ICON ONLY (only when connected)
+            //
+            // UIKit parity: every BarsysApp controller's `updateDeviceInfo`
+            // / `setupView` method sets `lblDeviceName.isHidden = true`
+            // unconditionally and never reverses it — the device-name
+            // label is present in the storyboard but visually hidden on
+            // every screen. Only the 25×25 `imgDevice` renders. Examples:
+            //   • BarBotViewController.swift:253
+            //   • ExploreRecipesViewController.swift:129
+            //   • MyBarViewController.swift:153
+            //   • MixlistViewController.swift:86
+            //   • FavouritesRecipesAndDrinksViewController.swift:207
+            //   • MyProfileViewController.swift:200
+            // (project-wide grep for `lblDeviceName.isHidden = false`
+            // returns zero results outside ScanIngredientsVC).
             if isConnected {
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        Image(deviceIconName)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 25, height: 25)
-                        Text(deviceKindName)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color("appBlackColor"))
-                    }
+                    Image(deviceIconName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 25, height: 25)
+                        .accessibilityLabel(deviceKindName)
                 }
             }
 
@@ -1060,16 +1070,17 @@ struct RecipeDetailView: View {
 
     @ToolbarContentBuilder
     private func toolbarContent(for recipe: Recipe) -> some ToolbarContent {
-        if ble.isAnyDeviceConnected {
+        // UIKit parity — icon only, 25×25, name label hidden
+        // (RecipePageViewController.swift:228 sets
+        // `lblDeviceName.isHidden = true` in `updateDeviceNameAndImage`
+        // and never reverses it).
+        if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName).resizable().aspectRatio(contentMode: .fit).frame(width: 22, height: 22)
-                    }
-                    Text(deviceKindName)
-                        .font(Theme.Font.of(.caption1, .medium))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel(deviceKindName)
             }
         }
         // Shared 100×48 glass pill (iOS 26+) / bare 61×24 icon stack

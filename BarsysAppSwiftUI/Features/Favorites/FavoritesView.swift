@@ -503,20 +503,17 @@ struct FavoritesView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if ble.isAnyDeviceConnected {
+        // UIKit parity — icon only, 25×25, name label hidden
+        // (FavouritesRecipesAndDrinksViewController.swift:207 sets
+        // `lblDeviceName.isHidden = true` in `setupView()` and never
+        // reverses it).
+        if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName)
-                            .resizable().aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                    }
-                    Text(deviceKindName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Connected device, \(deviceKindName)")
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel("Connected device, \(deviceKindName)")
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {

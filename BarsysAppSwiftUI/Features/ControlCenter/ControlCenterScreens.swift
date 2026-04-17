@@ -140,16 +140,20 @@ struct ControlCenterView: View {
                 }
             }
 
-            // Center: device icon + name
-            ToolbarItem(placement: .principal) {
-                HStack(spacing: 6) {
+            // Center: device ICON ONLY.
+            //
+            // UIKit parity — ControlCenterViewController.swift:85 sets
+            // `lblDeviceName.isHidden = true` in `setupView()` and never
+            // reverses it. Only the 25×25 `imgDevice` is visible in the
+            // centre of the custom nav bar (storyboard constraints
+            // `GX2-LX-msO` / `c9K-iH-4Xf` pin imgDevice to 25×25).
+            if !deviceIconName.isEmpty {
+                ToolbarItem(placement: .principal) {
                     Image(deviceIconName)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 25, height: 25)
-                    Text(deviceName)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color("appBlackColor"))
+                        .accessibilityLabel(deviceName)
                 }
             }
 
@@ -863,19 +867,18 @@ struct DevicePairedView: View {
                 }
             }
 
-            // Center: device icon 25×25 + name 12pt — ONLY when connected
-            // UIKit: lblDeviceName.isHidden = true initially, imgDevice set to nil when disconnected
+            // Center: device ICON 25×25 ONLY — ONLY when connected.
+            //
+            // UIKit parity — ControlCenterViewController.swift:85 sets
+            // `lblDeviceName.isHidden = true` in `setupView()` and never
+            // reverses it. Only the `imgDevice` is visible.
             if isConnected {
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        Image(deviceIconName)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 25, height: 25)
-                        Text(deviceKindName)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color("appBlackColor"))
-                    }
+                    Image(deviceIconName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 25, height: 25)
+                        .accessibilityLabel(deviceKindName)
                 }
             }
 
@@ -1817,16 +1820,17 @@ struct StationsMenuView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if ble.isAnyDeviceConnected {
+        // UIKit parity — icon only, 25×25, name label hidden
+        // (StationsMenuViewController.swift:123 /
+        //  StationCleaningFlowViewController.swift:185 both set
+        //  `lblDeviceName.isHidden = true` and never reverse it).
+        if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName).resizable().aspectRatio(contentMode: .fit).frame(width: 22, height: 22)
-                    }
-                    Text(deviceKindName)
-                        .font(Theme.Font.of(.caption1, .medium))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel(deviceKindName)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
@@ -2992,16 +2996,17 @@ struct StationCleaningView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if ble.isAnyDeviceConnected {
+        // UIKit parity — icon only, 25×25, name label hidden
+        // (StationsMenuViewController.swift:123 /
+        //  StationCleaningFlowViewController.swift:185 both set
+        //  `lblDeviceName.isHidden = true` and never reverse it).
+        if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName).resizable().aspectRatio(contentMode: .fit).frame(width: 22, height: 22)
-                    }
-                    Text(deviceKindName)
-                        .font(Theme.Font.of(.caption1, .medium))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel(deviceKindName)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {

@@ -137,18 +137,18 @@ struct MixlistListView: View {
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // Center: device icon + name (only when connected)
+            // Center: device ICON ONLY (only when connected).
+            //
+            // UIKit parity — MixlistViewController.swift:86 sets
+            // `lblDeviceName.isHidden = true` in `setupView()` and never
+            // reverses it; only the 25×25 `imgDevice` is visible.
             if isConnected {
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        Image(deviceIconName)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 25, height: 25)
-                        Text(deviceKindName)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color("appBlackColor"))
-                    }
+                    Image(deviceIconName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 25, height: 25)
+                        .accessibilityLabel(deviceKindName)
                 }
             }
 
@@ -715,16 +715,16 @@ struct MixlistDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if ble.isAnyDeviceConnected {
+        // UIKit parity — icon only, 25×25, name label hidden
+        // (MixlistDetailViewController.swift:103 sets
+        // `lblDeviceName.isHidden = true` and never reverses it).
+        if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName).resizable().aspectRatio(contentMode: .fit).frame(width: 22, height: 22)
-                    }
-                    Text(deviceKindName)
-                        .font(Theme.Font.of(.caption1, .medium))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel(deviceKindName)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {

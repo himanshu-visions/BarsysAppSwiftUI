@@ -745,18 +745,18 @@ struct MyProfileView: View {
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Back")
         }
-        // Device icon + name centered (7EI-ic-Ob3) — only when connected.
+        // Device ICON ONLY centered (7EI-ic-Ob3) — only when connected.
+        //
+        // UIKit parity — MyProfileViewController.swift:200 sets
+        // `lblDeviceName.isHidden = true` and never reverses it. Only
+        // the 25×25 `imgDevice` renders in the centre of the nav bar.
         if isConnected {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 7) {
-                    Image(deviceIconName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
-                    Text(deviceKindName)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel(deviceKindName)
             }
         }
         // Trailing glass pill with favourite + side-menu icons —

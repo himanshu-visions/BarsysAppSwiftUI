@@ -1552,20 +1552,16 @@ struct DrinkCompleteView: View {
             .accessibilityHint("Returns to the previous screen")
         }
 
-        if ble.isAnyDeviceConnected || isSpeakEasyCase {
+        // UIKit parity — icon only, 25×25, name label hidden
+        // (CraftingViewController.swift:148 and :175 both set
+        // `lblDeviceName.isHidden = true` and never reverse it).
+        if (ble.isAnyDeviceConnected || isSpeakEasyCase), !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    if !deviceIconName.isEmpty {
-                        Image(deviceIconName)
-                            .resizable().aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                    }
-                    Text(deviceKindName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color("appBlackColor"))
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Connected device, \(deviceKindName)")
+                Image(deviceIconName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .accessibilityLabel("Connected device, \(deviceKindName)")
             }
         }
 
