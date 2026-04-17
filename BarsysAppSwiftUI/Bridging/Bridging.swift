@@ -314,15 +314,36 @@ struct BarsysWebView: View {
 }
 
 // MARK: - QR Scanner
+//
+// 1:1 behavioural parity with UIKit `QrViewController.setupQRScanner()`
+// (QrViewController.swift L95-108) + `QRScannerView` (from the
+// QRScanner pod). The UIKit version:
+//   • requests camera permission via `checkAuthorizationAndShowCamera()`
+//     (L73-93) and routes a denied state to `showDisabledCameraAlert()`
+//   • instantiates a `QRScannerView` sized to its host container (345×468)
+//   • configures it with `isBlurEffectEnabled: true` + `focusImage:
+//     .borderimageScanner` (the corner-frame art inside Assets.xcassets
+//     /Qr Controller/borderimageScanner.imageset — already in this project)
+//   • starts running once the view is attached.
+//
+// The SwiftUI wrapper renders the same border-image overlay on top of
+// the live preview layer since the UIKit QRScanner pod is not ported
+// here.
+
+enum QRCameraAuthStatus {
+    case unknown, authorized, denied, requesting
+}
 
 struct QRScannerView: UIViewControllerRepresentable {
     var onScan: (String) -> Void
     var onCancel: () -> Void
+    var onPermissionDenied: () -> Void = {}
 
     func makeUIViewController(context: Context) -> QRScannerViewController {
         let vc = QRScannerViewController()
         vc.onScan = onScan
         vc.onCancel = onCancel
+        vc.onPermissionDenied = onPermissionDenied
         return vc
     }
 
@@ -332,13 +353,21 @@ struct QRScannerView: UIViewControllerRepresentable {
 final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     var onScan: ((String) -> Void)?
     var onCancel: (() -> Void)?
+    var onPermissionDenied: (() -> Void)?
+
     private let session = AVCaptureSession()
     private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var didCallOnScan = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
-        configureCamera()
+        // UIKit storyboard `qrViewToShow`: transparent container with a
+        // 12pt corner radius. We match so the preview is clipped to the
+        // SwiftUI parent's rounded frame.
+        view.backgroundColor = .clear
+        view.clipsToBounds = true
+        view.layer.cornerRadius = 12
+        checkAuthorizationAndShowCamera()
     }
 
     override func viewDidLayoutSubviews() {
@@ -348,7 +377,8 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if !session.isRunning {
+        didCallOnScan = false
+        if previewLayer != nil && !session.isRunning {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.session.startRunning()
             }
@@ -359,6 +389,31 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
         super.viewWillDisappear(animated)
         if session.isRunning {
             session.stopRunning()
+        }
+    }
+
+    // MARK: - Permission flow (1:1 UIKit QrViewController L73-93)
+
+    private func checkAuthorizationAndShowCamera() {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            configureCamera()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if granted {
+                        self.configureCamera()
+                    } else {
+                        self.onPermissionDenied?()
+                    }
+                }
+            }
+        case .denied, .restricted:
+            onPermissionDenied?()
+        @unknown default:
+            onPermissionDenied?()
         }
     }
 
@@ -379,13 +434,19 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
         preview.frame = view.bounds
         view.layer.addSublayer(preview)
         self.previewLayer = preview
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.session.startRunning()
+        }
     }
 
     func metadataOutput(_ output: AVCaptureMetadataOutput,
                         didOutput metadataObjects: [AVMetadataObject],
                         from connection: AVCaptureConnection) {
+        guard !didCallOnScan else { return }
         guard let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-              let str = obj.stringValue else { return }
+              let str = obj.stringValue, !str.isEmpty else { return }
+        didCallOnScan = true
         session.stopRunning()
         onScan?(str)
     }

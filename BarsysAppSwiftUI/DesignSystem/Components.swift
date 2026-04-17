@@ -734,8 +734,22 @@ struct BarsysAlertOverlay: View {
             .frame(width: 277)               // UIKit `t2p-he-XsL` exact width
             .background(alertCardBackground)
             .overlay(
+                // 1:1 UIKit `BarsysGlassBackground` border gradient
+                // (Theme.swift L456-514): top-leading white@0.80 →
+                // bottom-trailing white@0.25. The 0.3 flat stroke we had
+                // was too subtle vs UIKit's etched-glass look.
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.80),
+                                Color.white.opacity(0.25)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
             )
             // UIKit shadow on the alert card matches the glass-card
             // shadow used app-wide: lighter, larger blur than the previous
@@ -925,10 +939,21 @@ private struct AlertPopupButtonStyle: ViewModifier {
         if let fill {
             // FILLED variant — UIKit `alertPopUpButtonBackgroundStyle`
             // with non-nil fillColor. Solid fill on both iOS versions.
-            // The UIKit iOS 26 path also adds a glass overlay for sheen
-            // but the dominant visual is the orange tint.
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(fill)
+            // UIKit iOS 26 path layers a `.clear` glass effect on top
+            // (UIViewClass+GradientStyles.swift L141-162) so the tint
+            // reads as a wet-glass pill rather than a flat fill. The
+            // glassHighlight overlay gives us that sheen cleanly.
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(fill)
+                if #available(iOS 26.0, *) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.Gradient.glassHighlight)
+                        .opacity(0.35)
+                        .blendMode(.plusLighter)
+                        .allowsHitTesting(false)
+                }
+            }
         } else if #available(iOS 26.0, *) {
             // iOS 26 BORDERED variant — UIKit `applyCancelCapsuleGradientBorderStyle()`
             // applies a glass effect with `cancelButtonGray` tint. We

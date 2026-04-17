@@ -41,6 +41,7 @@
 		C737E89940EB404F9F45CC71 /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 466627296E5B80833D7CA5F0 /* AppRouter.swift */; };
 		D12E12500F5BBACD37F1BAC2 /* OryAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */; };
 		D97FC15AC7D31879AF295EB0 /* Services.swift in Sources */ = {isa = PBXBuildFile; fileRef = 291A901391A852222CC64F10 /* Services.swift */; };
+		AA11BB22CC33DD44EE551001 /* SpeakeasySocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */; };
 		DB0A79F222FE4BA2A079FDF8 /* TutorialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCDD315E11422E6F842CADFF /* TutorialView.swift */; };
 		E1F09062ED59BC399467FD24 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A784DE6AE56C30198F6AFD89 /* Models.swift */; };
 		E256DC185A6D94C9A288086A /* UserDefaultsClass.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA1779BB60E125FE19ED8397 /* UserDefaultsClass.swift */; };
@@ -68,6 +69,7 @@
 		2756AA2F464A301173DEC820 /* MyProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyProfileView.swift; sourceTree = "<group>"; };
 		28D2AFB82D96A543290BEEEC /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		291A901391A852222CC64F10 /* Services.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakeasySocketManager.swift; sourceTree = "<group>"; };
 		2AF8FCE2A89EA033DEC8CC0F /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
 		2D0B38D72809437F7A4E92BB /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
 		36289E47075AC22B19ED3F3C /* SocketCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketCommands.swift; sourceTree = "<group>"; };
@@ -280,6 +282,7 @@
 				0150F73E373B9D456171F2A2 /* LocalCache.swift */,
 				257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */,
 				291A901391A852222CC64F10 /* Services.swift */,
+				AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */,
 				BA1779BB60E125FE19ED8397 /* UserDefaultsClass.swift */,
 				14B58B8162F5E515C576B7F8 /* UserProfileStore.swift */,
 			);
@@ -436,6 +439,7 @@
 				8019E293075E35CB7FDB6DDA /* LocalCache.swift in Sources */,
 				D12E12500F5BBACD37F1BAC2 /* OryAPIClient.swift in Sources */,
 				D97FC15AC7D31879AF295EB0 /* Services.swift in Sources */,
+				AA11BB22CC33DD44EE551001 /* SpeakeasySocketManager.swift in Sources */,
 				E256DC185A6D94C9A288086A /* UserDefaultsClass.swift in Sources */,
 				EBC76E4A83FED6F7C811B6EC /* UserProfileStore.swift in Sources */,
 				7C9A55ECE9D9306C425CBD09 /* Constants.swift in Sources */,

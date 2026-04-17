@@ -25,6 +25,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import Combine
 
 // MARK: - API Response Models (ports BarBotAIModelResponse.swift)
 
@@ -2604,33 +2605,328 @@ struct BarBotHistoryView: View {
     }
 }
 
-// MARK: - QR Reader (unchanged — required by RouteView)
+// MARK: - QR Reader
+//
+// 1:1 port of UIKit `QrViewController` (BarBot/QrReader/QrViewController.swift)
+// + its scene in Device.storyboard (lines 1116-1235). The UIKit scene:
+//
+//   • Full-screen black overlay @ alpha 0.9 (storyboard `Gjh-Gs-NV7`).
+//   • Transparent nav bar (44pt): back button (30×30, `backWhite`) at
+//     leading edge, info button (27×27, `About Barsys`) at trailing.
+//   • "Scan QR" title — system bold 20pt, white, 24pt leading, 10pt below nav.
+//   • QR scanner container (storyboard `y9I-et-QTr`): 345×468pt, 12pt
+//     corner radius, 24pt horizontal inset, 100pt bottom from safe area.
+//   • The scanner view (`QRScannerView` from the QRScanner pod) is added
+//     at runtime with `focusImage: .borderimageScanner` — the corner art
+//     in Assets.xcassets/Qr Controller/borderimageScanner.imageset.
+//
+// Behaviour:
+//   • Camera permission prompt on first launch; denial → native alert
+//     with "Open Settings" / "Cancel".
+//   • Successful scan → validated against "basys" / "barsys_360"
+//     (case-insensitive contains — QrViewController.swift L56). Invalid
+//     codes pop + show "Device not available" alert (0.4s delay).
+//   • Valid code → wires SpeakeasySocketManager, connects. On
+//     `WAITING_AREA_JOINED` a toast is shown and the view dismisses
+//     (the UIKit version also routes onward to ReadyToPourList — wired
+//     to the existing router when that path is available).
+//   • Haptic light() feedback on every tap, matching
+//     HapticService.shared.light() calls in QrViewController L40,47.
+//   • Tab bar is hidden while this screen is visible (UIKit hides it
+//     via `doYouWantToShowTheUIofBottomBar(true)` on viewWillAppear).
 
 struct QRReaderView: View {
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+
+    @State private var didHandleScan = false
+    @State private var isConnecting = false
+    @State private var showDeniedCameraAlert = false
+    @State private var showInvalidCodeAlert = false
+    @State private var showSocketFailedAlert = false
+    @State private var socketErrorMessage = ""
+    @State private var socketSubscription: AnyCancellable?
+    @State private var connectingDeviceName: String = ""
+    @State private var loaderMessage: String = "Connecting"
+
     var body: some View {
+        // UIKit storyboard `kg7-ix-QeJ` (root) composed of:
+        //   • `Gjh-Gs-NV7` — full-screen black @ alpha 0.9
+        //   • `Tqa-SM-n86` — 44pt transparent nav bar pinned to safe-area top
+        //   • `R2A-h4-RiW` — "Scan QR" 20pt Bold white, 24pt leading,
+        //                    10pt below navBar
+        //   • `y9I-et-QTr` — scanner container, **24pt leading / 24pt
+        //                    trailing from safe area**, 20pt below title,
+        //                    100pt above bottom safe area (AutoLayout flex)
         ZStack {
-            QRScannerView(
-                onScan: { code in
-                    env.alerts.show(title: "Scanned", message: code)
-                    dismiss()
-                },
-                onCancel: { dismiss() }
-            )
-            .ignoresSafeArea()
-            VStack {
-                Spacer()
-                Text("Scan a Barsys QR code")
-                    .font(Theme.Font.of(.callout))
-                    .foregroundStyle(.white)
-                    .padding(16)
-                    .background(.black.opacity(0.6), in: Capsule())
-                    .padding(.bottom, 48)
+            Color.black.opacity(0.9)
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 0) {
+                // 1. Custom nav bar (44pt), pinned at safe-area top.
+                navBar
+                    .frame(height: 44)
+
+                // 2. "Scan QR" title — 24pt leading, 10pt below nav.
+                Text("Scan QR")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .padding(.leading, 24)
+                    .padding(.top, 10)
+
+                // 3. Scanner container — flex width bounded by 24pt
+                //    leading + 24pt trailing from the safe area (EXACT
+                //    UIKit AutoLayout). 20pt below the title. Vertical
+                //    space fills down to 100pt above the bottom safe
+                //    area, exactly like the storyboard's bottom anchor.
+                scannerCard
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 100)
+            }
+
+            // Loader while socket is negotiating.
+            if isConnecting {
+                Color.black.opacity(0.3).ignoresSafeArea()
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(Color.white)
+                        .scaleEffect(1.4)
+                    Text(loaderMessage)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.white)
+                }
+                .padding(24)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
             }
         }
-        .navigationTitle("QR Reader")
-        .navigationBarTitleDisplayMode(.inline)
+        // Hide both the navigation bar AND the tab bar for the duration
+        // of this screen — UIKit `QrViewController.viewWillAppear`
+        // calls `doYouWantToShowTheUIofBottomBar(isHiddenCustomTabBar:
+        // true)`. SwiftUI equivalent is the `.toolbar(.hidden, for:)`
+        // modifiers on each bar placement; `.toolbarBackground` is
+        // redundant but harmless if iOS restores the bar.
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
+        .toolbarBackground(.hidden, for: .tabBar)
+        .navigationBarBackButtonHidden(true)
+        .statusBarHidden(false)
+        .preferredColorScheme(.dark)
+        // Camera-permission-denied alert — UIKit `showDisabledCameraAlert()`.
+        .alert("Camera Access Required",
+               isPresented: $showDeniedCameraAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(url)
+                }
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) { dismiss() }
+        } message: {
+            Text(Constants.cameraRequiredAuthorizationForQr)
+        }
+        // Invalid-QR alert — UIKit L58-64 "Device not available".
+        .alert("Device not available",
+               isPresented: $showInvalidCodeAlert) {
+            Button("OK", role: .cancel) {
+                didHandleScan = false
+            }
+        }
+        .alert("Could not connect",
+               isPresented: $showSocketFailedAlert) {
+            Button("OK", role: .cancel) {
+                isConnecting = false
+                didHandleScan = false
+            }
+        } message: {
+            Text(socketErrorMessage)
+        }
+        .onDisappear {
+            socketSubscription?.cancel()
+            socketSubscription = nil
+            if isConnecting {
+                let socket: SpeakeasySocketManager = env.speakeasySocket
+                socket.disconnect()
+            }
+        }
+    }
+
+    // MARK: Nav bar
+
+    private var navBar: some View {
+        HStack {
+            Button {
+                HapticService.light()
+                let socket: SpeakeasySocketManager = env.speakeasySocket
+                socket.disconnect()
+                dismiss()
+            } label: {
+                // UIKit `backWhite` asset — 30×30 tap target, 21.33×21.33
+                // visual icon.
+                Image("backWhite")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 21.33, height: 21.33)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .padding(.leading, 12)
+            .accessibilityLabel("Back")
+
+            Spacer()
+
+            Button {
+                HapticService.light()
+                // UIKit `goToChooseOptionsScreen` — haptic only, no nav.
+            } label: {
+                Image("About Barsys")
+                    .resizable()
+                    .renderingMode(.template)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 19, height: 18)
+                    .foregroundStyle(Color.white)
+                    .frame(width: 27, height: 27)
+                    .contentShape(Rectangle())
+            }
+            // UIKit storyboard `5Np-SQ-Cm7` places the right icons stack
+            // with a 14pt trailing inset from safe area.
+            .padding(.trailing, 14)
+            .accessibilityLabel("About Barsys")
+        }
+    }
+
+    // MARK: Scanner card
+
+    /// UIKit storyboard `y9I-et-QTr` — 12pt corner radius, transparent
+    /// background with the `borderimageScanner` corner-frame overlay
+    /// from Assets.xcassets/Qr Controller/.
+    ///
+    /// Sized by the parent's `.padding(.horizontal, 24)` + `.padding(.bottom,
+    /// 100)` so the storyboard AutoLayout (leading 24 / trailing 24 /
+    /// bottom 100 / 20pt below title) is faithfully reproduced across
+    /// device sizes. On a 393pt-wide iPhone the container renders at the
+    /// storyboard's literal 345pt width; on wider / narrower devices it
+    /// flexes the same way UIKit's constraint system would.
+    private var scannerCard: some View {
+        ZStack {
+            // Live camera preview — 12pt rounded corners, centred within
+            // the flex container exactly like the UIKit storyboard's
+            // `qrViewToShow` (a0B-78-z1V) inside `y9I-et-QTr`.
+            QRScannerView(
+                onScan: { code in
+                    handleScan(code)
+                },
+                onCancel: {
+                    HapticService.light()
+                    dismiss()
+                },
+                onPermissionDenied: {
+                    showDeniedCameraAlert = true
+                }
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            // Border/focus frame overlay — UIKit `focusImage:
+            // .borderimageScanner` with the mercari/QRScanner library's
+            // 61.8%-width focus box (see `setupImageViews`). We render
+            // the full asset with 8pt padding so the corner brackets sit
+            // inside the live preview at the same proportion UIKit shows.
+            Image("borderimageScanner")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .allowsHitTesting(false)
+                .padding(8)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("QR code scanner")
+        .accessibilityHint("Point camera at a QR code")
+    }
+
+    // MARK: Scan handling — 1:1 UIKit QrViewController L54-71
+
+    private func handleScan(_ code: String) {
+        guard !didHandleScan else { return }
+        didHandleScan = true
+        HapticService.light()
+
+        // UIKit: `code.lowercased().contains("basys") ||
+        //         code.lowercased().contains("barsys_360")`
+        let lower = code.lowercased()
+        guard lower.contains("basys") || lower.contains("barsys_360") else {
+            // UIKit pops + 0.4s delay + alert; SwiftUI shows alert inline.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                showInvalidCodeAlert = true
+            }
+            return
+        }
+
+        // Wire socket — mirrors UIKit L65-69.
+        connectingDeviceName = code
+        loaderMessage = "Connecting"
+        subscribeToSocket(deviceName: code)
+        isConnecting = true
+        let socket: SpeakeasySocketManager = env.speakeasySocket
+        socket.connect(to: code)
+    }
+
+    private func subscribeToSocket(deviceName: String) {
+        socketSubscription?.cancel()
+        let socket: SpeakeasySocketManager = env.speakeasySocket
+        socketSubscription = socket.events
+            .receive(on: DispatchQueue.main)
+            .sink { event in
+                switch event {
+                case .connected(let name):
+                    // 1:1 UIKit SocketDelegates.swift L19-73: show "{device}
+                    // is Connected." toast, wait 1.0s for recipe list to
+                    // stabilise, then pop this screen so the router lands
+                    // back on the caller (ReadyToPour / ControlCenter)
+                    // which will render the Speakeasy-connected UI via
+                    // `AppStateManager.shared.isSpeakEasyCase`.
+                    loaderMessage = "Fetching Recipes"
+                    env.toast.show("\(name) is Connected.")
+                    HapticService.light()
+                    // UIKit `DelayedAction.afterBleResponse(seconds: 1.0,
+                    // reason: "socket recipe load stabilization")`
+                    // (SocketDelegates.swift L45).
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        isConnecting = false
+                        dismiss()
+                    }
+                case .reconnecting(let name):
+                    // Auto-reconnect path — UIKit SocketManager.swift
+                    // L34-50 (user kicked / 4004 / CONTROL_DECLINED with
+                    // "user not in waiting area"). Keep the loader up
+                    // with a clear status string so the user doesn't see
+                    // a flicker while the new socket opens.
+                    connectingDeviceName = name
+                    loaderMessage = "Reconnecting"
+                    isConnecting = true
+                case .machineOffline, .controlDeclined:
+                    isConnecting = false
+                    // 1:1 UIKit `Constants.machineIsOffline` shown on
+                    // CONTROL_DECLINED (SocketManager.swift L56-60).
+                    socketErrorMessage = "The machine is currently offline. Please try again later."
+                    showSocketFailedAlert = true
+                    let socket: SpeakeasySocketManager = env.speakeasySocket
+                    socket.disconnect()
+                case .connectFailed(let reason):
+                    isConnecting = false
+                    socketErrorMessage = reason
+                    showSocketFailedAlert = true
+                case .disconnected:
+                    if isConnecting {
+                        isConnecting = false
+                        socketErrorMessage = "Disconnected before the machine was ready."
+                        showSocketFailedAlert = true
+                    }
+                default:
+                    break
+                }
+            }
     }
 }
 

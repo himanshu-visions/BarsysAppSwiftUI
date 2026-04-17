@@ -23,6 +23,11 @@ final class AppEnvironment: ObservableObject {
     let preferences: PreferencesService
     let ble: BLEService
     let socket: SocketService
+    /// Real WebSocket client for the Barsys Speakeasy QR → device-pairing
+    /// flow. 1:1 port of UIKit `SocketManager`. Created lazily per session
+    /// so a reconnect always starts from a fresh state — matches UIKit
+    /// `appDelegate?.socketManager = SocketManager()` per QR scan.
+    let speakeasySocket = SpeakeasySocketManager()
     let braze: BrazeService
     let analytics: AnalyticsService
     let catalog: CatalogService

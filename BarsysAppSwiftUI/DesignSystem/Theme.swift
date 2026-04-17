@@ -560,6 +560,17 @@ struct BarsysBrandCapsuleStyle: ButtonStyle {
                                     endPoint: .bottom
                                 )
                             )
+                        // "Wet glass" sheen overlay — 1:1 with UIKit
+                        // `alertPopUpButtonBackgroundStyle` which layers a
+                        // `.clear` glass effect on top of the coloured
+                        // fill. 0.30 gives the button the same highlight
+                        // as the native iOS 26 glass capsules without
+                        // washing out the orange tone.
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(Theme.Gradient.glassHighlight)
+                            .opacity(0.30)
+                            .blendMode(.plusLighter)
+                            .allowsHitTesting(false)
                     } else {
                         // UIKit L62-66: flat `segmentSelection` fill,
                         // rounded 8, no gradient. Title stays black.
@@ -592,6 +603,10 @@ struct BarsysCancelCapsuleStyle: ButtonStyle {
     var horizontalPadding: CGFloat = 24
     var cornerRadius: CGFloat? = nil
     var textColor: SwiftUI.Color = SwiftUI.Color("appBlackColor")
+    /// 1:1 with UIKit `MultipleIngredientsPopUpViewController`'s
+    /// `alpha = 0.5; userInteractionEnabled = false` pattern — used
+    /// when a popup decision button is awaiting a required selection.
+    var isEnabled: Bool = true
 
     func makeBody(configuration: Configuration) -> some View {
         // 1:1 port of UIKit `applyCancelCapsuleGradientBorderStyle()`:
@@ -639,6 +654,7 @@ struct BarsysCancelCapsuleStyle: ButtonStyle {
                         lineWidth: iOS26Available ? 1.5 : 1.0
                     )
             )
+            .opacity(isEnabled ? 1.0 : 0.5)
             // Bounce: 0.95 scale, matching UIKit addBounceEffect
             .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
             .animation(
