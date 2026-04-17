@@ -515,25 +515,31 @@ struct BarsysAlertOverlay: View {
             // sizes vertically based on content.
             VStack(spacing: 20) {
                 // Close "×" row — mirrors btnClose top-right placement.
-                HStack {
-                    Spacer()
-                    Button {
-                        HapticService.light()
-                        onDismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color("appBlackColor"))
-                            .frame(width: 30, height: 30)
-                            .background(
-                                Circle().stroke(
-                                    Color("craftButtonBorderColor"),
-                                    lineWidth: 1
+                // 1:1 with UIKit `isCloseButtonHidden` flag (L62 of
+                // UIViewController+Alerts.swift): when true, the X
+                // button is suppressed entirely so success popups have
+                // a single committed action (OK) and no escape hatch.
+                if !item.hideClose {
+                    HStack {
+                        Spacer()
+                        Button {
+                            HapticService.light()
+                            onDismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color("appBlackColor"))
+                                .frame(width: 30, height: 30)
+                                .background(
+                                    Circle().stroke(
+                                        Color("craftButtonBorderColor"),
+                                        lineWidth: 1
+                                    )
                                 )
-                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Close")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
                 }
 
                 // lblTitle — centred, system 16pt. UIKit uses the
@@ -593,6 +599,36 @@ struct BarsysAlertOverlay: View {
                         }
                         .buttonStyle(.plain)
                     }
+                } else if item.singlePrimaryStyle == .popup {
+                    // 1:1 UIKit `AlertPopUpHorizontalStackController` SINGLE
+                    // continue-button layout (success popup style).
+                    //
+                    // Storyboard: `S94-K7-bsR` (btnContinue) — 109×45pt
+                    // (full-width when btnCancel is hidden), 8pt corner
+                    // radius (BarsysCornerRadius.small), 12pt system font,
+                    // black title, fill = continueButtonColor (the
+                    // EditViewController save-success path passes
+                    // `.segmentSelectionColor`).
+                    //
+                    // Used by `EditViewController.didPressAddToFavouriteButton`
+                    // L271 → "Your drink has been added/updated".
+                    Button {
+                        HapticService.light()
+                        item.primaryAction?()
+                        onDismiss()
+                    } label: {
+                        Text(item.primaryActionTitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 45)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(primaryOrange)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                 } else {
                     // Single continue button — 1:1 UIKit AlertPopUp.storyboard:
                     // `mSZ-L7-enf` (continueButton): 209×45pt, brandTanColor

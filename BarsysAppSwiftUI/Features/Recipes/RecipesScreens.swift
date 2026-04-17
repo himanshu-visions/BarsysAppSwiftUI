@@ -485,6 +485,10 @@ struct RecipeDetailView: View {
                             isCustomizing: true
                         )
                     }
+                    // Mount the alert overlay INSIDE the fullScreenCover so
+                    // the save-success popup renders ABOVE EditRecipeView,
+                    // not behind it on the RootView layer.
+                    .appAlert(env.alerts)
                 }
         } else {
             EmptyStateView(systemImage: "questionmark.circle",
@@ -2219,19 +2223,49 @@ struct EditRecipeView: View {
                 let successMsg = isCustomizing
                     ? Constants.recipeAddMessage
                     : Constants.recipeUpdateMessage
-                // UIKit (EditViewController L274-289):
-                //   if topVC is FavouritesRecipesAndDrinksViewController:
-                //     controller.getMyDrinksApi(isInitialDataLoading: true)
-                //   else:
-                //     BarBotCoordinator.showFavourites(tabSelected: 1)
-                // We dismiss first (closes the fullScreenCover), then
-                // navigate to favourites on the current tab so the user
-                // lands on the My Drinks tab and sees the saved recipe.
-                env.alerts.show(message: successMsg) {
+
+                // 1:1 port of UIKit
+                // `EditViewController.didPressAddToFavouriteButton`
+                // L271-289 success branch:
+                //
+                //   showCustomAlertMultipleButtons(
+                //       title: message, subTitleStr: nil,
+                //       cancelButtonTitle: nil,
+                //       continueButtonTitle: "OK",
+                //       continueButtonColor: .segmentSelectionColor,
+                //       isCloseButtonHidden: true) { okAction in
+                //
+                //     // Refresh My Drinks if the parent screen is the
+                //     // favourites controller, otherwise navigate to it.
+                //     hideEditButtonFromFavScreen(isNeedRefresh: true)
+                //     DelayedAction.afterAnimation {
+                //         if topVC is FavouritesRecipesAndDrinksViewController {
+                //             controller.getMyDrinksApi(isInitialDataLoading: true)
+                //         } else {
+                //             BarBotCoordinator(navigationController: navVc)
+                //                 .showFavourites(tabSelected: 1)
+                //         }
+                //     }
+                //     removeFromParent(); view.removeFromSuperview()
+                //   } onCancel: { _ in }
+                //
+                // SwiftUI translation:
+                //   • showSuccess → renders the orange-fill OK popup with
+                //     no close-X (matches UIKit storyboard exactly).
+                //   • OK callback dismisses the EditRecipeView cover
+                //     first, then asks AppRouter to push `.favorites`
+                //     with `pendingFavoritesTabIndex = 1` so
+                //     FavoritesView lands on My Drinks (parity with
+                //     `tabSelected: 1` UIKit forwards).
+                env.alerts.showSuccess(message: successMsg) {
+                    // Step 1 — dismiss the edit cover (UIKit `removeFromParent` +
+                    // `view.removeFromSuperview()`).
                     dismiss()
-                    // Navigate to favorites screen (My Drinks tab) after
-                    // a short delay so the dismiss animation completes
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    // Step 2 — after the cover slide-out animation finishes,
+                    // route to Favorites and pre-select the My Drinks tab
+                    // (UIKit `BarBotCoordinator.showFavourites(tabSelected: 1)`).
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        router.pendingFavoritesTabIndex = 1   // My Drinks
                         router.push(.favorites)
                     }
                 }

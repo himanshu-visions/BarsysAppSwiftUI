@@ -1619,6 +1619,28 @@ struct AppAlertItem: Identifiable, Equatable {
     var secondaryActionTitle: String? = nil
     var secondaryAction: (() -> Void)? = nil
 
+    /// Mirrors UIKit `showCustomAlertMultipleButtons(isCloseButtonHidden:)`.
+    /// When `true`, the cross / X dismiss button in the upper-right
+    /// corner is suppressed — used by success popups (e.g. "Your drink
+    /// has been added") where the only acceptable action is OK.
+    var hideClose: Bool = false
+
+    /// Single-button presentation style.
+    ///
+    /// • `.legacy` (default) — the original full-width primary button at
+    ///   45pt, 16pt white text, 20pt corner radius (used by the older
+    ///   `AlertPopUpViewController`).
+    /// • `.popup`             — matches UIKit `AlertPopUpHorizontalStackController`
+    ///   single-button layout: 45pt height, 8pt corner radius
+    ///   (`BarsysCornerRadius.small`), 12pt text, fill =
+    ///   `segmentSelectionColor` when `primaryFillColor` is set,
+    ///   black title. This is what
+    ///   `EditViewController.didPressAddToFavouriteButton` uses for the
+    ///   "Your drink has been saved" / "Your drink has been updated"
+    ///   confirmation, with `continueButtonColor: .segmentSelectionColor`.
+    enum SinglePrimaryStyle { case legacy, popup }
+    var singlePrimaryStyle: SinglePrimaryStyle = .legacy
+
     static func == (lhs: AppAlertItem, rhs: AppAlertItem) -> Bool { lhs.id == rhs.id }
 }
 
@@ -1649,6 +1671,26 @@ final class AlertQueue: ObservableObject {
             primaryAction: onPrimary,
             secondaryActionTitle: secondaryTitle,
             secondaryAction: onSecondary
+        )
+    }
+
+    /// 1:1 port of UIKit's success-flow alert in
+    /// `EditViewController.didPressAddToFavouriteButton` (L271-289):
+    /// single-button popup with `continueButtonColor: .segmentSelectionColor`,
+    /// `isCloseButtonHidden: true`. The completion runs once the user
+    /// taps OK and the popup has dismissed.
+    func showSuccess(message: String,
+                     primary: String = "OK",
+                     onConfirm: @escaping () -> Void) {
+        current = AppAlertItem(
+            title: message,
+            message: "",
+            primaryActionTitle: primary,
+            primaryAction: onConfirm,
+            secondaryActionTitle: nil,
+            secondaryAction: nil,
+            hideClose: true,
+            singlePrimaryStyle: .popup
         )
     }
 

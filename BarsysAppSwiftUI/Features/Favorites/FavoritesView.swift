@@ -220,6 +220,21 @@ struct FavoritesView: View {
             // the list reflects any edits/deletes made on other screens.
             // We mirror this by resetting and loading fresh every time.
             resetMyDrinksForRefresh()
+
+            // Honor the deep-link / save-success preselected tab. UIKit
+            // `BarBotCoordinator.showFavourites(tabSelected: 1)` opens
+            // FavouritesRecipesAndDrinksViewController on the My Drinks
+            // tab; we mirror that by reading
+            // `router.pendingFavoritesTabIndex` set by the EditRecipe
+            // save flow and clearing it after consumption.
+            if let idx = router.pendingFavoritesTabIndex,
+               let tab = FavouritesTab(rawValue: idx) {
+                selectedTab = tab
+                router.pendingFavoritesTabIndex = nil
+                if tab == .myDrinks {
+                    loadMyDrinksInitially()
+                }
+            }
         }
         .onChange(of: selectedTab) { newTab in
             // Reload My Drinks when switching to the tab if not yet loaded
@@ -259,6 +274,13 @@ struct FavoritesView: View {
                     isCustomizing: false
                 )
             }
+            // Mount the alert overlay INSIDE the fullScreenCover so the
+            // success popup renders ABOVE the EditRecipeView. Without
+            // this re-mount, `env.alerts.show(...)` only renders on the
+            // RootView level which sits BENEATH the cover — exactly the
+            // "popup appears behind EditViewController" bug the user
+            // reported.
+            .appAlert(env.alerts)
             // Inherit environment objects so the modal can access the
             // same storage / analytics / BLE services as its parent.
         }

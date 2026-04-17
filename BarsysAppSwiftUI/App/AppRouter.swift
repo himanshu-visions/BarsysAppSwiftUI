@@ -194,6 +194,17 @@ final class AppRouter: ObservableObject {
         }
     }
 
+    /// Pre-selected tab for the next FavoritesView appearance.
+    /// 1:1 port of UIKit `BarBotCoordinator.showFavourites(tabSelected:)`
+    /// which forwards a `tabSelected` parameter through to
+    /// `FavouritesRecipesAndDrinksViewController.tabSelectedFromOutside`,
+    /// pre-selecting the Barsys Recipes (0) or My Drinks (1) tab.
+    ///
+    /// Used by the EditRecipe save-success flow: after the popup OK is
+    /// tapped, we navigate to favorites and set this to `1` (My Drinks)
+    /// so the new/updated drink is visible immediately.
+    @Published var pendingFavoritesTabIndex: Int? = nil
+
     // One NavigationStack path per tab.
     @Published var barBotPath = NavigationPath()
     @Published var explorePath = NavigationPath()
