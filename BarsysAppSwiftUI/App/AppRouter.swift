@@ -95,6 +95,7 @@ enum Route: Hashable {
     // Stations / Crafting
     case stationsMenu
     case stationCleaning
+    case readyToPour
     case crafting(RecipeID)
     case drinkComplete(RecipeID)
 

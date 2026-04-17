@@ -955,8 +955,9 @@ struct BarsysRecipeRow: View {
 
 // MARK: - Glass button modifier for iOS 26+ (ports .prominentGlass() config)
 
-private extension View {
-    /// On iOS 26+, wraps the view in a glass-effect background circle.
+extension View {
+    /// On iOS 26+, wraps the view in a glass-effect background circle
+    /// (ports UIKit `.prominentGlass()` button configuration).
     /// Pre-26: no-op (buttons remain flat on the image).
     @ViewBuilder
     func glassButtonIfAvailable(size: CGFloat) -> some View {

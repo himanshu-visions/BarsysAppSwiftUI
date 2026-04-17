@@ -491,6 +491,7 @@ struct RouteView: View {
         case .deviceConnected(let id): DeviceConnectedView(deviceID: id)
         case .deviceRename(let id): DeviceRenameView(deviceID: id)
         case .stationsMenu: StationsMenuView()
+        case .readyToPour: ReadyToPourView()
         case .stationCleaning: StationCleaningView()
         case .crafting(let id): CraftingView(recipeID: id)
         case .drinkComplete(let id): DrinkCompleteView(recipeID: id)

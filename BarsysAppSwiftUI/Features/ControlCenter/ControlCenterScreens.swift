@@ -690,7 +690,7 @@ struct DevicePairedView: View {
     private func handleMenuTap(_ name: String) {
         switch name {
         case "Ready to Pour":
-            router.push(.exploreRecipes)
+            router.push(.readyToPour)
         case "Explore Recipes":
             router.push(.exploreRecipes)
         case "Explore Cocktail Kits":

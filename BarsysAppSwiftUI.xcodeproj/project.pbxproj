@@ -18,6 +18,7 @@
 		2DDEE29057B3A4BEEA98AB3C /* BarsysAppSwiftUIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9520BE5EA73D918BBA4A51F /* BarsysAppSwiftUIApp.swift */; };
 		32442CE329D5EC0838B2C14C /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2221E2830DE89B36422C96FA /* Theme.swift */; };
 		40149097F3434AEEFB5F5594 /* RecipesScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE8814D5CF27412A36189D9 /* RecipesScreens.swift */; };
+		7DF4E2C5DB1440B7BA471F49 /* ReadyToPourView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DB3C2A144347C3B498B9D4 /* ReadyToPourView.swift */; };
 		50D581256B64B035E72E8119 /* DomainEnums.swift in Sources */ = {isa = PBXBuildFile; fileRef = 722AF4F9EAE49F31AF8C3305 /* DomainEnums.swift */; };
 		577D584BB0F964054CA33163 /* FavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B86C1B54179D76EE8CA022C /* FavoritesView.swift */; };
 		60FEB1FC2A79DBBF14AFDC7B /* SideMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA686EF7D08ABB23D5031CF /* SideMenuView.swift */; };
@@ -96,6 +97,7 @@
 		CCDD315E11422E6F842CADFF /* TutorialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialView.swift; sourceTree = "<group>"; };
 		D9520BE5EA73D918BBA4A51F /* BarsysAppSwiftUIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarsysAppSwiftUIApp.swift; sourceTree = "<group>"; };
 		DAE8814D5CF27412A36189D9 /* RecipesScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipesScreens.swift; sourceTree = "<group>"; };
+		A6DB3C2A144347C3B498B9D4 /* ReadyToPourView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadyToPourView.swift; sourceTree = "<group>"; };
 		DCA686EF7D08ABB23D5031CF /* SideMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideMenuView.swift; sourceTree = "<group>"; };
 		E765512FACA96C473B765A8F /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		E91FC882D3CCBC9AD9F9341B /* ScreenEdgePanGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenEdgePanGesture.swift; sourceTree = "<group>"; };
@@ -239,6 +241,7 @@
 			isa = PBXGroup;
 			children = (
 				DAE8814D5CF27412A36189D9 /* RecipesScreens.swift */,
+				A6DB3C2A144347C3B498B9D4 /* ReadyToPourView.swift */,
 			);
 			path = Recipes;
 			sourceTree = "<group>";
@@ -459,6 +462,7 @@
 				85CB196B317761E03FF61F79 /* MyProfileView.swift in Sources */,
 				2D2145C946F48346DF7927F1 /* PreferencesScreens.swift in Sources */,
 				40149097F3434AEEFB5F5594 /* RecipesScreens.swift in Sources */,
+				7DF4E2C5DB1440B7BA471F49 /* ReadyToPourView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
