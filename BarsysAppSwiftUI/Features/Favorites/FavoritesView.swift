@@ -421,21 +421,18 @@ struct FavoritesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if rows.isEmpty {
-            VStack(spacing: 12) {
-                Spacer(minLength: 40)
-                Image(systemName: "heart")
-                    .font(.system(size: 48))
-                    .foregroundStyle(Color("mediumGrayColor"))
+            VStack {
+                Spacer()
                 Text(Constants.noResultsToDisplayForFavourates)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color("mediumGrayColor"))
+                    .font(.system(size: 17))
+                    .foregroundStyle(Color.primary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, 30)
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("No favourites yet")
+            .accessibilityLabel("No results message")
         } else {
             let cellWidth = UIScreen.main.bounds.width - 48
             let rowHeight = cellWidth / 2
