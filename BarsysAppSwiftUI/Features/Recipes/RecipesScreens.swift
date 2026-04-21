@@ -2462,29 +2462,38 @@ struct EditRecipeView: View {
         return (ing, nil)
     }
 
-    // iOS 15+: `.regularMaterial` at 20pt rounded rect — matches
-    // `panelBackground` + `editCellBackground` so all three glass
-    // surfaces share the same frosted-glass recipe and always show
-    // the parent VC behind them.
-    // Pre-15: pill (capsule) with the UIKit black/white 10% gradient
-    // fill on top of a solid white backing.
+    // 1:1 with UIKit `applyCellGlassStyle(viewAddIngredients)` —
+    // EditViewController.swift L90/L93/L178-187.
+    //
+    // IMPORTANT: UIKit calls the SAME `applyCellGlassStyle` helper on
+    // both the ingredient cells (`cell.viewGlass` in
+    // EditViewController+TableView.swift L17) AND the Add Ingredient
+    // pill (`viewAddIngredients` in EditViewController.swift L90/93).
+    // So the two surfaces MUST render identically in SwiftUI too — the
+    // earlier port had the pill using SwiftUI `.regularMaterial` while
+    // the cells used `BarsysGlassPanelBackground` (real UIGlassEffect),
+    // which is why the user saw a visible mismatch.
+    //
+    // Both paths now share the same SwiftUI recipe:
+    //   • iOS 26+: `BarsysGlassPanelBackground()` clipped to a 20pt
+    //     rounded rect — byte-identical to UIKit
+    //     `addGlassEffect(cornerRadius: xlarge=20, alpha: 1)`.
+    //   • Pre-26: Capsule (`roundCorners = pill = 24`) with a solid
+    //     white fill plus the UIKit black@10% → white@10% vertical
+    //     gradient overlay and the 1pt `#F2F2F2` border.
     @ViewBuilder
     private var addIngredientBackground: some View {
-        if #available(iOS 15.0, *) {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.regularMaterial)
+        if #available(iOS 26.0, *) {
+            BarsysGlassPanelBackground()
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         } else {
             Capsule()
                 .fill(Color.white)
                 .overlay(
                     Capsule().fill(
                         LinearGradient(
-                            colors: [
-                                Color.black.opacity(0.10),
-                                Color.white.opacity(0.10)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
+                            colors: [Color.black.opacity(0.10), Color.white.opacity(0.10)],
+                            startPoint: .top, endPoint: .bottom
                         )
                     )
                 )
@@ -2494,10 +2503,13 @@ struct EditRecipeView: View {
     @ViewBuilder
     private var addIngredientBorder: some View {
         if #available(iOS 26.0, *) {
+            // Matches `editCellBorder` — faint sheen stroke so the
+            // pill has the same edge definition over the panel glass
+            // as an ingredient row.
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         } else {
-            // UIKit border color #F2F2F2, 1pt width.
+            // UIKit `applyCellGlassStyle` pre-26 border — #F2F2F2, 1pt.
             Capsule()
                 .stroke(Color(red: 0.949, green: 0.949, blue: 0.949),
                         lineWidth: 1)
