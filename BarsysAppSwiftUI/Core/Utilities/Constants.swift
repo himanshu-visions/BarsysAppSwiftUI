@@ -328,6 +328,10 @@ enum ConstantButtonsTitle {
     static let logoutButtonTitle = "Log out"
     static let yesPleaseButtonTitle = "Yes please!"
     static let noStayInAppButtonTitle = "No, stay in the app"
+    // 1:1 with UIKit `Constants+UI.swift` L38 + L40 — used by
+    // `MultipleIngredientsPopUp` (MyBar photo-upload flow).
+    static let proceedButtonTitle = "Proceed"
+    static let reUploadButtonTitle = "Reupload"
 }
 
 // MARK: - VideoURLConstants
