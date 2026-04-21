@@ -686,12 +686,13 @@ struct NavigationRightGlassButtons: View {
             // — matches the UIKit runtime layout where the
             // stackView `KMo-iR-2JY` is 61pt wide inside the
             // 100pt pill.
-            HStack(spacing: 16) {
+            HStack(spacing: 7) {
                 leadingButton
                 profileButton
             }
-            .padding(.horizontal, 14)
-            .frame(width: 100, height: 48)
+            .padding(.leading, 15)
+            .padding(.trailing, 5)
+            .frame(width:71 , height: 48)
             // Render the explicit glass pill background on every call
             // site by default so HomeView's custom top bar and the
             // toolbar-hosted screens (Explore / PairDevice / MyBar /
