@@ -1606,6 +1606,15 @@ struct EditRecipeView: View {
     ///   `hasImage == !(image.url isEmpty || nil)` → show the image
     ///   view, hide the Add Image button.
     @State private var remoteImageURL: URL?
+    /// Controls the Camera / Photos / Cancel action sheet for adding
+    /// or replacing the recipe image — 1:1 with UIKit
+    /// `showActionSheetForImagePicker()` invoked from
+    /// `didPressAddImageButton` (EditViewController.swift L219-226).
+    @State private var showAddImageActionSheet = false
+    /// Which source (camera or photo library) the user picked in the
+    /// action sheet — fed into the `BarBotImagePicker` sheet so the
+    /// correct `UIImagePickerController.sourceType` is used.
+    @State private var addImagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showPhotoPicker = false
     @State private var showAddIngredientSheet = false
     @State private var nameHasError = false
@@ -1724,8 +1733,35 @@ struct EditRecipeView: View {
         .ignoresSafeArea(edges: [.top, .bottom])
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
+        // 1:1 with UIKit `showActionSheetForImagePicker`
+        // (ImagePickerViewController.swift L45-89): Camera / Photos /
+        // Cancel alert. SwiftUI `confirmationDialog` renders the same
+        // iOS action sheet. Title matches `Constants.pleaseSelectAnOption`.
+        .confirmationDialog(
+            "Please Select an Option",
+            isPresented: $showAddImageActionSheet,
+            titleVisibility: .visible
+        ) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Camera") {
+                    addImagePickerSource = .camera
+                    showPhotoPicker = true
+                }
+            }
+            Button("Photos") {
+                addImagePickerSource = .photoLibrary
+                showPhotoPicker = true
+            }
+            Button("Cancel", role: .cancel) { }
+        }
+        // 1:1 with UIKit post-action-sheet flow: picking Camera or
+        // Photos presents a `UIImagePickerController` with the
+        // corresponding `sourceType`. `BarBotImagePicker` is the same
+        // wrapper used by the Add Ingredient flow — `.camera` or
+        // `.photoLibrary` is routed through `addImagePickerSource`.
         .sheet(isPresented: $showPhotoPicker) {
-            ImagePicker(image: $selectedImage)
+            BarBotImagePicker(image: $selectedImage, source: addImagePickerSource)
+                .ignoresSafeArea()
         }
         .sheet(isPresented: $showAddIngredientSheet) {
             // Manual entry fallback — used when the user picks "Enter
@@ -1923,7 +1959,12 @@ struct EditRecipeView: View {
             } else if let url = remoteImageURL {
                 imageThumbnail(remoteURL: url)
             } else {
-                Button { showPhotoPicker = true } label: {
+                // 1:1 with UIKit `didPressAddImageButton` L219-226:
+                //   showActionSheetForImagePicker() — Camera/Photos/Cancel
+                Button {
+                    HapticService.light()
+                    showAddImageActionSheet = true
+                } label: {
                     Text("Add Image")
                         .font(.system(size: 12))
                         .foregroundStyle(Color("charcoalGrayColor"))
