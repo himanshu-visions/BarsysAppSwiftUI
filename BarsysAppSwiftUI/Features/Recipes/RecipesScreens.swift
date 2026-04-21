@@ -432,21 +432,25 @@ struct RecipeRowCell: View {
     @ViewBuilder
     private var thumbnail: some View {
         // UIKit: sd_setImage(with:imgUrl, placeholderImage:.myDrink)
-        // Placeholder uses .fit to avoid zooming/stretching a small asset.
-        // Loaded image uses .fill to cover the square frame and clip.
+        // Show `myDrink` placeholder during BOTH the loading and
+        // failure phases so the row has visual weight instead of
+        // a flat gray square while the image downloads (matches
+        // SDWebImage's placeholder-before-and-during semantics).
+        // Placeholder uses .fit to avoid zooming/stretching a small
+        // asset. Loaded image uses .fill to cover the square frame.
         if let url = optimizedImageURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let img):
                     img.resizable().aspectRatio(contentMode: .fill)
-                case .empty:
-                    Color("lightBorderGrayColor")
-                case .failure:
+                case .empty, .failure:
                     Image("myDrink")
                         .resizable().aspectRatio(contentMode: .fit)
                         .padding(16)
                 @unknown default:
-                    Color("lightBorderGrayColor")
+                    Image("myDrink")
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .padding(16)
                 }
             }
         } else {
@@ -826,20 +830,41 @@ struct RecipeDetailView: View {
                 // clipped by the rounded rect below.
                 img.resizable().aspectRatio(contentMode: .fill)
             case .empty:
-                // Loading state: show background color only
-                Color("lightBorderGrayColor")
+                // Loading state — 1:1 with UIKit `sd_setImage(with:imgUrl,
+                // placeholderImage: .myDrink)`: SDWebImage shows the
+                // `myDrink` artwork BEFORE + DURING the download, then
+                // swaps to the downloaded image on completion. The
+                // previous SwiftUI port left the hero as a flat gray
+                // during loading — noticeable when a BarBot full-recipe
+                // hits a slow image CDN. Matching UIKit by rendering
+                // the placeholder at the SAME `.fit` + `padding(40)`
+                // framing we use for the failure state, so the hero
+                // has consistent visual weight across load states and
+                // the layout never jumps when the real image arrives.
+                Image("myDrink")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .padding(40)
             case .failure:
-                // Failed / no URL: show placeholder centered, NOT zoomed.
-                // Using .fit prevents the small placeholder from
-                // stretching to fill the entire square frame.
+                // Failed / no URL: same placeholder framing (UIKit
+                // `sd_setImage` falls back to the placeholder on
+                // failure too).
                 Image("myDrink")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .padding(40)
             @unknown default:
-                Color("lightBorderGrayColor")
+                Image("myDrink")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .padding(40)
             }
         }
+        // Fixed 1:1 frame — UIKit storyboard `VN9-Mm-R3c` constraint
+        // `width:height = 1:1` with leading/trailing = parent ± 24.
+        // Stays the same size whether we're rendering the placeholder
+        // (empty / failure) or the loaded image, so the layout doesn't
+        // reflow when the download completes.
         .frame(maxWidth: .infinity)
         .aspectRatio(1, contentMode: .fit)
         .background(Color("lightBorderGrayColor"))
