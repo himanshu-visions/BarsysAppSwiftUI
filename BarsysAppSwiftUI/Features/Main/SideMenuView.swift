@@ -371,7 +371,7 @@ private struct SideMenuPanel: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
 
-            // Background — mirrors UIKit `SideMenuViewController.swift` L51-61:
+            // Background — 1:1 port of UIKit `SideMenuViewController.swift` L51-61:
             //
             //   if #available(iOS 26.0, *) {
             //       menuView.backgroundColor = .clear
@@ -382,46 +382,24 @@ private struct SideMenuPanel: View {
             //       tblMenu.backgroundColor  = .white
             //   }
             //
-            // So on iOS 26+ the panel uses the `.regular` glass blur that the
-            // storyboard's `<blurEffect style="regular"/>` ships with (SwiftUI
-            // `.regularMaterial`). On iOS < 26 it's a plain WHITE fill — no
-            // glass, no blur, no highlight stroke — matching the UIKit code
-            // path EXACTLY. The previous SwiftUI port used `.regularMaterial`
-            // on every iOS version which was wrong on iOS 18/19 where the
-            // UIKit build shows a solid white panel.
-            Group {
-                if #available(iOS 26.0, *) {
-                    // 0.8 alpha (0.2 reduction off 1.0) so the underlying
-                    // page stays faintly visible through the panel —
-                    // matches UIKit `menuView.addGlassEffect` where the
-                    // native `UIGlassEffect` renders more transparent
-                    // than SwiftUI's default `.regularMaterial`.
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.regularMaterial.opacity(0.95))
-                } else {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.95))
-                }
-            }
-
-            // Subtle specular-style highlight stroke — only on iOS 26+ where
-            // the storyboard `addGlassEffect` produces a glass sheen. On
-            // iOS < 26 the UIKit panel has no border (plain white view), so
-            // we don't draw one either.
-            if #available(iOS 26.0, *) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.35),
-                                Color.white.opacity(0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            }
+            // `menuView.addGlassEffect(cornerRadius: 8)` inserts a real
+            // `UIVisualEffectView(effect: UIGlassEffect(style: .regular))`
+            // at z-index 0 (UIViewClass+GlassEffects.swift L31-68).
+            //
+            // The UIKit reference screenshot (side menu open over the
+            // Home screen) shows the red device backdrop, cocktail
+            // image, eucalyptus branch, and coaster all clearly
+            // recognisable THROUGH the panel — softly blurred but NOT
+            // heavily whitened. So the port uses pure
+            // `UIGlassEffect(.regular)` on iOS 26 and
+            // `UIBlurEffect(.systemMaterial)` pre-26, with NO
+            // additional white-tint overlay (white overlay would hide
+            // the content the UIKit reference keeps visible).
+            //
+            // `BarsysGlassPanelBackground` is declared in
+            // RecipesScreens.swift.
+            BarsysGlassPanelBackground()
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             // Foreground content — header grows intrinsically with the
             // user-name length (UIKit autolayout does the same via the

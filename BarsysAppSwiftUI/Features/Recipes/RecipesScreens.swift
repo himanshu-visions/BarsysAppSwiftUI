@@ -45,6 +45,100 @@ struct UIGlassEffectBackground: UIViewRepresentable {
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {}
 }
 
+// MARK: - Barsys Glass Panel Background
+//
+// 1:1 visual port of UIKit `addGlassEffect(cornerRadius:)` — used
+// across the UIKit app for the side-menu panel (SideMenuViewController
+// L51-61), Edit-panel (EditViewController L129), and Edit ingredient
+// cells (EditViewController L180). UIKit implementation at
+// UIViewClass+GlassEffects.swift L31-L69:
+//
+//     var glassEffect = UIGlassEffect(style: .regular)
+//     glassEffect.isInteractive = true
+//     let effectView = UIVisualEffectView(effect: glassEffect)
+//     effectView.alpha = 1
+//     insertSubview(effectView, at: 0)
+//
+// Reference screenshot (UIKit build, side menu open over the Home
+// screen): the underlying Home screen is clearly VISIBLE through the
+// panel — you can see the red device backdrop, the cocktail image,
+// the eucalyptus branch, even the coaster detail — BUT everything is
+// softly blurred. NOT a heavy whitish frost. The panel is more of a
+// light glass than a frosted sheet.
+//
+// This wrapper matches that appearance by using real UIKit
+// visual-effect views (so the blur renders at full strength instead
+// of being attenuated by SwiftUI hosting):
+//
+//   • iOS 26+: `UIGlassEffect(style: .regular)` — byte-identical to
+//     the UIKit side-menu glass.
+//   • Pre-26:  `UIBlurEffect(style: .systemMaterial)` — the blur
+//     family UIKit's `.regular` glass historically mapped to.
+//
+// The `whiteTintAlpha` default is **0.0** — i.e. no white overlay.
+// The UIKit reference screen is pure `UIGlassEffect`; adding a
+// translucent-white sublayer would over-frost the panel and hide the
+// underlying content the reference keeps visible. Callers can
+// override if a specific surface needs an extra whitening pass.
+struct BarsysGlassPanelBackground: UIViewRepresentable {
+    /// Optional translucent white overlay on top of the blur.
+    /// Default 0.0 keeps the panel as pure glass to match the UIKit
+    /// side-menu screenshot. Raise only if a specific caller needs
+    /// extra whitening (currently none do).
+    var whiteTintAlpha: CGFloat = 0.0
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .clear
+        container.isUserInteractionEnabled = false
+        container.clipsToBounds = true
+
+        // --- Base blur layer -------------------------------------------------
+        // iOS 26+: REAL `UIGlassEffect(style: .regular)` — identical
+        // to UIKit `addGlassEffect(...)` (UIViewClass+GlassEffects.swift
+        // L40-L48). Pre-26: `.systemMaterial` — the historically
+        // closest native analogue of UIKit's `.regular` glass.
+        let blurView: UIVisualEffectView
+        if #available(iOS 26.0, *) {
+            let glassEffect = UIGlassEffect(style: .regular)
+            glassEffect.isInteractive = true
+            blurView = UIVisualEffectView(effect: glassEffect)
+        } else {
+            blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        }
+        blurView.frame = container.bounds
+        blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        blurView.isUserInteractionEnabled = false
+        blurView.backgroundColor = .clear
+        container.addSubview(blurView)
+
+        // --- Optional white tint overlay ------------------------------------
+        // Only added when `whiteTintAlpha > 0`. Default is 0 so the
+        // panel reads as pure glass (the UIKit reference has no
+        // white-tint overlay — the blur + the underlying content
+        // already produces the whitish cast you see in screenshots).
+        if whiteTintAlpha > 0 {
+            let tint = UIView()
+            tint.frame = container.bounds
+            tint.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            tint.isUserInteractionEnabled = false
+            tint.backgroundColor = UIColor.white.withAlphaComponent(whiteTintAlpha)
+            container.addSubview(tint)
+        }
+
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // Keep the white-tint subview (if present) in sync with the
+        // current alpha. Safely narrow: the tint view is the one
+        // non-`UIVisualEffectView` subview in `container`.
+        for sub in uiView.subviews where !(sub is UIVisualEffectView) {
+            sub.backgroundColor = UIColor.white.withAlphaComponent(whiteTintAlpha)
+        }
+    }
+}
+
 // MARK: - Explore Recipes
 //
 // Full port of ExploreRecipesViewController.
@@ -2402,40 +2496,36 @@ struct EditRecipeView: View {
     /// 1:1 with UIKit `mainView.addGlassEffect()`.
     ///
     /// UIKit code path (UIViewClass+GlassEffects.swift L31-69):
-    ///   • `UIGlassEffect(style: .regular)` with `isInteractive = true`
-    ///   • inserted at z-index 0, `alpha = 1`
-    ///   • clears `backgroundColor` and `superview?.backgroundColor`
+    ///   • iOS 26+: `UIGlassEffect(style: .regular)` with
+    ///     `isInteractive = true`, inserted at z-index 0, `alpha = 1`,
+    ///     clears `backgroundColor` and `superview?.backgroundColor`.
+    ///   • Pre-26: `addGlassEffect` is guarded by `#available(iOS 26.0, *)`
+    ///     and does NOTHING — the `mainView` keeps its storyboard fill
+    ///     (solid white).
     ///
-    /// SwiftUI has two options for matching this:
-    ///   1. `UIGlassEffectBackground` (UIViewRepresentable wrapping
-    ///      the real `UIGlassEffect` class) — ONLY renders on iOS 26
-    ///      and can be finicky when used inside SwiftUI's `.background()`
-    ///      modifier (the embedded `UIVisualEffectView` sometimes fails
-    ///      to size/composite correctly).
-    ///   2. `.regularMaterial` — SwiftUI's native frosted-glass
-    ///      material, bridged from `UIBlurEffect(.systemMaterial)`.
-    ///      Renders reliably on iOS 15+, always shows the content
-    ///      behind blurred (real glass effect, not a fixed color).
-    ///
-    /// We use `.regularMaterial` EVERYWHERE (including pre-26 and
-    /// iOS 26) so the panel is guaranteed to render as glass with
-    /// the parent VC visible behind. Combined with
-    /// `.presentationBackground(.clear)` on the `.fullScreenCover`,
-    /// this reproduces UIKit's child-VC-overlay glass appearance.
+    /// The UIKit reference screenshot shows a HEAVY whitish frosted
+    /// glass where the underlying FavoritesVC / RecipeDetailsVC is
+    /// visibly muted to a near-white pastel. SwiftUI's
+    /// `.regularMaterial.opacity(0.95)` reads as clear by contrast.
+    /// Use `BarsysGlassPanelBackground` — a real
+    /// `UIVisualEffectView(.systemMaterial)` blur plus a subtle white
+    /// tint — so the Edit panel matches the UIKit visual output.
+    @ViewBuilder
     private var panelBackground: some View {
-        UnevenRoundedRectangle(
+        let shape = UnevenRoundedRectangle(
             topLeadingRadius: 12,
             bottomLeadingRadius: 0,
             bottomTrailingRadius: 0,
             topTrailingRadius: 12,
             style: .continuous
         )
-        // 0.8 alpha (0.2 reduction off 1.0) so the underlying screen
-        // (FavoritesVC / RecipeDetailsVC) stays faintly visible through
-        // the edit panel — matches UIKit `mainView.addGlassEffect()`
-        // where the native `UIGlassEffect` renders more transparent
-        // than SwiftUI's default `.regularMaterial`.
-        .fill(.regularMaterial.opacity(0.95))
+        // Pure glass — no white-tint overlay — so the underlying
+        // FavoritesVC / RecipeDetailsVC shows through the panel
+        // softly blurred, matching the UIKit Edit-screen reference
+        // where `mainView.addGlassEffect()` renders as `UIGlassEffect
+        // (.regular)` alone with no extra whitening layer.
+        BarsysGlassPanelBackground()
+            .clipShape(shape)
     }
 
     /// Top-only rounded clipping shape — 1:1 with UIKit storyboard
@@ -2961,26 +3051,24 @@ struct EditIngredientRow: View {
         .onAppear { editingText = displayQty }
     }
 
-    /// UIKit `applyCellGlassStyle()` from EditViewController.swift:
-    ///   iOS 26+: addGlassEffect(cornerRadius: xlarge=20, alpha: 1.0)
-    ///   Pre-26: roundCorners = pill(24), borderWidth=1, gradient [black@10%, white@10%],
-    ///           borderColor = #F2F2F2
+    /// UIKit `applyCellGlassStyle()` from EditViewController.swift L178-187:
+    ///   iOS 26+: view.addGlassEffect(cornerRadius: xlarge=20, alpha: 1.0)
+    ///            → real `UIGlassEffect(style: .regular)` UIVisualEffectView
+    ///   Pre-26: roundCorners = pill(24), borderWidth=1,
+    ///           gradientLayer [black@10%, white@10%], borderColor = #F2F2F2
     @ViewBuilder
     private var editCellBackground: some View {
-        if #available(iOS 15.0, *) {
-            // UIKit `applyCellGlassStyle` iOS 26 branch
-            // (EditViewController.swift L178-187):
-            //   view.addGlassEffect(cornerRadius: 20, alpha: 1.0)
-            // `.regularMaterial` renders reliably as frosted glass on
-            // all supported iOS versions — always shows the panel /
-            // parent VC behind, blurred. Clipped to 20pt rounded rect.
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.regularMaterial)
+        if #available(iOS 26.0, *) {
+            // UIKit iOS 26 branch — cell gets the same `UIGlassEffect
+            // (.regular)` the UIKit side-menu / Edit-panel helper
+            // installs. Pure glass (no whitening overlay) so the
+            // cell stays semi-transparent over the panel's own glass,
+            // exactly like UIKit's nested `addGlassEffect` surfaces.
+            BarsysGlassPanelBackground()
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         } else {
-            // UIKit pre-26 branch (from UIViewClass+GradientStyles.swift
-            // `applyCellGlassStyle` pre-26): solid white backing +
-            // [black@10%, white@10%] vertical gradient + 1pt #F2F2F2
-            // border. The gradient sits ON TOP of the opaque white fill.
+            // UIKit pre-26 branch: solid white + vertical gradient
+            // overlay on a capsule (radius = pill = 24).
             Capsule()
                 .fill(Color.white)
                 .overlay(
@@ -2997,9 +3085,16 @@ struct EditIngredientRow: View {
     @ViewBuilder
     private var editCellBorder: some View {
         if #available(iOS 26.0, *) {
+            // UIKit `addGlassEffect(...)` doesn't add a border
+            // (`isBorderEnabled` is a dead parameter — see
+            // UIViewClass+GlassEffects.swift L31-68). Keep a very
+            // faint sheen stroke only for slight edge definition so
+            // cells don't visually dissolve into the panel glass.
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         } else {
+            // UIKit pre-26 `applyCellGlassStyle` border: 1pt #F2F2F2
+            // on a pill (radius 24).
             Capsule()
                 .stroke(Color(red: 0.949, green: 0.949, blue: 0.949), lineWidth: 1)
         }
