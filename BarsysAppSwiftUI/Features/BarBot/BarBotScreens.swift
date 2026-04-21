@@ -3997,11 +3997,27 @@ struct WaitingRecipePopup: View {
 
             // ---- Card (`tNS-40-AMr`) -----------------------------------
             ZStack(alignment: .topTrailing) {
-                // Card background — UIKit `systemBackgroundColor` (white
-                // on light mode / black on dark mode) with 12pt corner.
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(.systemBackground))
-                    .frame(width: cardWidth, height: cardHeight)
+                // Card background — GLASS to match the other popups in
+                // the app (side-menu panel, edit panel, DeviceConnected
+                // popup, DeviceList popup). UIKit's WaitingRecipePopUp
+                // uses `systemBackgroundColor` in the storyboard, but
+                // every OTHER popup in the app applies
+                // `alertPopUpBackgroundStyle(cornerRadius: .medium)` →
+                // on iOS 26 that's a real `UIGlassEffect(.regular)`.
+                // The user asked us to align this popup with the rest
+                // of the popup surfaces — so we route through the same
+                // `BarsysGlassPanelBackground` (pure UIKit
+                // `UIGlassEffect` on iOS 26, `systemBackground` white
+                // pre-26) instead of the flat storyboard white.
+                Group {
+                    if #available(iOS 26.0, *) {
+                        BarsysGlassPanelBackground()
+                    } else {
+                        Color(.systemBackground)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .frame(width: cardWidth, height: cardHeight)
 
                 // Inner content (`L9q-OP-VHX`) — 229×193.33 at (24, 24).
                 VStack(spacing: 24) {
@@ -4024,28 +4040,33 @@ struct WaitingRecipePopup: View {
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    // Cancel button — UIKit btnCancel: full width 229×45,
-                    // white bg, black title "Cancel" 12pt system,
-                    // 1pt borderColor stroke, small corner (~8pt).
+                    // Cancel button — 1:1 with UIKit `btnCancel`
+                    // (WaitingRecipePopUpViewController L140-146):
+                    //   roundCorners = BarsysCornerRadius.small = 8
+                    //   layer.borderColor = UIColor.borderColor.cgColor
+                    //   layer.borderWidth = 1.0
+                    //   clipsToBounds = true
+                    //   title "Cancel", font system 12pt, color BLACK
+                    //
+                    // Every OTHER popup in UIKit applies
+                    // `applyCancelCapsuleGradientBorderStyle()` on iOS 26+
+                    // to this same "cancel" style button — giving it a
+                    // glass-clear fill + white/cancelBorderGray gradient
+                    // stroke. We mirror that here so the Cancel button
+                    // in the waiting popup matches the other popups'
+                    // cancel buttons across the app (AlertPopUp,
+                    // MultipleIngredients, etc.).
                     Button {
                         cancel()
                     } label: {
                         Text(ConstantButtonsTitle.cancelButtonTitle)
                             .font(.system(size: 12))
-                            .foregroundStyle(Color.black)
+                            .foregroundStyle(Color("appBlackColor"))
                             .frame(maxWidth: .infinity)
                             .frame(height: 45)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8,
-                                                 style: .continuous)
-                                    .fill(Color.white)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8,
-                                                 style: .continuous)
-                                    .stroke(Color("borderColor"),
-                                            lineWidth: 1)
-                            )
+                            .background(cancelButtonBackground)
+                            .overlay(cancelButtonBorder)
+                            .clipShape(cancelButtonShape)
                     }
                     .buttonStyle(BounceButtonStyle()) // UIKit addBounceEffect()
                     .accessibilityLabel("Cancel waiting")
@@ -4141,5 +4162,75 @@ struct WaitingRecipePopup: View {
         pollingTask?.cancel()
         pollingTask = nil
         isPresented = false
+    }
+
+    // MARK: - Cancel button styling
+    //
+    // 1:1 port of the `applyCancelCapsuleGradientBorderStyle()` /
+    // `makeBorder(1, craftButtonBorderColor)` decision tree used
+    // across every UIKit popup Cancel button:
+    //
+    //   iOS 26+:
+    //     • Fill   : glass — `regularMaterial` + subtle cancel-gray tint
+    //                (UIKit `addGlassEffect(tintColor: .cancelButtonGray,
+    //                 cornerRadius: 8)`)
+    //     • Border : 6-stop white ↔ cancelBorderGray gradient stroke
+    //                (UIKit `applyCancelCapsuleGradientBorderStyle`)
+    //     • Shape  : 8pt rounded rect (`BarsysCornerRadius.small`)
+    //
+    //   Pre-26:
+    //     • Fill   : pure white
+    //     • Border : 1pt `borderColor` (UIKit
+    //                `btnCancel.layer.borderColor = .borderColor.cgColor`)
+    //     • Shape  : 8pt rounded rect
+
+    @ViewBuilder
+    private var cancelButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            // Glass fill + subtle cancel-gray tint — matches UIKit
+            // `addGlassEffect(tintColor: .cancelButtonGray)` with a
+            // `.clear` glass style over the popup card.
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Theme.Color.cancelButtonGray.opacity(0.15))
+            }
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white)
+        }
+    }
+
+    @ViewBuilder
+    private var cancelButtonBorder: some View {
+        if #available(iOS 26.0, *) {
+            // UIKit `applyCancelCapsuleGradientBorderStyle(borderColors:)`
+            // stops (UIViewClass+GradientStyles.swift L92-110): 6-stop
+            // alternating white → cancelBorderGray sheen.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0.95),                      location: 0.00),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9), location: 0.20),
+                            .init(color: .white.opacity(0.95),                      location: 0.40),
+                            .init(color: .white.opacity(0.95),                      location: 0.60),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9), location: 0.80),
+                            .init(color: .white.opacity(0.95),                      location: 1.00)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color("borderColor"), lineWidth: 1)
+        }
+    }
+
+    private var cancelButtonShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
     }
 }
