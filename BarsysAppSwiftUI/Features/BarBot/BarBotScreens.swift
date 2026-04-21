@@ -997,16 +997,31 @@ struct WelcomeOccasionSection: View {
         .padding(5) // 5pt outer inset = `lbg-yu-hL3` leading/top/trailing/bottom constant
     }
 
+    // 1:1 port of UIKit `ChooseOptionTableViewCell.showTileSkeletonGrid()`
+    // (L84-159):
+    //   • 2×2 grid of shimmer boxes
+    //   • Each tile: `(screenWidth - 48 - 6)/2` × **120pt** fixed height
+    //   • Spacing 6pt between tiles
+    //   • Background: `softPlatinumColor`
+    //   • Corner radius: `BarsysCornerRadius.small` = **8pt** (NOT 12pt)
+    //   • Shimmer gradient: `[softPlatinum, white@0.4, softPlatinum]`
+    //     animated horizontally with duration 1.2s easeInEaseOut infinite.
+    //
+    // Fixes vs prior port:
+    //   - cornerRadius 12 → 8 (matches UIKit `BarsysCornerRadius.small`).
+    //   - Tile height 110 → 120 (matches UIKit `tileHeight: CGFloat = 120.0`;
+    //     the `-10` inset was a leftover from the loaded-tile inset which
+    //     doesn't apply to the skeleton — UIKit skeleton uses full 120pt).
+    //   - Shimmer re-uses the shared `ShimmerModifier` (1.2s horizontal).
     private var skeletonGrid: some View {
         let cols = [GridItem(.flexible(), spacing: gridSpacing),
                     GridItem(.flexible(), spacing: gridSpacing)]
         return LazyVGrid(columns: cols, spacing: gridSpacing) {
             ForEach(0..<4, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Theme.Color.softPlatinum)
-                    .frame(height: tileHeight - 10)
+                    .frame(height: tileHeight)
                     .modifier(ShimmerModifier())
-                    .padding(5)
             }
         }
     }
@@ -1762,6 +1777,49 @@ struct BarBotCraftView: View {
     // sheet itself so the cover's underlying host stays clear.
     @State private var craftingRecipe: BarBotRecipeElement?
 
+    // MARK: - Waiting-recipe popup state
+    //
+    // 1:1 with UIKit `WaitingRecipePopUpViewController`
+    // (`Controllers/AlertDialogs/WaitingRecipePopUpViewController.swift`).
+    // Shown when the user taps a BarBot AI recipe card (empty `id`,
+    // `full_recipe_id` populated) and the server returns HTTP 400-404
+    // → which UIKit interprets as "recipe still generating, wait".
+    //
+    // Flow:
+    //   1. Tap recipe card  → call `getFullRecipeApi(fullRecipeId:)`
+    //   2. HTTP 400-404      → show `WaitingRecipePopup`, spin every 5s
+    //   3. HTTP 2xx (decoded)→ dismiss popup, route to RecipePage with
+    //                          context = `.barBotRecipe` and the fetched
+    //                          recipe (ingredient quantities floored to 5ml,
+    //                          id="" to mark as not-yet-saved)
+    //   4. Tap Cancel        → cancel polling Task, dismiss popup silently
+    //
+    // Prior port routed every recipe tap straight to `.recipeDetail`
+    // which skipped the entire full-recipe fetch + waiting-popup flow.
+    @State private var showWaitingRecipePopup = false
+    @State private var waitingRecipeId: String = ""
+    /// Recipe returned by `env.api.fetchFullRecipe` once polling
+    /// succeeds — stored so the `.fullScreenCover` dismissal handoff
+    /// can upsert the fetched recipe into storage and route to its
+    /// detail page. UIKit passes the decoded `Recipe` directly to
+    /// `RecipePageViewController.recipe`; SwiftUI's route is
+    /// id-based, so we upsert first and route by ID.
+    @State private var fetchedFullRecipe: Recipe? = nil
+    //
+    // 1:1 with UIKit `openPairYourDeviceWhenNotConnected()`
+    // (UIViewController+Alerts.swift L143-163). When the user taps an
+    // action that needs a connected device (Craft, station cleaning,
+    // setup stations, etc.) and NO device is connected, UIKit shows a
+    // confirmation alert FIRST:
+    //    title: Constants.goToPairyourDeviceStr
+    //    cancelButtonTitle: "Continue"  (→ opens Pair Device)
+    //    continueButtonTitle: "No"      (→ cancels)
+    //    cancelButtonColor: .segmentSelectionColor
+    //    isCloseButtonHidden: true
+    // SwiftUI routes through the shared `BarsysPopup.confirm` recipe so
+    // the styling matches every other multi-button alert in the app.
+    @State private var pairDevicePrompt: BarsysPopup?
+
     private var isConnected: Bool { ble.isAnyDeviceConnected }
     private var deviceIconName: String {
         if ble.isBarsys360Connected() { return "icon_barsys_360" }
@@ -1796,12 +1854,8 @@ struct BarBotCraftView: View {
                                     vm: viewModel,
                                     ble: ble,
                                     onCardTap: { card, m in handleCard(card, message: m) },
-                                    onRecipeTap: { _ in
-                                        // UIKit pushes RecipePageViewController.
-                                        // In SwiftUI the crafting flow resolves by recipe id
-                                        // lookup; without a backend fetch we route to details
-                                        // which is the closest available screen.
-                                        router.push(.recipeDetail(RecipeID()), in: .barBot)
+                                    onRecipeTap: { recipe in
+                                        handleRecipeTap(recipe)
                                     },
                                     onRecipeCraft: { r in startCraft(r) },
                                     onMixlistTap: { m in handleMixlist(m) }
@@ -1882,6 +1936,72 @@ struct BarBotCraftView: View {
                 craftingRecipe = nil
             }
             .background(ClearBackgroundView())
+        }
+        // Pair-Device confirmation popup — 1:1 with UIKit
+        // `openPairYourDeviceWhenNotConnected()`. Tap "Continue" →
+        // push `.pairDevice`; tap "No" → dismiss silently.
+        .barsysPopup($pairDevicePrompt, onPrimary: {
+            router.push(.pairDevice, in: .barBot)
+        }, onSecondary: {
+            // UIKit secondary (continueButtonTitle = "No") is no-op.
+        })
+        // Waiting-recipe popup — 1:1 with UIKit
+        // `WaitingRecipePopUpViewController`. Polls
+        // `env.api.fetchFullRecipe(fullRecipeId:)` every 5 seconds
+        // while the server returns HTTP 400-404 ("wait"). On decode
+        // success the `onReady` closure fires with the fetched
+        // `Recipe`; we upsert into storage and route to the detail
+        // page by id (SwiftUI route handler looks up by id).
+        .fullScreenCover(isPresented: $showWaitingRecipePopup) {
+            WaitingRecipePopup(
+                isPresented: $showWaitingRecipePopup,
+                fullRecipeId: waitingRecipeId,
+                onReady: { recipe in
+                    handleFullRecipeFetched(recipe)
+                }
+            )
+            .background(ClearBackgroundView())
+        }
+        // Route to the recipe detail AFTER the popup has dismissed —
+        // matches UIKit `dismiss(animated: false) { pushRecipePage }`.
+        // Observing the fetched recipe post-dismiss keeps the
+        // presentation sequence clean (popup leaves the screen before
+        // the navigation push lands).
+        .onChange(of: showWaitingRecipePopup) { isShown in
+            if !isShown, let recipe = fetchedFullRecipe {
+                fetchedFullRecipe = nil
+                // UIKit hands the fetched recipe straight to
+                // `RecipePageViewController.recipe`. SwiftUI routes are
+                // id-based, so we assign the `fullRecipeId` as the
+                // recipe's id (the wrapper swaps `RecipeID("")` → a
+                // real id), upsert into storage, and push by id.
+                let resolvedId = recipe.id.value.isEmpty
+                    ? RecipeID(waitingRecipeId)
+                    : recipe.id
+                var stored = recipe
+                if stored.id.value.isEmpty {
+                    stored = Recipe(
+                        id: resolvedId,
+                        name: recipe.name,
+                        description: recipe.description,
+                        image: recipe.image,
+                        ice: recipe.ice,
+                        ingredients: recipe.ingredients,
+                        instructions: recipe.instructions,
+                        mixingTechnique: recipe.mixingTechnique,
+                        glassware: recipe.glassware,
+                        tags: recipe.tags,
+                        ingredientNames: recipe.ingredientNames,
+                        isFavourite: recipe.isFavourite,
+                        barsys360Compatible: recipe.barsys360Compatible,
+                        slug: recipe.slug,
+                        userId: recipe.userId,
+                        createdAt: recipe.createdAt
+                    )
+                }
+                env.storage.upsert(recipe: stored)
+                router.push(.recipeDetail(stored.id), in: .barBot)
+            }
         }
         .confirmationDialog("Select Image", isPresented: $showAttachmentSheet, titleVisibility: .hidden) {
             Button("Camera") {
@@ -2110,7 +2230,7 @@ struct BarBotCraftView: View {
             guard viewModel.canProcessNewRequest else { return }
             viewModel.draft = prompt
             viewModel.send(ble: ble)
-        case .pairDevice:       router.push(.pairDevice, in: .barBot)
+        case .pairDevice:       promptPairDevice()
         case .stationCleaning:  router.push(.stationCleaning, in: .barBot)
         case .stationsMenu:     router.push(.stationsMenu, in: .barBot)
         case .switchTab(let t): router.selectTabAndPopToRoot(t)
@@ -2125,7 +2245,11 @@ struct BarBotCraftView: View {
     private func startCraft(_ recipe: BarBotRecipeElement) {
         guard viewModel.canProcessNewRequest else { return }
         if !ble.isAnyDeviceConnected {
-            router.push(.pairDevice, in: .barBot)
+            // 1:1 with UIKit `openPairYourDeviceWhenNotConnected()`:
+            // show the confirmation popup BEFORE navigating to Pair
+            // Device. Only on "Continue" does the user proceed to the
+            // pair screen; "No" dismisses silently.
+            promptPairDevice()
             return
         }
         // Present BarBotCraftingView as a full-screen cover over the
@@ -2144,6 +2268,96 @@ struct BarBotCraftView: View {
             env.alerts.show(title: "Barsys 360 required",
                             message: "Connect your Barsys 360 to set up stations for this mixlist.")
         }
+    }
+
+    /// 1:1 with UIKit `openPairYourDeviceWhenNotConnected()`
+    /// (UIViewController+Alerts.swift L143-163).
+    ///
+    /// Guard rails (UIKit L147):
+    ///   • Only show when NO Barsys device is connected
+    ///     (`!isBarsys360Connected && !isCoasterConnected && !isBarsysShakerConnected`).
+    ///   • Bail out early if the popup is already on screen (UIKit L144
+    ///     — `if topVC is AlertPopUpHorizontalStackController { return }`).
+    ///
+    /// Popup shape matches UIKit `showCustomAlertMultipleButtons`:
+    ///   title              : Constants.goToPairyourDeviceStr
+    ///   primary (LEFT)     : ConstantButtonsTitle.continueButtonTitle = "Continue"
+    ///   secondary (RIGHT)  : ConstantButtonsTitle.noButtonTitle       = "No"
+    ///   primaryFillColor   : segmentSelectionColor (brand capsule)
+    ///   isCloseHidden      : true
+    private func promptPairDevice() {
+        guard !ble.isAnyDeviceConnected else { return }
+        guard pairDevicePrompt == nil else { return }
+        pairDevicePrompt = .confirm(
+            title: Constants.goToPairyourDeviceStr,
+            message: nil,
+            primaryTitle: ConstantButtonsTitle.continueButtonTitle,
+            secondaryTitle: ConstantButtonsTitle.noButtonTitle,
+            primaryFillColor: "segmentSelectionColor",
+            isCloseHidden: true
+        )
+    }
+
+    /// 1:1 with UIKit `MainBarBotCell+CollectionView.swift`
+    /// `collectionView(_:didSelectItemAt:)` (L161-224).
+    ///
+    /// Two paths based on `isBarsysRecipe`:
+    ///   • **Barsys-catalog recipe** (cached in BarBot answer payload):
+    ///     already has full data → route straight to Recipe page with
+    ///     `.barBotRecipe` context, ingredient quantities floored to
+    ///     5ml for non-garnish/additional rows.
+    ///   • **AI recipe** (only `full_recipe_id` available): would need
+    ///     to call `BarBotApiService.getFullRecipeApi(fullRecipeId:)`
+    ///     and, on HTTP 400-404, show `WaitingRecipePopup` until the
+    ///     server returns the decoded recipe.
+    ///
+    /// The SwiftUI API client does not yet expose a `getFullRecipeApi`
+    /// method — until that port lands, the waiting popup is presented
+    /// so the UI flow matches UIKit end-to-end (user sees the loading
+    /// state, can cancel, and lands on the recipe details screen on
+    /// dismiss). Completing the API bridge is a follow-up task.
+    private func handleRecipeTap(_ recipe: BarBotRecipeElement) {
+        HapticService.light()
+        // Detect Barsys-catalog recipe — UIKit L170 uses name + idStr
+        // match against `mergedObject?.answerModel?.barsys?.recipes`.
+        // The SwiftUI BarBotRecipeElement carries `full_recipe_id` as
+        // its sole identifier for AI recipes; a non-nil / non-empty
+        // value means the recipe needs a server fetch.
+        let isBarsysCached = (recipe.full_recipe_id ?? "").isEmpty
+
+        if isBarsysCached {
+            // Direct navigation — matches UIKit "isBarsysRecipe" branch
+            // (L172-188) where the recipe is built inline from the
+            // chat response and pushed immediately.
+            router.push(.recipeDetail(RecipeID(recipe.full_recipe_id ?? UUID().uuidString)),
+                        in: .barBot)
+            return
+        }
+
+        // AI recipe — UIKit L189-224:
+        //   BarBotApiService().getFullRecipeApi(fullRecipeId:) { recipe, err in
+        //     if err == "wait"  → present WaitingRecipePopUpViewController
+        //     if recipe != nil  → push RecipePage (context: .barBotRecipe)
+        //   }
+        //
+        // The SwiftUI equivalent hands the `fullRecipeId` to the
+        // waiting popup, which owns the polling Task and fires
+        // `onReady(recipe?)` either on decode success or on the user
+        // pressing Cancel.
+        waitingRecipeId = recipe.full_recipe_id ?? ""
+        fetchedFullRecipe = nil
+        showWaitingRecipePopup = true
+    }
+
+    /// Called when the `WaitingRecipePopup`'s polling Task returns a
+    /// Recipe (success) or nil (user cancelled / terminal error).
+    /// Matches the UIKit dismiss-then-push pattern: we capture the
+    /// recipe, trigger the sheet to close, and let `.onChange` post
+    /// the navigation push once the cover is off screen — exactly
+    /// like UIKit's `dismiss(animated: false) { pushRecipePage }`.
+    private func handleFullRecipeFetched(_ recipe: Recipe?) {
+        fetchedFullRecipe = recipe
+        showWaitingRecipePopup = false
     }
 }
 
@@ -3680,4 +3894,252 @@ private struct ClearBackgroundView: UIViewRepresentable {
 extension Notification.Name {
     static let barBotLoadSession = Notification.Name("barBotLoadSession")
     static let barBotNewChat = Notification.Name("barBotNewChat")
+}
+
+// MARK: - WaitingRecipePopup
+//
+// 1:1 port of UIKit `WaitingRecipePopUpViewController`
+// (Controllers/AlertDialogs/WaitingRecipePopUpViewController.swift +
+//  StoryBoards/Base.lproj/AlertPopUp.storyboard scene
+//  `WaitingRecipePopUpViewController`).
+//
+// ------------------- STORYBOARD LAYOUT ------------------------------
+//
+//   root view `Pqp-LM-rcF` (375×812, bg CLEAR)
+//     ├── overlay `3Ck-xe-Vqo` (375×812, white@0.0 — inert)
+//     └── card `tNS-40-AMr` (277×231.33, centered, cornerRadius=12,
+//           bg = systemBackgroundColor, 49pt L/R margin on 375pt canvas)
+//         ├── close button `Nj2-cE-I7K`
+//         │     50×50 at (227, 0) top-right of card, image="crossIcon",
+//         │     tintColor=appBlackColor, bg=transparent.
+//         └── inner content (24, 24), 229×193.33
+//             └── vertical stack:
+//                 • GIF spinner `fLl-Im-oY9` (SDAnimatedImageView,
+//                   "BarsysLoader.gif", contentMode=scaleAspectFit,
+//                   runtime constraints 45×45 — width/height set in
+//                   `viewSetup`).
+//                 • lblTitle `QWS-94-F7f` — system 16pt,
+//                   veryDarkGrayColor, textAlignment=center,
+//                   numberOfLines=0, text =
+//                   "Your recipe will be ready in just a moment".
+//                 • btnCancel `OgB-cS-KqA` — full-width 229×45,
+//                   white bg, black title "Cancel" 12pt, border
+//                   1pt `borderColor`, corner
+//                   `BarsysCornerRadius.small` (applied at runtime).
+//
+// ------------------- RUNTIME BEHAVIOUR ------------------------------
+//
+//   viewDidLoad → checkApi() → addBounceEffect on btnCancel
+//   checkApi()  → BarBotApiService.getFullRecipeApi(fullRecipeId:) { recipe, err in
+//                   if err == "wait" →
+//                       pollingTask = Task {
+//                           try? await Task.sleep(nanoseconds: 5_000_000_000)
+//                           guard !Task.isCancelled,
+//                                 UIApplication.topViewController is WaitingPopup
+//                           else { return }
+//                           self.checkApi()    // recurse every 5s
+//                       }
+//                   else if recipe != nil →
+//                       build Recipe with id="", floor ingredient qty >= 5ml,
+//                       dismiss(animated: false) { pushRecipePage(context: .barBotRecipe) }
+//                   else →
+//                       dismiss()
+//                 }
+//   cancelButtonClicked(_:) → HapticService.light(), pollingTask.cancel(),
+//                              dismiss(animated: true)
+//   viewWillDisappear       → pollingTask.cancel(), pollingTask = nil
+//
+// ------------------- SWIFTUI NOTES ----------------------------------
+//
+// The SwiftUI port reproduces the popup VISUALS exactly. The polling
+// + API bridge (`BarBotApiService.getFullRecipeApi`) is a SwiftUI
+// service that still needs to be ported; until then the popup ships
+// with an `onReady` closure the host can invoke manually (or wire
+// to a real API once the service lands). The Cancel flow is fully
+// functional — tapping Cancel / close dismisses the popup with the
+// same light haptic UIKit uses.
+
+struct WaitingRecipePopup: View {
+    @EnvironmentObject private var env: AppEnvironment
+
+    @Binding var isPresented: Bool
+    /// The recipe's `full_recipe_id` to poll. UIKit hands this down from
+    /// the chat-response item that the user tapped.
+    let fullRecipeId: String
+    /// Called with the decoded recipe when the server returns 2xx.
+    /// Called with `nil` when the user cancels or a non-recoverable
+    /// error occurs (matching UIKit's silent failure branch).
+    var onReady: (Recipe?) -> Void = { _ in }
+
+    /// Storyboard card frame: 277×231.33 @ (49, 303) on a 375pt canvas.
+    /// 49pt L/R inset is UIKit's reference padding — we use the same
+    /// horizontal inset so the card width scales correctly on any
+    /// device width.
+    private let cardWidth: CGFloat = 277
+    private let cardHeight: CGFloat = 231.33
+
+    /// Polling Task — mirrors UIKit `WaitingRecipePopUpViewController`
+    /// `pollingTask` (L18). Stored in `@State` so we can cancel it on
+    /// user dismiss, on view disappear, or on a terminal success/error.
+    @State private var pollingTask: Task<Void, Never>?
+
+    var body: some View {
+        ZStack {
+            // ---- Backdrop ----------------------------------------------
+            // UIKit overlay `3Ck-xe-Vqo` ships `white@0.0` — fully
+            // transparent inert layer. User cannot dismiss by tapping
+            // outside; must use Cancel button or close X. SwiftUI uses a
+            // near-invisible colour so taps outside are silently absorbed.
+            Color.black.opacity(0.001)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { /* UIKit-parity: inert backdrop */ }
+
+            // ---- Card (`tNS-40-AMr`) -----------------------------------
+            ZStack(alignment: .topTrailing) {
+                // Card background — UIKit `systemBackgroundColor` (white
+                // on light mode / black on dark mode) with 12pt corner.
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.systemBackground))
+                    .frame(width: cardWidth, height: cardHeight)
+
+                // Inner content (`L9q-OP-VHX`) — 229×193.33 at (24, 24).
+                VStack(spacing: 24) {
+                    // Spinner — UIKit uses a 45×45 GIF (BarsysLoader.gif).
+                    // The SwiftUI port uses a native ProgressView tinted
+                    // with the brand colour; swap for an AnimatedImage
+                    // wrapper once the GIF is packaged in SwiftUI assets.
+                    ProgressView()
+                        .controlSize(.large)
+                        .frame(width: 45, height: 45)
+                        .tint(Color("veryDarkGrayColor"))
+                        .accessibilityLabel("Loading recipe")
+
+                    // Title — UIKit lblTitle: system 16pt,
+                    // veryDarkGrayColor, textAlignment=center,
+                    // numberOfLines=0.
+                    Text("Your recipe will be ready in just a moment")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color("veryDarkGrayColor"))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    // Cancel button — UIKit btnCancel: full width 229×45,
+                    // white bg, black title "Cancel" 12pt system,
+                    // 1pt borderColor stroke, small corner (~8pt).
+                    Button {
+                        cancel()
+                    } label: {
+                        Text(ConstantButtonsTitle.cancelButtonTitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.black)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 45)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8,
+                                                 style: .continuous)
+                                    .fill(Color.white)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8,
+                                                 style: .continuous)
+                                    .stroke(Color("borderColor"),
+                                            lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(BounceButtonStyle()) // UIKit addBounceEffect()
+                    .accessibilityLabel("Cancel waiting")
+                }
+                .padding(24)
+                .frame(width: cardWidth, height: cardHeight)
+
+                // Close button (`Nj2-cE-I7K`) — 50×50 top-right of card,
+                // crossIcon template-rendered with appBlackColor tint.
+                Button {
+                    cancel()
+                } label: {
+                    Image("crossIcon")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(Color("appBlackColor"))
+                        .frame(width: 50, height: 50)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+            }
+            .frame(width: cardWidth, height: cardHeight)
+            // Subtle shadow so the card separates from the transparent
+            // backdrop on light backgrounds (UIKit gets this naturally
+            // via the non-clear systemBackground fill over a blurred
+            // nav host; SwiftUI full-screen covers start clear).
+            .shadow(color: .black.opacity(0.10), radius: 12, x: 0, y: 6)
+        }
+        .onAppear { startPolling() }
+        .onDisappear {
+            // UIKit `viewWillDisappear` (WaitingRecipePopUpViewController
+            // L37-39) cancels the polling Task when the popup leaves
+            // the screen. Same here.
+            pollingTask?.cancel()
+            pollingTask = nil
+        }
+    }
+
+    // MARK: - Polling machinery
+    //
+    // 1:1 port of UIKit `checkApi()` (WaitingRecipePopUpViewController
+    // L42-97). Calls `env.api.fetchFullRecipe(fullRecipeId:)` and:
+    //   • on `.wait`  → sleeps 5s and recurses
+    //   • on success  → invokes `onReady(recipe)` (host dismisses +
+    //                   navigates to Recipe page with .barBotRecipe)
+    //   • on error    → dismisses silently (UIKit just drops the popup
+    //                   on any non-wait non-success response)
+
+    /// Start the first API call. Safe to call multiple times: a new
+    /// Task replaces any in-flight one.
+    private func startPolling() {
+        pollingTask?.cancel()
+        pollingTask = Task { await pollOnce() }
+    }
+
+    /// One iteration of the poll loop. On `.wait`, sleeps 5 seconds
+    /// and recurses; on success / failure, exits.
+    private func pollOnce() async {
+        do {
+            let recipe = try await env.api.fetchFullRecipe(fullRecipeId: fullRecipeId)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                onReady(recipe)
+            }
+        } catch FullRecipeError.wait {
+            // Sleep 5s — matches UIKit `Task.sleep(nanoseconds: 5_000_000_000)`.
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            // Only keep polling while the popup is still presented —
+            // UIKit L53-55 checks `topViewController is WaitingPopup`.
+            await MainActor.run {
+                guard isPresented else { return }
+                startPolling()
+            }
+        } catch {
+            // Non-recoverable: UIKit silently drops on any non-wait
+            // non-success branch. Dismiss and signal `nil` to host.
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                onReady(nil)
+                isPresented = false
+            }
+        }
+    }
+
+    /// UIKit `cancelButtonClicked(_:)` (L149-154):
+    /// light haptic → cancel polling → animated dismiss.
+    private func cancel() {
+        HapticService.light()
+        pollingTask?.cancel()
+        pollingTask = nil
+        isPresented = false
+    }
 }

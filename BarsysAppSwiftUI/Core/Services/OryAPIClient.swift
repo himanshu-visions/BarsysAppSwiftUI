@@ -810,6 +810,93 @@ final class OryAPIClient: APIClient {
         ).first?.ingredients ?? []
     }
 
+    // MARK: - Full recipe fetch (BarBot AI recipe polling)
+    //
+    // 1:1 port of UIKit `BarBotApiService.getFullRecipeApi(fullRecipeId:)`
+    // (BarBotApiService.swift L169-227).
+    //
+    // Endpoint: GET `{recipesBaseURL}my/recipes/{fullRecipeId}`
+    //
+    // Behaviour:
+    //   • HTTP 400-404  → throw `FullRecipeError.wait` (UIKit returns
+    //                     the literal "wait" string in completion)
+    //   • HTTP 2xx      → decode APIRecipe → apply 5ml floor on every
+    //                     ingredient (matching UIKit L203-216) → return
+    //                     with `id = ""` to mark it as a not-yet-saved
+    //                     BarBot recipe
+    //   • Other errors  → throw `FullRecipeError.failed(message:)`
+    //
+    // The UIKit layer additionally runs an oz→ml conversion when the
+    // unit contains "oz" (`ounceValue = 0.033814`). We apply the same
+    // transformation so SwiftUI sees the identical quantity numbers.
+    func fetchFullRecipe(fullRecipeId: String) async throws -> Recipe {
+        let urlStr = Self.recipesBaseURL + "my/recipes/\(fullRecipeId)"
+        guard let url = URL(string: urlStr) else {
+            throw FullRecipeError.failed(message: Constants.invalidUrlTitle)
+        }
+        let request = authenticatedRequest(url: url)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw FullRecipeError.failed(message: Constants.noResponseFromServer)
+        }
+        // UIKit `BarBotApiService.swift` L194-196:
+        //   if statusCode >= 400 && statusCode <= 404 { completion(nil, "wait") }
+        if http.statusCode >= 400 && http.statusCode <= 404 {
+            throw FullRecipeError.wait
+        }
+        guard http.statusCode == 200 else {
+            throw FullRecipeError.failed(message: Constants.ingredientUpdateError)
+        }
+        do {
+            let api = try JSONDecoder().decode(APIRecipe.self, from: data)
+            var recipe = api.toRecipe()
+            // Apply 5 ml floor to every ingredient — matches UIKit
+            // `BarBotApiService.swift` L203-216. Convert oz→ml when
+            // the unit contains "oz" so the quantity is always in the
+            // canonical ml scale before the UI consumes it.
+            recipe.ingredients = recipe.ingredients?.map { ing in
+                var copy = ing
+                let isOz = (copy.unit.lowercased().contains("oz"))
+                if isOz {
+                    // 0.033814 = NumericConstants.ounceConversionFactor (UIKit).
+                    let q = copy.quantity ?? 0
+                    let converted = max(5.0, q / 0.033814)
+                    copy.quantity = converted
+                    copy.unit = "oz"
+                } else if (copy.quantity ?? 0) < 5.0 {
+                    copy.quantity = 5.0
+                }
+                return copy
+            }
+            // UIKit passes `id = ""` when handing the recipe to
+            // RecipePageViewController with `.barBotRecipe` context —
+            // signals "AI recipe, not yet saved to My Drinks".
+            recipe = Recipe(
+                id: RecipeID(""),
+                name: recipe.name,
+                description: recipe.description,
+                image: recipe.image,
+                ice: recipe.ice,
+                ingredients: recipe.ingredients,
+                instructions: recipe.instructions,
+                mixingTechnique: recipe.mixingTechnique,
+                glassware: recipe.glassware,
+                tags: recipe.tags,
+                ingredientNames: recipe.ingredientNames,
+                isFavourite: recipe.isFavourite,
+                barsys360Compatible: recipe.barsys360Compatible,
+                slug: recipe.slug,
+                userId: recipe.userId,
+                createdAt: recipe.createdAt
+            )
+            return recipe
+        } catch let error as FullRecipeError {
+            throw error
+        } catch {
+            throw FullRecipeError.failed(message: Constants.ingredientUpdateError)
+        }
+    }
+
     func uploadIngredientImageForMyBar(_ image: Data) async throws -> [MyBarIngredientFromImage] {
         try await uploadMultipart(
             image: image,

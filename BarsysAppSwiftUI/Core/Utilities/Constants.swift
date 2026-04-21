@@ -145,6 +145,12 @@ enum Constants {
     static let pleaseEnterOTP = "Please enter the OTP."
 
     static let unableToConnectToServer = "Unable to connect to the server. Please try again."
+    // 1:1 with UIKit `Constants.swift` string used by
+    // `BarBotApiService.getFullRecipeApi` invalid-URL branch.
+    // Note: `noResponseFromServer` and `unableToProcessResponse` are
+    // already declared in the `Constants` extension at the bottom of
+    // `Core/Services/OryAPIClient.swift` — do NOT redeclare them here.
+    static let invalidUrlTitle = "Invalid URL."
     static let recipeLoadError = "Unable to load recipe details. Please try again."
     static let recipeSaveError = "Unable to save recipe. Please try again."
     static let recipeFavouriteError = "Unable to update favourite. Please try again."
@@ -332,6 +338,15 @@ enum ConstantButtonsTitle {
     // `MultipleIngredientsPopUp` (MyBar photo-upload flow).
     static let proceedButtonTitle = "Proceed"
     static let reUploadButtonTitle = "Reupload"
+}
+
+// MARK: - Pair-Device Prompt
+
+extension Constants {
+    /// 1:1 with UIKit `Constants.goToPairyourDeviceStr` (Constants.swift L294).
+    /// Shown in the confirmation popup that precedes navigation to the
+    /// Pair Your Device screen — same text, same casing as UIKit.
+    static let goToPairyourDeviceStr = "Go to pair device screen, to connect device."
 }
 
 // MARK: - VideoURLConstants

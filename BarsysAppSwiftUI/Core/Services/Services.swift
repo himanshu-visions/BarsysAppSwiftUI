@@ -88,6 +88,36 @@ protocol APIClient: AnyObject {
     /// Same endpoint as above; response is `[MyBarIngredientListResponseModel]`
     /// which adds `substitutes: [String]?`.
     func uploadIngredientImageForMyBar(_ image: Data) async throws -> [MyBarIngredientFromImage]
+
+    /// 1:1 port of UIKit `BarBotApiService.getFullRecipeApi(fullRecipeId:)`.
+    ///
+    /// Endpoint: GET `{recipesBaseURL}my/recipes/{fullRecipeId}`
+    ///
+    /// The server returns **HTTP 400-404** while an AI recipe is still
+    /// being generated — the UIKit layer interprets that status range as
+    /// a "wait" signal (see `BarBotApiService.swift` L194-196). The
+    /// SwiftUI port surfaces it as `FullRecipeError.wait` so the caller
+    /// can keep polling on a 5s interval, matching UIKit's `Task.sleep`
+    /// + recursive `checkApi()` pattern (`WaitingRecipePopUpViewController.swift`
+    /// L50-56).
+    ///
+    /// On success, ingredient quantities are floored to 5.0 ml (or the
+    /// `oz`-converted equivalent) matching UIKit L203-216.
+    func fetchFullRecipe(fullRecipeId: String) async throws -> Recipe
+}
+
+// MARK: - FullRecipeError
+//
+// 1:1 with UIKit `BarBotApiService.getFullRecipeApi` completion — the
+// UIKit call returns `completion(nil, "wait")` for status 400-404 (AI
+// recipe still generating). SwiftUI surfaces that as a typed throw so
+// the caller can distinguish from real network / decode failures.
+
+enum FullRecipeError: Error {
+    /// HTTP 400-404 — server says "still generating, retry in 5s".
+    case wait
+    /// Non-recoverable failure (decode / transport / session expiry).
+    case failed(message: String)
 }
 
 // MARK: - Ingredient-detection response models
@@ -228,6 +258,28 @@ final class MockAPIClient: APIClient {
                 substitutes: ["Gin", "Rum"]
             )
         ]
+    }
+
+    /// Mock returns a canned recipe after a ~1.5s delay. Does NOT throw
+    /// `.wait` — that's reserved for real backend polling.
+    func fetchFullRecipe(fullRecipeId: String) async throws -> Recipe {
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        return Recipe(
+            id: RecipeID(""),  // UIKit sets id = "" for BarBot AI recipes
+            name: "AI-Crafted Cocktail",
+            description: "A sample AI-generated cocktail for testing.",
+            ingredients: [
+                Ingredient(name: "Vodka",
+                           unit: Constants.mlText.lowercased(),
+                           category: IngredientCategory(primary: "base", secondary: "vodka"),
+                           quantity: 45),
+                Ingredient(name: "Lime Juice",
+                           unit: Constants.mlText.lowercased(),
+                           category: IngredientCategory(primary: "mixer", secondary: "citrus"),
+                           quantity: 15)
+            ],
+            instructions: ["Shake with ice.", "Strain into chilled glass.", "Garnish with lime."]
+        )
     }
 }
 
