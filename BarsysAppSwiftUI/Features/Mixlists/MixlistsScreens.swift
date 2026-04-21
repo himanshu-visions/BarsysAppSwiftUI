@@ -763,9 +763,13 @@ struct MixlistDetailView: View {
     private func craft(_ recipe: Recipe) {
         HapticService.light()
         guard ble.isAnyDeviceConnected else {
-            // UIKit `openPairYourDeviceWhenNotConnected()` — we route
-            // to the equivalent PairDeviceView.
-            router.push(.pairDevice)
+            // UIKit `openPairYourDeviceWhenNotConnected()` +
+            // `pendingConnectionSource = .recipeCrafting`: show the
+            // confirmation alert AND mark the flow so the BLE connect
+            // callback pops back to this screen instead of switching
+            // to Explore.
+            router.promptPairDevice(isConnected: ble.isAnyDeviceConnected,
+                                    source: .recipeCrafting)
             return
         }
         // For Barsys 360 we perform the station-match + perishable
@@ -893,7 +897,11 @@ struct MixlistDetailView: View {
         // device at all. UIKit uses the same guard in
         // `craft360RecipeForUpdatedQuantity` (L10-17).
         guard ble.isBarsys360Connected() else {
-            router.push(.pairDevice)
+            // 1:1 with UIKit `openPairYourDeviceWhenNotConnected()` +
+            // `.recipeCrafting` source — mixlist setup requires a
+            // Barsys 360 which is a crafting-flow prerequisite.
+            router.promptPairDevice(isConnected: ble.isAnyDeviceConnected,
+                                    source: .recipeCrafting)
             return
         }
 

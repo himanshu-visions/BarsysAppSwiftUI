@@ -235,6 +235,45 @@ final class AppRouter: ObservableObject {
     /// alert on `UIApplication.shared.topViewController()`.
     @Published var pendingRatingPopup: BarsysPopup? = nil
 
+    /// Global pair-device confirmation popup — 1:1 port of UIKit
+    /// `openPairYourDeviceWhenNotConnected()`
+    /// (UIViewController+Alerts.swift L143-163). UIKit routes every
+    /// "requires a connected device" action through this ONE helper so
+    /// the same confirmation alert shows up consistently. The SwiftUI
+    /// port centralises the popup state on the router so any screen can
+    /// trigger it via `router.promptPairDevice(in:)` and `MainTabView`
+    /// renders it once at the top level.
+    ///
+    /// Matches UIKit `showCustomAlertMultipleButtons`:
+    ///   • title              : Constants.goToPairyourDeviceStr
+    ///   • primaryTitle       : ConstantButtonsTitle.continueButtonTitle = "Continue"
+    ///                          (RIGHT, brand-gradient filled → navigates)
+    ///   • secondaryTitle     : ConstantButtonsTitle.noButtonTitle       = "No"
+    ///                          (LEFT, border only → dismisses silently)
+    ///   • primaryFillColor   : segmentSelectionColor
+    ///   • isCloseHidden      : true
+    @Published var pairDevicePrompt: BarsysPopup? = nil
+
+    /// Which tab's navigation stack should receive the pair-device push
+    /// when the user taps "Continue". Set by `promptPairDevice(in:)`,
+    /// consumed by the router's `onPrimary` closure when the alert is
+    /// confirmed.
+    @Published var pendingPairDeviceTab: AppTab? = nil
+
+    /// 1:1 port of UIKit `AppNavigationState.ConnectionSource`
+    /// (`AppNavigationState.swift` L10-13). Records WHY the user is on
+    /// the Pair Device screen — so the BLE connect callback can route
+    /// back to the right place:
+    ///
+    ///   • `.recipeCrafting` — set when the user taps Craft from a
+    ///     recipe/mixlist/edit/ready-to-pour screen. On connect, the
+    ///     app should POP the pair screen (return user to the craft
+    ///     source) instead of the default "switch to Explore" flow.
+    ///   • `.none` — default: on connect, switch to Explore tab and
+    ///     refresh all tabs (the UIKit post-pairing happy path).
+    enum ConnectionSource { case none, recipeCrafting }
+    @Published var pendingConnectionSource: ConnectionSource = .none
+
     // MARK: - Cross-screen signals (NotificationCenter replacements)
     //
     // UIKit uses `NotificationCenter.default.post(name:)` to coordinate
@@ -329,6 +368,64 @@ final class AppRouter: ObservableObject {
         case .myBar:               myBarPath.append(route)
         case .homeOrControlCenter: homePath.append(route)
         }
+    }
+
+    /// Shared "do you want to connect a device?" prompt — 1:1 with
+    /// UIKit `openPairYourDeviceWhenNotConnected()`
+    /// (UIViewController+Alerts.swift L143-163).
+    ///
+    /// Replaces raw `router.push(.pairDevice)` calls in screens that
+    /// need to gate pair-device navigation behind a confirmation
+    /// alert. Every UIKit screen uses the SAME helper (ReadyToPour,
+    /// MixlistDetail, EditMixlist, MakeMyOwn, Explore, BarBot cards,
+    /// Edit, Crafting). SwiftUI now mirrors that by centralising the
+    /// popup state here.
+    ///
+    /// Behaviour:
+    ///   • If ANY Barsys device is connected → does nothing (UIKit
+    ///     wraps `show…` in the same guard — no popup, no push).
+    ///   • If a popup is already up → does nothing.
+    ///   • Otherwise → sets `pairDevicePrompt` + records the target
+    ///     tab so the `onPrimary` closure knows which stack to push.
+    ///
+    /// - Parameters:
+    ///   - tab: which tab's navigation stack should receive the
+    ///     `.pairDevice` push on Continue. Defaults to `selectedTab`.
+    ///   - isConnected: callers pass `ble.isAnyDeviceConnected` so
+    ///     the router stays BLE-agnostic.
+    ///   - source: records WHY the user is about to pair. When set
+    ///     to `.recipeCrafting`, the post-connect handler will POP
+    ///     the pair screen (returning the user to the craft source)
+    ///     instead of switching to Explore. UIKit parity:
+    ///     `AppNavigationState.shared.pendingConnectionSource =
+    ///      .recipeCrafting` set by every craft-gated screen.
+    func promptPairDevice(in tab: AppTab? = nil,
+                          isConnected: Bool = false,
+                          source: ConnectionSource = .none) {
+        // Parity with UIKit guard:
+        //   `if !isBarsys360Connected && !isCoaster && !isShaker { ... }`
+        guard !isConnected else { return }
+        guard pairDevicePrompt == nil else { return }
+        pendingPairDeviceTab = tab ?? selectedTab
+        pendingConnectionSource = source
+        pairDevicePrompt = .confirm(
+            title: Constants.goToPairyourDeviceStr,
+            message: nil,
+            primaryTitle: ConstantButtonsTitle.continueButtonTitle,
+            secondaryTitle: ConstantButtonsTitle.noButtonTitle,
+            primaryFillColor: "segmentSelectionColor",
+            isCloseHidden: true
+        )
+    }
+
+    /// Fires when the user taps the RIGHT/CONTINUE button on the
+    /// pair-device prompt. Pushes `.pairDevice` on the tab captured
+    /// at prompt time. `pendingConnectionSource` stays set so the
+    /// BLE connect callback can route back correctly.
+    func confirmPairDevice() {
+        let tab = pendingPairDeviceTab ?? selectedTab
+        pendingPairDeviceTab = nil
+        push(.pairDevice, in: tab)
     }
 
     func popToRoot(in tab: AppTab? = nil) {

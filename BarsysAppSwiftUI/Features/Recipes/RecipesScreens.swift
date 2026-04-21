@@ -1321,7 +1321,11 @@ struct RecipeDetailView: View {
 
     private func craft(_ recipe: Recipe) {
         guard ble.isAnyDeviceConnected else {
-            router.push(.pairDevice)
+            // UIKit `RecipePageViewController+Actions.swift` L61 —
+            // sets `pendingConnectionSource = .recipeCrafting` so
+            // the connect callback pops back to the recipe page.
+            router.promptPairDevice(isConnected: ble.isAnyDeviceConnected,
+                                    source: .recipeCrafting)
             return
         }
         router.push(.crafting(recipe.id))
@@ -2896,7 +2900,14 @@ struct EditRecipeView: View {
             || ble.isCoasterConnected()
             || ble.isBarsysShakerConnected()
         guard deviceConnected else {
-            router.push(.pairDevice)
+            // UIKit `EditViewController.swift` L345 — sets
+            // `pendingConnectionSource = .recipeCrafting` so the BLE
+            // connect callback pops back to the edit source (not
+            // Explore). Dismiss the edit sheet FIRST so the pair push
+            // lands on the underlying nav stack, then trigger the
+            // alert on the router.
+            router.promptPairDevice(isConnected: deviceConnected,
+                                    source: .recipeCrafting)
             dismiss()
             return
         }

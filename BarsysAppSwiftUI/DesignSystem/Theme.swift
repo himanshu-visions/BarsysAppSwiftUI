@@ -961,7 +961,11 @@ private struct BarsysPopupCard: View {
     let onSecondary: () -> Void
     let onPickIngredient: (String) -> Void
 
-    private let cardWidth: CGFloat = 320
+    // 1:1 with UIKit `AlertPopUpHorizontalStackController` storyboard
+    // (AlertPopUp.storyboard). Card width = 277pt (49pt L/R margin on a
+    // 375pt canvas). Previously 320pt — that was 43pt wider than UIKit
+    // and broke centre alignment on all popups.
+    private let cardWidth: CGFloat = 277
 
     var body: some View {
         VStack(spacing: 16) {
@@ -1068,12 +1072,15 @@ private struct BarsysPopupCard: View {
 
     /// UIKit alertPopUpBackgroundStyle (UIViewClass+GradientStyles.swift):
     ///   iOS 26+: addGlassEffect(cornerRadius: BarsysCornerRadius.medium=12)
-    ///   Pre-26: UIColor.white.withAlphaComponent(0.95), cornerRadius=12
+    ///            → real UIGlassEffect(.regular) → use
+    ///            `BarsysGlassPanelBackground` for parity with side
+    ///            menu / edit panel / device popups.
+    ///   Pre-26 : UIColor.white.withAlphaComponent(0.95), cornerRadius=12
     @ViewBuilder
     private var popupCardBackground: some View {
         if #available(iOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.regularMaterial)
+            BarsysGlassPanelBackground()
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(SwiftUI.Color.white.opacity(0.95))
@@ -1112,6 +1119,16 @@ private struct BarsysPopupCard: View {
 
     /// RIGHT button in UIKit (cancelButton) — filled with custom color.
     /// Used for "Yes please!" with segmentSelectionColor fill.
+    ///
+    /// Shape decision (critical parity fix):
+    ///   iOS 26+ → CAPSULE. UIKit `alertPopUpButtonBackgroundStyle`
+    ///             at L32-35 calls `applyCapsuleGradientStyle()` and
+    ///             `addGlassEffect(cornerRadius: height/2)` — BOTH
+    ///             override the storyboard `roundCorners = 8` with
+    ///             `bounds.height / 2`. Buttons are 45pt tall, so the
+    ///             runtime corner is 22.5pt — a proper capsule.
+    ///   Pre-26  → 8pt rounded rect (UIKit `btnCancel.roundCorners =
+    ///             BarsysCornerRadius.small` sticks).
     private func alertPrimaryFilledButton(_ title: String, fillColor: String, action: @escaping () -> Void) -> some View {
         Button { HapticService.light(); action() } label: {
             Text(title)
@@ -1120,59 +1137,88 @@ private struct BarsysPopupCard: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
                 .background(alertFilledButtonBackground(fillColor))
-                .clipShape(Capsule())
+                .clipShape(alertButtonShape)
         }
         .buttonStyle(BounceButtonStyle())
     }
 
-    /// Filled button background — 1:1 port of UIKit alertPopUpButtonBackgroundStyle(fillColor:)
-    /// iOS 26: applyCapsuleGradientStyle() + bg@0.2 alpha + addGlassEffect(effect: "clear")
-    /// Pre-26: solid fillColor fill
+    /// Shape for alert buttons — iOS 26+ capsule, pre-26 8pt rect.
+    /// See UIKit `alertPopUpButtonBackgroundStyle` + `applyCapsuleGradientStyle`
+    /// (UIViewClass+GradientStyles.swift L24-90).
+    private var alertButtonShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    /// Filled button background — 1:1 port of UIKit
+    /// `alertPopUpButtonBackgroundStyle(fillColor:)`
+    /// (UIViewClass+GradientStyles.swift L24-48).
+    ///
+    /// iOS 26 (3-layer recipe identical to `PrimaryOrangeButton.makeOrangeStyle()`):
+    ///   1. `applyCapsuleGradientStyle()` — CAGradientLayer
+    ///      vertical `brandGradientTop → brandGradientBottom`
+    ///      (startPoint 0.5, 0.0 → endPoint 0.5, 1.0), capsule corner.
+    ///   2. `self.backgroundColor.withAlphaComponent(0.2)` — dim the
+    ///      fillColor to 20 % alpha over the gradient.
+    ///   3. `addGlassEffect(cornerRadius: height/2, effect: "clear")` —
+    ///      `UIGlassEffect(style: .clear)` glass pass on top.
+    ///
+    /// Pre-26: solid fillColor fill (UIKit L45:
+    /// `layer.backgroundColor = fillColor.withAlphaComponent(1.0).cgColor`).
     @ViewBuilder
     private func alertFilledButtonBackground(_ colorName: String) -> some View {
         if #available(iOS 26.0, *) {
-            // UIKit: gradient + alpha 0.2 bg + clear glass overlay
             ZStack {
-                Capsule().fill(
+                // Layer 1 — vertical brand gradient capsule
+                //   (UIKit `applyCapsuleGradientStyle()` L63-90).
+                Capsule(style: .continuous).fill(
                     LinearGradient(
                         colors: [
                             SwiftUI.Color("brandGradientTop"),
                             SwiftUI.Color("brandGradientBottom")
                         ],
-                        startPoint: .top, endPoint: .bottom
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
                 )
-                Capsule().fill(SwiftUI.Color(colorName).opacity(0.2))
-                Capsule().fill(.ultraThinMaterial)
+                // Layer 2 — fillColor at 20% alpha over the gradient.
+                Capsule(style: .continuous)
+                    .fill(SwiftUI.Color(colorName).opacity(0.2))
+                // Layer 3 — `addGlassEffect(effect: "clear")` ≈ SwiftUI
+                // `ultraThinMaterial` for the clear-glass sheen.
+                Capsule(style: .continuous)
+                    .fill(.ultraThinMaterial)
             }
         } else {
-            Capsule().fill(SwiftUI.Color(colorName))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(SwiftUI.Color(colorName))
         }
     }
 
-    /// RIGHT button default — used when no custom fill color provided.
-    /// iOS 26: applyCancelCapsuleGradientBorderStyle (glass with tint)
-    /// Pre-26: no fill, border only
+    /// RIGHT button when no custom fill color — rare path; same
+    /// styling as the LEFT secondary button (UIKit treats both via
+    /// `alertPopUpButtonBackgroundStyle(fillColor: nil)`).
     private func alertPrimaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button { HapticService.light(); action() } label: {
-            Text(title)
-                .font(.system(size: 12))
-                .foregroundStyle(SwiftUI.Color.black)
-                .frame(maxWidth: .infinity)
-                .frame(height: 45)
-                .background(alertSecondaryButtonBackground)
-                .overlay(
-                    Capsule().stroke(SwiftUI.Color("craftButtonBorderColor"), lineWidth: 1)
-                )
-                .clipShape(Capsule())
-        }
-        .buttonStyle(BounceButtonStyle())
+        alertBorderedButton(title, action: action)
     }
 
     /// LEFT button (continueButton in UIKit) — border only, no fill.
-    /// iOS 26: applyCancelCapsuleGradientBorderStyle() (glass frosted)
-    /// Pre-26: makeBorder(1, craftButtonBorderColor) on white bg
+    ///
+    /// 1:1 port of UIKit `applyCancelCapsuleGradientBorderStyle()`
+    /// (UIViewClass+GradientStyles.swift L92-110) on iOS 26+ and the
+    /// `makeBorder(1, craftButtonBorderColor)` fallback pre-26.
+    ///
+    /// Shape: CAPSULE on iOS 26+ (UIKit `alertPopUpButtonBackgroundStyle`
+    /// L38-40 sets `roundCorners = height/2` when fillColor is nil);
+    /// 8pt rounded rect pre-26.
     private func alertSecondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        alertBorderedButton(title, action: action)
+    }
+
+    private func alertBorderedButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button { HapticService.light(); action() } label: {
             Text(title)
                 .font(.system(size: 12))
@@ -1180,23 +1226,65 @@ private struct BarsysPopupCard: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
                 .background(alertSecondaryButtonBackground)
-                .overlay(
-                    Capsule().stroke(SwiftUI.Color("craftButtonBorderColor"), lineWidth: 1)
-                )
-                .clipShape(Capsule())
+                .overlay(alertSecondaryButtonBorder)
+                .clipShape(alertButtonShape)
         }
         .buttonStyle(BounceButtonStyle())
     }
 
-    /// Secondary/default button background
-    /// iOS 26: ultraThinMaterial glass (effect: "clear")
-    /// Pre-26: white solid
+    /// Secondary/default button background.
+    ///
+    /// iOS 26 — UIKit `alertPopUpButtonBackgroundStyle(fillColor: nil)`
+    /// at L37-40 calls `addGlassEffect(effect: "clear")` then
+    /// `backgroundColor = .clear`. Effectively: CLEAR glass (no tint).
+    /// We layer a subtle `cancelButtonGray @ 0.15` overlay that
+    /// `applyCancelCapsuleGradientBorderStyle()` also applies via
+    /// `addGlassEffect(tintColor: cancelButtonGray)` (L109) — without
+    /// it the capsule reads too transparent on a pale backdrop.
+    ///
+    /// Pre-26 — solid white (UIKit fallback fill before the `makeBorder`
+    /// stroke is applied).
     @ViewBuilder
     private var alertSecondaryButtonBackground: some View {
         if #available(iOS 26.0, *) {
-            Capsule().fill(.ultraThinMaterial)
+            ZStack {
+                Capsule(style: .continuous).fill(.ultraThinMaterial)
+                Capsule(style: .continuous)
+                    .fill(Theme.Color.cancelButtonGray.opacity(0.15))
+            }
         } else {
-            Capsule().fill(SwiftUI.Color.white)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(SwiftUI.Color.white)
+        }
+    }
+
+    /// Secondary button border — on iOS 26+ UIKit uses the 6-stop
+    /// `white@0.95 ↔ cancelBorderGray@0.9` gradient stroke from
+    /// `applyCancelCapsuleGradientBorderStyle` (UIViewClass+GradientStyles.swift
+    /// L92-110). Pre-26 falls back to a flat `craftButtonBorderColor`
+    /// 1pt stroke (`makeBorder`).
+    @ViewBuilder
+    private var alertSecondaryButtonBorder: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0.95),                      location: 0.00),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9), location: 0.20),
+                            .init(color: .white.opacity(0.95),                      location: 0.40),
+                            .init(color: .white.opacity(0.95),                      location: 0.60),
+                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9), location: 0.80),
+                            .init(color: .white.opacity(0.95),                      location: 1.00)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(SwiftUI.Color("craftButtonBorderColor"), lineWidth: 1)
         }
     }
 

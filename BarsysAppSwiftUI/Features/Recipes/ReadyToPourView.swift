@@ -44,6 +44,12 @@ struct ReadyToPourView: View {
     @State private var selectedMixlist: Mixlist? = nil
     @State private var didLoad = false
 
+    /// 1:1 with UIKit `ReadyToPourListViewController+Search.swift`
+    /// `getMixlists` (L67-85). When the Mixlists tab is loaded and
+    /// the array is empty, a modal alert prompts the user to tap
+    /// "Explore" (→ push MixlistViewController) or "Dismiss".
+    @State private var noMixlistsPopup: BarsysPopup? = nil
+
     // Toolbar device helpers
     private var deviceIconName: String {
         if ble.isBarsys360Connected() { return "icon_barsys_360" }
@@ -120,6 +126,42 @@ struct ReadyToPourView: View {
             didLoad = true
             loadData()
         }
+        // 1:1 with UIKit `ReadyToPourListViewController+Search.swift`
+        // `getMixlists` (L67-85). When the Mixlists tab loads an empty
+        // list, surface the "No mixlists available — Tap Explore"
+        // alert; Continue routes to the Explore Mixlists screen,
+        // Dismiss closes silently.
+        .barsysPopup($noMixlistsPopup, onPrimary: {
+            // Primary (RIGHT, "Explore") — push MixlistView under the
+            // current tab, matching UIKit's `navigationController?.push
+            // (MixlistViewController)`.
+            router.push(.exploreRecipes)
+        }, onSecondary: {
+            // Secondary (LEFT, "Dismiss") — no-op.
+        })
+        .onChange(of: selectedTab) { newTab in
+            triggerNoMixlistsAlertIfNeeded(tab: newTab)
+        }
+    }
+
+    /// Shows the UIKit "No mixlists available" alert when the user
+    /// selects the Mixlists tab and the fetched list is empty. Guarded
+    /// against re-showing if the alert is already up and against
+    /// showing inside a selected-mixlist drill-down.
+    private func triggerNoMixlistsAlertIfNeeded(tab: ReadyToPourTab) {
+        guard tab == .mixlists else { return }
+        guard selectedMixlist == nil else { return }
+        guard didLoad else { return }
+        guard mixlists.isEmpty else { return }
+        guard noMixlistsPopup == nil else { return }
+        noMixlistsPopup = .confirm(
+            title: Constants.noMixlistsTapExploreMessage,
+            message: nil,
+            primaryTitle: ConstantButtonsTitle.exploreButtonTitle,
+            secondaryTitle: ConstantButtonsTitle.dismissButtonTitle,
+            primaryFillColor: "segmentSelectionColor",
+            isCloseHidden: true
+        )
     }
 
     // MARK: - Recipes list (MixlistDetailTableViewCell layout)
@@ -298,7 +340,12 @@ struct ReadyToPourView: View {
     private func craftRecipe(_ recipe: Recipe) {
         HapticService.light()
         guard ble.isAnyDeviceConnected else {
-            router.push(.pairDevice)
+            // UIKit `ReadyToPourListViewController+Actions.swift` L92/L116 —
+            // sets `pendingConnectionSource = .recipeCrafting` before
+            // pushing PairYourDevice so the connect callback returns
+            // to Ready to Pour (not Explore).
+            router.promptPairDevice(isConnected: ble.isAnyDeviceConnected,
+                                    source: .recipeCrafting)
             return
         }
         router.push(.crafting(recipe.id))
@@ -349,8 +396,23 @@ struct ReadyToPourRecipeRow: View {
 
                 Spacer(minLength: 0)
 
-                // Craft button — UIKit: 301×29, system 10pt, 8pt corners,
-                // craftButtonBorderColor 1pt border
+                // Craft button — 1:1 with UIKit recipe row craft button.
+                //
+                //   Pre-iOS 26 (ReadyToPourListViewController+TableView L35-38):
+                //     backgroundColor = white
+                //     roundCorners = BarsysCornerRadius.small (8pt)
+                //     border 1pt craftButtonBorderColor
+                //     font system 10pt semibold, black title
+                //
+                //   iOS 26+ (same file L54-57):
+                //     `cell.craftButton.makeOrangeStyle()` — capsule
+                //     (height/2) + brand gradient (brandGradientTop →
+                //     brandGradientBottom), no border.
+                //
+                // Previously the SwiftUI row rendered the pre-26 white
+                // style on all iOS versions — this broke the visual
+                // rhythm on iOS 26 devices where the rest of the app
+                // switches to gradient-capsule primary buttons.
                 Button {
                     onCraft()
                 } label: {
@@ -359,13 +421,9 @@ struct ReadyToPourRecipeRow: View {
                         .foregroundStyle(Color("appBlackColor"))
                         .frame(maxWidth: .infinity)
                         .frame(height: 29)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8).fill(Color.white)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
-                        )
+                        .background(craftButtonBackground)
+                        .overlay(craftButtonBorder)
+                        .clipShape(craftButtonShape)
                 }
                 .buttonStyle(BounceButtonStyle())
                 .padding(.bottom, 12)
@@ -428,6 +486,45 @@ struct ReadyToPourRecipeRow: View {
             return Color.black.opacity(0.3)
         } else {
             return Color.white
+        }
+    }
+
+    // 1:1 with UIKit `PrimaryOrangeButton.makeOrangeStyle()` applied at
+    // runtime (ReadyToPourListViewController+TableView L54-57 gates on
+    // `#available(iOS 26.0, *)`).
+
+    @ViewBuilder
+    private var craftButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            LinearGradient(
+                colors: [Color("brandGradientTop"),
+                         Color("brandGradientBottom")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        } else {
+            Color.white
+        }
+    }
+
+    @ViewBuilder
+    private var craftButtonBorder: some View {
+        if #available(iOS 26.0, *) {
+            // UIKit `makeOrangeStyle()` has no explicit border — the
+            // glass-highlight gradient on the capsule provides edge
+            // definition by itself.
+            EmptyView()
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
+        }
+    }
+
+    private var craftButtonShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 }

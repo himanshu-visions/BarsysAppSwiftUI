@@ -172,6 +172,18 @@ struct MainTabView: View {
         }, onSecondary: {
             // "No, stay in the app" → dismiss
         })
+        // Global pair-device confirmation popup — 1:1 port of UIKit
+        // `openPairYourDeviceWhenNotConnected()`. Any screen can trigger
+        // via `router.promptPairDevice(in: .<tab>, isConnected: ble.isAny…)`;
+        // the popup renders at the top level here so it survives tab
+        // switches and sits above all tab content.
+        .barsysPopup($router.pairDevicePrompt, onPrimary: {
+            // UIKit cancelButton (RIGHT, "Continue" with brand fill)
+            // → navigate to Pair Device.
+            router.confirmPairDevice()
+        }, onSecondary: {
+            // UIKit continueButton (LEFT, "No") → dismiss silently.
+        })
     }
 
     // MARK: - Tab labels
@@ -351,30 +363,55 @@ struct MainTabView: View {
         ble.onDeviceConnected = { [weak router, weak env] deviceName in
             guard let router, let env else { return }
 
-            // Switch to Explore tab FIRST — synchronously, before any other state
-            // change. This mirrors the UIKit order in
-            // BleManagerDelegate+Connect.swift L177-182:
+            // 1:1 with UIKit `BleManagerDelegate+Connect.swift` L155-185 —
+            // branches based on `AppNavigationState.pendingConnectionSource`:
             //
-            //     tab.selectedIndex = TabBarViewController.Tab.explore.rawValue   // sync
-            //     tab.updateTabImageAccordingToConnection()
-            //     DispatchQueue.main.async {
-            //         tab.replaceTabsAfterConnections(tab: tab)                    // async
-            //     }
+            //   • `.recipeCrafting` → POP the pair screen (user returns
+            //       to the craft source), update tabs, clear flag. NO
+            //       tab switch.
+            //   • `.none` → default: switch to Explore tab, pop all
+            //       stacks, show toast.
             //
-            // If we let `isAnyDeviceConnected` flip first, SwiftUI reactively
-            // swaps HomeView → ControlCenterView on the currently-selected
-            // `.homeOrControlCenter` tab, and the user sees ControlCenter flash
-            // before the tab switch happens. Selecting Explore first ensures
-            // that reactive swap occurs on an off-screen tab.
-            router.selectedTab = .explore
+            // The SwiftUI equivalent lives on `AppRouter.pendingConnectionSource`,
+            // set when `promptPairDevice(source: .recipeCrafting)` is
+            // invoked from a craft-gated screen (Ready to Pour, Recipe
+            // page, Mixlist detail, Edit recipe, Edit mixlist, Explore
+            // row tap, BarBot card).
 
-            // Toast: "{name} is Connected." (UIKit: 6s, segmentSelectionColor)
-            env.toast.show("\(deviceName) is Connected.", color: Color("segmentSelectionColor"), duration: 6)
-            // Haptic success (UIKit: HapticService.shared.success())
-            HapticService.success()
-            // Pop all navigation stacks so root views are showing
-            router.homePath.removeLast(router.homePath.count)
-            router.explorePath.removeLast(router.explorePath.count)
+            let source = router.pendingConnectionSource
+            let originTab = router.pendingPairDeviceTab ?? router.selectedTab
+            router.pendingConnectionSource = .none
+            router.pendingPairDeviceTab = nil
+
+            switch source {
+            case .recipeCrafting:
+                // UIKit L161-165 — pop pair screen on the origin tab so
+                // the user lands back on the craft source. No tab switch,
+                // no stack reset.
+                router.popTop(in: originTab)
+
+                // Toast + haptic still fire (UIKit does these before the
+                // pop/branch above).
+                env.toast.show("\(deviceName) is Connected.",
+                               color: Color("segmentSelectionColor"),
+                               duration: 6)
+                HapticService.success()
+
+            case .none:
+                // UIKit L177-182 — default post-connect path: switch to
+                // Explore, pop all stacks, refresh. Order matters — select
+                // Explore FIRST so the reactive Home → ControlCenter swap
+                // happens on an off-screen tab.
+                router.selectedTab = .explore
+
+                env.toast.show("\(deviceName) is Connected.",
+                               color: Color("segmentSelectionColor"),
+                               duration: 6)
+                HapticService.success()
+
+                router.homePath.removeLast(router.homePath.count)
+                router.explorePath.removeLast(router.explorePath.count)
+            }
 
             // Post-connection data refresh — ports BleManagerDelegate+Connect.swift:
             //   MixlistsUpdateClass().updateMixlists(trigger: .connection)

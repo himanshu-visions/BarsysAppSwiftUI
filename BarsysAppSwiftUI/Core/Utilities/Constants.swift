@@ -341,6 +341,21 @@ enum ConstantButtonsTitle {
     // `MultipleIngredientsPopUp` (MyBar photo-upload flow).
     static let proceedButtonTitle = "Proceed"
     static let reUploadButtonTitle = "Reupload"
+    // 1:1 with UIKit `Constants+UI.swift` L41 — used by the
+    // "No mixlists available" alert in ReadyToPour.
+    static let exploreButtonTitle = "Explore"
+}
+
+// MARK: - ReadyToPour empty-mixlists alert
+
+extension Constants {
+    /// 1:1 with UIKit `ReadyToPourListViewController+Search.swift` L72
+    /// — title string of the alert shown when the Mixlists tab is
+    /// empty. Offers an "Explore" CTA to navigate to MixlistViewController.
+    /// The UIKit literal omits a space after the period; preserved
+    /// verbatim for matching accessibility strings.
+    static let noMixlistsTapExploreMessage =
+        "No mixlists available.Tap Explore to find one you want to craft."
 }
 
 // MARK: - Pair-Device Prompt

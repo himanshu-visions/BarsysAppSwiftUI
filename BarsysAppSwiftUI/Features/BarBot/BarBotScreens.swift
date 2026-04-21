@@ -1348,30 +1348,59 @@ struct ChatMessageRow: View {
         }
     }
 
-    // Loading row — ports `loadingAnswerView`:
-    //   • GIF 35×35 playing iOS.gif
-    //   • "Barbot is thinking" label (12pt, grayBorderColor)
-    //   • Cancel button 32×32 top-right (tag 786 in UIKit → here tag by id).
+    // Loading row — 1:1 port of `MainBarBotCell.xib` `yJc-xI-iGw`
+    // ("When loading answer this view"), lines 101-140 of the xib.
+    //
+    // Exact UIKit layout:
+    //   • Container view 320×45 (frame x=0, y=56).
+    //   • Animated GIF `YcI-oG-jhY` (newLoaderImage, SDAnimatedImageView):
+    //       35×35 at (0, 5). `scaleAspectFit`. Top=5pt from container,
+    //       leading=0pt.
+    //   • Label `5W7-jH-7YY` "Barbot is thinking":
+    //       system 12pt, textColor `grayBorderColor`. Positioned at
+    //       leading = GIF.trailing + 7pt, centerY = GIF.centerY.
+    //   • Button `W4Y-Eo-p89` (outlet name `cancelButton`):
+    //       **title = "Cancel" (TEXT, NOT an X icon)**, font system 12pt,
+    //       titleColor `veryDarkGrayColor`, width = 70pt, height = 45pt,
+    //       leading = label.trailing + 10pt. No border, no background,
+    //       no icon.
+    //
+    // Prior port used `Image(systemName: "xmark.circle.fill")` which
+    // was wrong — UIKit's Cancel button has a TEXT LABEL, not an icon.
+    // Switched to a plain "Cancel" Text at the exact UIKit font / color
+    // / size.
     private var loading: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 0) {
+            // GIF spinner — 35×35, scaleAspectFit.
             AnimatedGIFView(assetName: "barbotThinking")
                 .frame(width: 35, height: 35)
+
+            // "Barbot is thinking" label — leading = GIF.trailing + 7pt
+            // (xib constraint `HIJ-Fe-el4`). System 12pt, grayBorderColor.
             Text("Barbot is thinking")
-                .font(Theme.Font.of(.caption1))
+                .font(.system(size: 12))
                 .foregroundStyle(Color("grayBorderColor"))
+                .padding(.leading, 7)
+
             Spacer()
+
+            // Cancel button — UIKit `cancelButton` outlet. Text "Cancel",
+            // system 12pt, `veryDarkGrayColor`, 70×45 frame, leading =
+            // label.trailing + 10pt (constraint `pe7-ce-sED`). No border,
+            // no background — a plain text tap target.
             Button {
                 HapticService.light()
                 vm.cancel(messageID: msg.id)
             } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .foregroundStyle(Theme.Color.textSecondary)
+                Text(ConstantButtonsTitle.cancelButtonTitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color("veryDarkGrayColor"))
+                    .frame(width: 70, height: 45)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(BounceButtonStyle())
+            .buttonStyle(.plain)
             .accessibilityLabel("Cancel")
-            .frame(width: 32, height: 32)
+            .padding(.leading, 10)
         }
         .frame(minHeight: 45)
     }
@@ -1805,20 +1834,11 @@ struct BarBotCraftView: View {
     /// `RecipePageViewController.recipe`; SwiftUI's route is
     /// id-based, so we upsert first and route by ID.
     @State private var fetchedFullRecipe: Recipe? = nil
-    //
-    // 1:1 with UIKit `openPairYourDeviceWhenNotConnected()`
-    // (UIViewController+Alerts.swift L143-163). When the user taps an
-    // action that needs a connected device (Craft, station cleaning,
-    // setup stations, etc.) and NO device is connected, UIKit shows a
-    // confirmation alert FIRST:
-    //    title: Constants.goToPairyourDeviceStr
-    //    cancelButtonTitle: "Continue"  (→ opens Pair Device)
-    //    continueButtonTitle: "No"      (→ cancels)
-    //    cancelButtonColor: .segmentSelectionColor
-    //    isCloseButtonHidden: true
-    // SwiftUI routes through the shared `BarsysPopup.confirm` recipe so
-    // the styling matches every other multi-button alert in the app.
-    @State private var pairDevicePrompt: BarsysPopup?
+    // Pair-Device confirmation popup state lives on `AppRouter`
+    // (`router.pairDevicePrompt`) and is rendered ONCE at the
+    // `MainTabView` level so every screen that needs the "do you want
+    // to connect?" alert goes through the same styled popup. See
+    // `AppRouter.promptPairDevice(in:isConnected:)`.
 
     private var isConnected: Bool { ble.isAnyDeviceConnected }
     private var deviceIconName: String {
@@ -1937,14 +1957,12 @@ struct BarBotCraftView: View {
             }
             .background(ClearBackgroundView())
         }
-        // Pair-Device confirmation popup — 1:1 with UIKit
-        // `openPairYourDeviceWhenNotConnected()`. Tap "Continue" →
-        // push `.pairDevice`; tap "No" → dismiss silently.
-        .barsysPopup($pairDevicePrompt, onPrimary: {
-            router.push(.pairDevice, in: .barBot)
-        }, onSecondary: {
-            // UIKit secondary (continueButtonTitle = "No") is no-op.
-        })
+        // Pair-Device confirmation popup is now rendered at the
+        // MainTabView level via `router.pairDevicePrompt`. Any BarBot
+        // screen that needs the alert calls
+        // `router.promptPairDevice(in: .barBot, isConnected: ble.isAnyDeviceConnected)`
+        // and on Continue the router pushes `.pairDevice` onto the
+        // BarBot tab stack.
         // Waiting-recipe popup — 1:1 with UIKit
         // `WaitingRecipePopUpViewController`. Polls
         // `env.api.fetchFullRecipe(fullRecipeId:)` every 5 seconds
@@ -2245,11 +2263,15 @@ struct BarBotCraftView: View {
     private func startCraft(_ recipe: BarBotRecipeElement) {
         guard viewModel.canProcessNewRequest else { return }
         if !ble.isAnyDeviceConnected {
-            // 1:1 with UIKit `openPairYourDeviceWhenNotConnected()`:
+            // 1:1 with UIKit `openPairYourDeviceWhenNotConnected()` +
+            // `AppNavigationState.pendingConnectionSource = .recipeCrafting`:
             // show the confirmation popup BEFORE navigating to Pair
-            // Device. Only on "Continue" does the user proceed to the
-            // pair screen; "No" dismisses silently.
-            promptPairDevice()
+            // Device, and mark the flow as recipe-crafting so the
+            // BLE connect callback pops back to BarBot instead of
+            // switching to Explore.
+            router.promptPairDevice(in: .barBot,
+                                    isConnected: ble.isAnyDeviceConnected,
+                                    source: .recipeCrafting)
             return
         }
         // Present BarBotCraftingView as a full-screen cover over the
@@ -2271,31 +2293,13 @@ struct BarBotCraftView: View {
     }
 
     /// 1:1 with UIKit `openPairYourDeviceWhenNotConnected()`
-    /// (UIViewController+Alerts.swift L143-163).
-    ///
-    /// Guard rails (UIKit L147):
-    ///   • Only show when NO Barsys device is connected
-    ///     (`!isBarsys360Connected && !isCoasterConnected && !isBarsysShakerConnected`).
-    ///   • Bail out early if the popup is already on screen (UIKit L144
-    ///     — `if topVC is AlertPopUpHorizontalStackController { return }`).
-    ///
-    /// Popup shape matches UIKit `showCustomAlertMultipleButtons`:
-    ///   title              : Constants.goToPairyourDeviceStr
-    ///   primary (LEFT)     : ConstantButtonsTitle.continueButtonTitle = "Continue"
-    ///   secondary (RIGHT)  : ConstantButtonsTitle.noButtonTitle       = "No"
-    ///   primaryFillColor   : segmentSelectionColor (brand capsule)
-    ///   isCloseHidden      : true
+    /// (UIViewController+Alerts.swift L143-163). Delegates to the
+    /// shared `AppRouter.promptPairDevice(in:isConnected:)` so every
+    /// pair-device alert in the app looks identical and is wired to
+    /// the single popup overlay in `MainTabView`.
     private func promptPairDevice() {
-        guard !ble.isAnyDeviceConnected else { return }
-        guard pairDevicePrompt == nil else { return }
-        pairDevicePrompt = .confirm(
-            title: Constants.goToPairyourDeviceStr,
-            message: nil,
-            primaryTitle: ConstantButtonsTitle.continueButtonTitle,
-            secondaryTitle: ConstantButtonsTitle.noButtonTitle,
-            primaryFillColor: "segmentSelectionColor",
-            isCloseHidden: true
-        )
+        router.promptPairDevice(in: .barBot,
+                                isConnected: ble.isAnyDeviceConnected)
     }
 
     /// 1:1 with UIKit `MainBarBotCell+CollectionView.swift`
