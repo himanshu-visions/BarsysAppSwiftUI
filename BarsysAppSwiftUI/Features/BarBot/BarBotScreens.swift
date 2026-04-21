@@ -876,13 +876,13 @@ struct WelcomeOccasionSection: View {
     private let gridSpacing: CGFloat = 6
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 0) {
             // Welcome — UIKit `questionLabel` (storyboard `NiT-e7-6fk`):
             //   boldSystem 24pt, textColor `mediumLightGrayColor`,
             //   ALPHA 0.51 on the label itself (xib attribute
-            //   `alpha="0.51000000000000001"`). Previous port dropped
-            //   the alpha so the text rendered too dark vs UIKit.
-            // Multi-line (numberOfLines=0, wraps freely).
+            //   `alpha="0.51000000000000001"`). Multi-line, wraps freely
+            //   (numberOfLines=0).
+            //   Top constraint `8ik-d4-9fw`: top = contentView.top + 12.
             Text(vm.welcomeMessage)
                 .font(.system(size: 24, weight: .bold))
                 .foregroundStyle(Color("mediumLightGrayColor").opacity(0.51))
@@ -891,11 +891,33 @@ struct WelcomeOccasionSection: View {
                 .padding(.top, 12)
                 .accessibilityAddTraits(.isHeader)
 
-            // Options block — label "Let's get crafting" + 2×2 grid.
-            // UIKit layout uses an internal VStack spacing of 20pt
-            // (Txz-p7-YgZ: WNl-Dc-66p.top = fvf-TL-f9A.bottom + 20).
+            // ---- Flex gap between welcome and options block ----
+            //
+            // UIKit xib constraints (`IPr-Ix-mPV` + `Nlt-dI-t1j`):
+            //   TYS-bd-tKf.top >= NiT-e7-6fk.bottom  (flex, no constant)
+            //   contentView.bottom = TYS-bd-tKf.bottom + 16
+            //
+            // The options view is PINNED TO THE BOTTOM of the cell with
+            // a 16pt inset, and its top floats on top of a flexible
+            // greater-than-or-equal constraint. On the xib design canvas
+            // (392pt cell) that resolves to a ~186pt gap between welcome
+            // and "Let's get crafting" — which is the generous breathing
+            // space the UIKit build ships.
+            //
+            // The prior port used `VStack(spacing: 20)` which collapsed
+            // the whole cell to welcome + 20pt + "Let's get crafting" —
+            // far tighter than UIKit. We now add an explicit ~70pt
+            // spacer below the welcome message so the options block
+            // sits noticeably lower, matching the visual rhythm of the
+            // UIKit xib while still letting the cell remain
+            // content-sized in a SwiftUI `LazyVStack`.
+            Color.clear.frame(height: 70)
+
+            // Options block — "Let's get crafting" label + 2×2 grid.
+            // UIKit internal spacing `Txz-p7-YgZ`: WNl-Dc-66p.top =
+            // fvf-TL-f9A.bottom + 20.
             VStack(alignment: .leading, spacing: 20) {
-                Text("Let\u{2019}s get crafting") // curly apostrophe to match UIKit xib
+                Text("Let\u{2019}s get crafting") // curly apostrophe matches UIKit xib
                     .font(.system(size: 18))
                     .foregroundStyle(Color("charcoalTextColor50Alpha"))
                     .accessibilityAddTraits(.isHeader)
@@ -906,6 +928,8 @@ struct WelcomeOccasionSection: View {
                     grid
                 }
             }
+            // UIKit bottom constraint (`Nlt-dI-t1j`): 16pt below options.
+            .padding(.bottom, 16)
         }
     }
 
