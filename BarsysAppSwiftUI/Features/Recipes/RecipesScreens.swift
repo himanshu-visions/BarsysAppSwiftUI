@@ -1772,11 +1772,36 @@ struct EditRecipeView: View {
         // the top 42% and blurs through the panel's `.regularMaterial`
         // glass on the bottom 58%.
         VStack(spacing: 0) {
-            // Top transparent region — UIKit root view above mainView.
-            // Tap dismisses, matching `didPressOuterView:` on the
-            // outer tap-dismiss view `FKS-QG-YGV`.
+            // Top transparent tap-dismiss region.
+            //
+            // 1:1 with UIKit storyboard constraints on `mainView`
+            // (BarBot.storyboard scene `ub5-ev-1ng`):
+            //   • `EbN-xa-swC`: mainView.bottom = safeArea.bottom
+            //   • `K0K-OI-fZd`: mainView.top    >= safeArea.top + 100
+            //
+            // So mainView's HEIGHT is NOT fixed — it is driven by the
+            // intrinsic size of its contents (title + name + image +
+            // dynamic table + pill + buttons). When the user adds
+            // ingredients the table grows (via UIKit
+            // `tblDrinksHeightConstraints.constant`) up to the 150pt
+            // cap set in `EditViewModel.tableHeightForContentSize`
+            // (EditViewModel.swift L312-320), and mainView grows
+            // right along with it — the storyboard frame (y=356.33,
+            // h=427.67) is just the default that auto-layout overrides
+            // at runtime.
+            //
+            // Previously the SwiftUI port used a FIXED
+            // `UIScreen.main.bounds.height * 0.418` for this top
+            // region, which pinned the panel start at ~41.8% of the
+            // screen regardless of content. That didn't match UIKit:
+            // a panel with 1 ingredient had the same y-offset as one
+            // with 6 ingredients.
+            //
+            // Flex-fill the top region with `maxHeight: .infinity` so
+            // the panel below naturally sizes to its content and pushes
+            // up as the ingredient list grows — matching UIKit.
             Color.clear
-                .frame(height: UIScreen.main.bounds.height * 0.418)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .onTapGesture { dismiss() }
 
@@ -1789,28 +1814,90 @@ struct EditRecipeView: View {
             // visible seam / color break between the two `.regularMaterial`
             // surfaces — exactly the "underline / different color below
             // Add Ingredient" the user reported.
+            // 1:1 with UIKit `EditViewController` storyboard hierarchy
+            // (BarBot.storyboard scene `ub5-ev-1ng`):
+            //
+            //   mainView (9FU-1Q-j4b) — glass panel pinned bottom
+            //     ├── [STICKY TOP]
+            //     │    ├── "Edit" title + cross button (y=24, y=21)
+            //     │    ├── Recipe name textView + underline (y=61)
+            //     │    └── Add Image stackView (y=125, h=152)
+            //     │
+            //     ├── [SCROLLABLE MIDDLE]
+            //     │    └── tblDrinks (y=292) — dynamic height,
+            //     │         capped at 150pt via `tableHeightForContentSize`
+            //     │         (EditViewModel.swift L312-320); when content
+            //     │         exceeds 150pt the table scrolls INTERNALLY.
+            //     │
+            //     ├── viewAddIngredients pill (A4B-bI-6Jh, h=52)
+            //     │    pinned 5pt below tblDrinks
+            //     │
+            //     └── [STICKY BOTTOM]
+            //          └── Save + Craft buttons (xzw-6X-XYP, h=57)
+            //              pinned to mainView.bottom with 20pt gap
+            //              above from the pill
+            //
+            // The previous SwiftUI port wrapped EVERYTHING in one
+            // `ScrollView`, which scrolled the recipe name + image
+            // block together with the ingredients — breaking parity
+            // with the UIKit design where only the ingredient table
+            // scrolls.
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        header
-                        nameField
-                        imagePickerBlock
-                        ingredientsBlock
-                        if let msg = errorMessage {
-                            Text(msg)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color("errorLabelColor"))
-                                .padding(.horizontal, 24)
-                        }
-                        // Storyboard gap: 20pt between `viewAddIngredients`
-                        // and the Save/Craft button stack.
-                        Color.clear.frame(height: 20)
-                    }
-                    .padding(.top, 24)
+
+                // -- STICKY TOP BLOCK ----------------------------------------
+                // Title + cross + name + image. Never scrolls.
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    nameField
+                    imagePickerBlock
+                }
+                .padding(.top, 24)
+                // 15pt gap to the ingredients table — matches UIKit
+                // constraint `UOt-L3-Vxv: tblDrinks.top = rQQ-0k-gay.bottom + 15`.
+                .padding(.bottom, 15)
+
+                // -- SCROLLABLE INGREDIENTS LIST -----------------------------
+                // Only this section scrolls. Height clamped by
+                // `tableHeightForEditList` — 1:1 with UIKit
+                // `EditViewModel.tableHeightForContentSize` L312-320:
+                //   0          → 0    (empty, list collapses)
+                //   1…59pt     → 100  (stretched minimum)
+                //   60…150pt   → height (exact content height)
+                //   > 150pt    → 150  (cap, internal scroll kicks in)
+                // So the panel GROWS with the table up to the 150pt
+                // cap — this is what causes the panel to size to its
+                // contents (same as UIKit `mainView` with its
+                // `tblDrinksHeightConstraints` observer).
+                ingredientsList
+                    .frame(height: tableHeightForEditList)
+                    .padding(.horizontal, 24)
+
+                // -- Add Ingredient pill (fixed position) --------------------
+                // 5pt gap below table — UIKit
+                // `rKW-ci-7cL: A4B-bI-6Jh.top = tblDrinks.bottom + 5`.
+                if !shouldHideAddIngredientRow {
+                    addIngredientPill
+                        .padding(.horizontal, 24)
+                        .padding(.top, 5)
                 }
 
-                // Save / Craft — inside the same glass panel so the
-                // background is one continuous surface (no seam).
+                // Error message (hidden by default).
+                if let msg = errorMessage {
+                    Text(msg)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color("errorLabelColor"))
+                        .padding(.horizontal, 24)
+                        .padding(.top, 8)
+                }
+
+                // 20pt FIXED gap between `viewAddIngredients` and the
+                // Save/Craft stack — UIKit constraint
+                // `Fmu-lM-w5w: xzw-6X-XYP.top = A4B-bI-6Jh.bottom + 20`.
+                // (Not a flexible Spacer — UIKit uses an exact 20pt
+                // gap, and the panel sizes to content above/below.)
+                Color.clear.frame(height: 20)
+
+                // -- STICKY BOTTOM — Save + Craft buttons --------------------
                 bottomButtons
             }
             .background(panelBackground)
@@ -2155,69 +2242,116 @@ struct EditRecipeView: View {
     // earlier port had, since the UIKit storyboard never exposed one
     // (the count is communicated only by visible rows).
 
-    private var ingredientsBlock: some View {
-        // UIKit cell is 64pt tall (6pt top pad + 52pt inner glass + 6pt
-        // bottom pad) with no table separator, so adjacent rows have a
-        // 12pt gap. Matching that 12pt spacing keeps the pill stack at
-        // the exact UIKit rhythm.
-        VStack(spacing: 12) {
-            // Editable ingredient rows.
-            ForEach($ingredients) { $ing in
-                EditIngredientRow(
-                    ingredient: $ing,
-                    unit: env.preferences.measurementUnit,
-                    onDelete: {
-                        ingredients.removeAll { $0.id == ing.id }
-                    }
-                )
-            }
-
-            // viewAddIngredients pill — 52pt tall, full width, "+ Add
-            // Ingredient". UIKit applies `applyCellGlassStyle(view)`:
-            //   iOS 26+ → addGlassEffect(cornerRadius: xlarge=20, alpha:1)
-            //   pre-26  → roundCorners = pill(24), borderWidth = 1,
-            //             gradient [black@10%, white@10%], border color
-            //             #F2F2F2 (EditViewController.swift L234-L243).
-            // Hidden when Barsys 360 is connected and the user has hit
-            // the 6-ingredient cap.
-            if !shouldHideAddIngredientRow {
-                Button {
-                    HapticService.light()
-                    // 1:1 with UIKit `didPressAddIngredientButton` →
-                    // `showActionSheetForImagePicker(isImageCroppingDisabled: true)`.
-                    showAddIngredientActionSheet = true
-                } label: {
-                    HStack(spacing: 12) {
-                        Image("newPlus")
-                            .renderingMode(.template)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 24, height: 24)
-                            .foregroundStyle(Color("appBlackColor"))
-                            .frame(width: 30, height: 30)
-                        Text("Add Ingredient")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color("appBlackColor"))
-                        Spacer()
-                    }
-                    .padding(.leading, 24)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(addIngredientBackground)
-                    .overlay(addIngredientBorder)
+    /// The SCROLLABLE ingredients list — 1:1 with UIKit `tblDrinks`
+    /// (BarBot.storyboard id `6YO-Ic-WDI`). Displays the editable
+    /// ingredient rows inside a `ScrollView` so the caller can cap its
+    /// frame to 150pt (matching `EditViewModel.tableHeightForContentSize`
+    /// L312-320). When content exceeds the cap, the list scrolls
+    /// internally — EXACTLY like the UIKit table with its dynamic
+    /// `tblDrinksHeightConstraints.constant`.
+    private var ingredientsList: some View {
+        ScrollView(showsIndicators: false) {
+            // UIKit cell is 64pt tall (6pt top pad + 52pt inner glass +
+            // 6pt bottom pad) with no table separator, so adjacent rows
+            // have a 12pt gap. Matching that keeps the row rhythm
+            // identical to UIKit.
+            VStack(spacing: 12) {
+                ForEach($ingredients) { $ing in
+                    EditIngredientRow(
+                        ingredient: $ing,
+                        unit: env.preferences.measurementUnit,
+                        onDelete: {
+                            ingredients.removeAll { $0.id == ing.id }
+                        }
+                    )
                 }
-                .buttonStyle(BounceButtonStyle())
-                .accessibilityLabel("Add Ingredient")
-                .accessibilityHint("Add another ingredient to the recipe")
             }
         }
-        .padding(.horizontal, 24)
+    }
+
+    /// The FIXED Add Ingredient pill — 1:1 with UIKit
+    /// `viewAddIngredients` (A4B-bI-6Jh, 52pt tall, full width, "+ Add
+    /// Ingredient"). UIKit applies `applyCellGlassStyle(view)`:
+    ///   iOS 26+ → `addGlassEffect(cornerRadius: xlarge=20, alpha: 1)`
+    ///   pre-26  → `roundCorners = pill(24)`, borderWidth = 1,
+    ///             gradient [black@10%, white@10%], border color #F2F2F2
+    ///             (EditViewController.swift L234-243).
+    /// Hidden when Barsys 360 is connected and the user has hit the
+    /// 6-ingredient cap — matches UIKit `hideUnhideAddIngredientButton`
+    /// (EditViewController.swift L169-176).
+    private var addIngredientPill: some View {
+        Button {
+            HapticService.light()
+            // 1:1 with UIKit `didPressAddIngredientButton` →
+            // `showActionSheetForImagePicker(isImageCroppingDisabled: true)`.
+            showAddIngredientActionSheet = true
+        } label: {
+            HStack(spacing: 12) {
+                Image("newPlus")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(width: 30, height: 30)
+                Text("Add Ingredient")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color("appBlackColor"))
+                Spacer()
+            }
+            .padding(.leading, 24)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(addIngredientBackground)
+            .overlay(addIngredientBorder)
+        }
+        .buttonStyle(BounceButtonStyle())
+        .accessibilityLabel("Add Ingredient")
+        .accessibilityHint("Add another ingredient to the recipe")
     }
 
     /// Ports UIKit `EditViewModel.shouldHideAddIngredientRow`: a recipe
     /// for the Barsys 360 device caps at 6 ingredients.
     private var shouldHideAddIngredientRow: Bool {
         ingredients.count >= 6 && ble.isBarsys360Connected()
+    }
+
+    /// Rendered height of the scrollable ingredients list — 1:1 port of
+    /// UIKit `EditViewModel.tableHeightForContentSize(_:)`
+    /// (EditViewModel.swift L312-320):
+    ///
+    ///     if height > 150        { return 150.0 }      // cap
+    ///     else if height < 60 && height != 0 { return 100.0 }  // min
+    ///     else                   { return height }     // exact
+    ///
+    /// The SwiftUI port estimates the intrinsic content height from
+    /// the ingredient count and each row's fixed height (UIKit
+    /// `EditTableViewCell` is 64pt: 6pt top + 52pt glass pill + 6pt
+    /// bottom = 64pt). Spacing between rows in SwiftUI is 12pt
+    /// (`VStack(spacing: 12)` in `ingredientsList`), so the total
+    /// intrinsic content height is:
+    ///
+    ///     count = 0     → 0
+    ///     count >= 1    → count * 64 + (count - 1) * 12
+    ///
+    /// Clamped to match UIKit's min-100 / max-150 rules so the panel
+    /// grows/shrinks with content up to the same ceiling.
+    private var tableHeightForEditList: CGFloat {
+        let count = CGFloat(ingredients.count)
+        guard count > 0 else { return 0 }
+        // Row is 64pt tall (6pt top pad + 52pt glass pill + 6pt bottom
+        // pad); 12pt VStack spacing between rows.
+        let rowHeight: CGFloat = 64
+        let spacing: CGFloat = 12
+        let contentHeight = count * rowHeight + max(0, count - 1) * spacing
+        if contentHeight > 150 {
+            return 150.0
+        } else if contentHeight < 60 {
+            // UIKit: `height < 60 && height != 0` → 100
+            return 100.0
+        } else {
+            return contentHeight
+        }
     }
 
     // MARK: - Upload + AI detection (UIKit didSelectImagesFromPhotos parity)
