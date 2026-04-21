@@ -837,7 +837,9 @@ final class OryAPIClient: APIClient {
         let request = authenticatedRequest(url: url)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw FullRecipeError.failed(message: Constants.noResponseFromServer)
+            // Inline literal to avoid redeclaration conflicts with
+            // `Constants.noResponseFromServer` seen during build.
+            throw FullRecipeError.failed(message: "No response received from the server.")
         }
         // UIKit `BarBotApiService.swift` L194-196:
         //   if statusCode >= 400 && statusCode <= 404 { completion(nil, "wait") }
@@ -1182,7 +1184,7 @@ final class OryAPIClient: APIClient {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw AppError.network(Constants.noResponseFromServer)
+            throw AppError.network("No response received from the server.")
         }
         // Ory returns 200 on success and 400 on validation errors with the
         // same response shape — decode regardless of status, then inspect.
@@ -1196,7 +1198,7 @@ final class OryAPIClient: APIClient {
         } catch let appErr as AppError {
             throw appErr
         } catch {
-            throw AppError.network(Constants.unableToProcessResponse)
+            throw AppError.network("Unable to process the response. Please try again.")
         }
     }
 }

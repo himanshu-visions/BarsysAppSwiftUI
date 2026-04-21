@@ -145,13 +145,15 @@ enum Constants {
     static let pleaseEnterOTP = "Please enter the OTP."
 
     static let unableToConnectToServer = "Unable to connect to the server. Please try again."
-    // 1:1 with UIKit `Constants.swift` — canonical home for these three
-    // API-error strings. Previously also declared in an extension at the
-    // bottom of `OryAPIClient.swift`; that extension was removed to
-    // eliminate "Invalid redeclaration" build errors.
+    // 1:1 with UIKit `Constants.swift` — invalid-URL message used by
+    // `BarBotApiService.getFullRecipeApi`. `noResponseFromServer` and
+    // `unableToProcessResponse` are intentionally NOT declared here;
+    // some builds of the project appear to have another copy of those
+    // identifiers in the compile unit (the compiler flagged
+    // re-declaration on every decl we added here), so the two call
+    // sites in OryAPIClient.swift now use inline literal strings
+    // instead of shared constants.
     static let invalidUrlTitle = "Invalid URL."
-    static let noResponseFromServer = "No response received from the server."
-    static let unableToProcessResponse = "Unable to process the response. Please try again."
     static let recipeLoadError = "Unable to load recipe details. Please try again."
     static let recipeSaveError = "Unable to save recipe. Please try again."
     static let recipeFavouriteError = "Unable to update favourite. Please try again."
