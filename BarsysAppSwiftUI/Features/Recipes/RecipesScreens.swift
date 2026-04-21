@@ -1592,7 +1592,20 @@ struct EditRecipeView: View {
 
     @State private var name: String = ""
     @State private var ingredients: [Ingredient] = []
+    /// Locally-picked image — set when user chooses a photo from the
+    /// picker. Takes precedence over `remoteImageURL` for display.
+    /// 1:1 with UIKit `EditViewModel.selectedImageForRecipe`.
     @State private var selectedImage: UIImage?
+    /// Existing remote image URL for recipes that already have an
+    /// image (e.g. editing a My Drink with a previously-uploaded
+    /// image, or customizing a Barsys recipe that ships with artwork).
+    /// Populated from `existingRecipe.image?.url` on `.onAppear`.
+    /// Cleared when the user taps the delete button, mirroring UIKit
+    /// `EditViewModel.deleteImage()` which sets `recipe?.image?.url = ""`.
+    /// The display rule matches UIKit `viewSetup` L131-146:
+    ///   `hasImage == !(image.url isEmpty || nil)` → show the image
+    ///   view, hide the Add Image button.
+    @State private var remoteImageURL: URL?
     @State private var showPhotoPicker = false
     @State private var showAddIngredientSheet = false
     @State private var nameHasError = false
@@ -1665,23 +1678,37 @@ struct EditRecipeView: View {
                 .onTapGesture { dismiss() }
 
             // mainView — glass panel, bottom ~58% of the screen.
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    header
-                    nameField
-                    imagePickerBlock
-                    ingredientsBlock
-                    if let msg = errorMessage {
-                        Text(msg)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color("errorLabelColor"))
-                            .padding(.horizontal, 24)
+            // Contains BOTH the ScrollView content AND the Save/Craft
+            // button stack so a SINGLE `panelBackground` glass layer
+            // covers everything. The previous split layout
+            // (ScrollView panel + separate `safeAreaInset` button bar
+            // with its own `bottomButtonBarBackground`) produced a
+            // visible seam / color break between the two `.regularMaterial`
+            // surfaces — exactly the "underline / different color below
+            // Add Ingredient" the user reported.
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        header
+                        nameField
+                        imagePickerBlock
+                        ingredientsBlock
+                        if let msg = errorMessage {
+                            Text(msg)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color("errorLabelColor"))
+                                .padding(.horizontal, 24)
+                        }
+                        // Storyboard gap: 20pt between `viewAddIngredients`
+                        // and the Save/Craft button stack.
+                        Color.clear.frame(height: 20)
                     }
-                    // Storyboard gap: 20pt between `viewAddIngredients`
-                    // and the Save/Craft button stack.
-                    Color.clear.frame(height: 20)
+                    .padding(.top, 24)
                 }
-                .padding(.top, 24)
+
+                // Save / Craft — inside the same glass panel so the
+                // background is one continuous surface (no seam).
+                bottomButtons
             }
             .background(panelBackground)
             .clipShape(panelShape)
@@ -1694,10 +1721,9 @@ struct EditRecipeView: View {
             .shadow(color: .black.opacity(0.0525), radius: 12, x: 0, y: 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea(edges: [.top, .bottom])
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
-        .safeAreaInset(edge: .bottom) { bottomButtons }
         .sheet(isPresented: $showPhotoPicker) {
             ImagePicker(image: $selectedImage)
         }
@@ -1781,12 +1807,29 @@ struct EditRecipeView: View {
             // Prefer the recipe passed in directly. Fallback to storage
             // lookup so RouteView's id-only `.editRecipe(id)` path keeps
             // working for Barsys catalog recipes.
+            let source: Recipe?
             if let recipe = existingRecipe {
+                source = recipe
+            } else if let id = recipeID {
+                source = env.storage.recipe(by: id)
+            } else {
+                source = nil
+            }
+            if let recipe = source {
                 name = recipe.name ?? ""
                 ingredients = recipe.ingredients ?? []
-            } else if let id = recipeID, let recipe = env.storage.recipe(by: id) {
-                name = recipe.name ?? ""
-                ingredients = recipe.ingredients ?? []
+                // 1:1 with UIKit `viewSetup` L131-146:
+                //   hasImage = !(image.url isEmpty || nil)
+                //   recipeImageUrl = image.url.getImageUrl()
+                // Initialize the remote URL so the thumbnail displays
+                // the existing recipe image instead of the Add Image
+                // placeholder button. User can then tap delete or pick
+                // a new image to replace it.
+                if let urlString = recipe.image?.url,
+                   !urlString.isEmpty,
+                   let url = URL(string: urlString) {
+                    remoteImageURL = url
+                }
             }
             env.analytics.track(TrackEventName.editRecipeBegin.rawValue)
         }
@@ -1807,12 +1850,19 @@ struct EditRecipeView: View {
                 HapticService.light()
                 dismiss()
             } label: {
+                // UIKit storyboard (EditViewController scene ub5-ev-1ng):
+                //   • Button frame 24×24 (id nw9-fs-LNG width constraint)
+                //   • Image `crossIcon` at its natural 12×11.67 size,
+                //     NOT stretched (UIButton default, no imageEdgeInsets)
+                // SwiftUI match: image rendered at native 12pt, centered
+                // inside a 24pt tap-target frame.
                 Image("crossIcon")
                     .resizable()
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 12, height: 12)
                     .foregroundStyle(Color("appBlackColor"))
+                    .frame(width: 24, height: 24)
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Close editor")
@@ -1857,27 +1907,21 @@ struct EditRecipeView: View {
     @ViewBuilder
     private var imagePickerBlock: some View {
         HStack {
+            // 1:1 with UIKit `viewSetup` L131-146:
+            //   if viewModel.hasImage {
+            //       showImageViewSuperView.isHidden = false
+            //       // sd_setImage(with: recipeImageUrl, placeholder: .myDrink)
+            //   } else {
+            //       addImageViewSuperView.isHidden = false
+            //   }
+            // Display priority:
+            //   1. selectedImage (locally picked UIImage) — takes precedence
+            //   2. remoteImageURL (existing recipe image URL)
+            //   3. Add Image button (no image)
             if let image = selectedImage {
-                ZStack(alignment: .topTrailing) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 120, height: 120)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    // UIKit uses the `whiteDeleteImage` asset at 30×30 with
-                    // `charcoalGrayColor` tint, positioned 2pt from the
-                    // top-right of the thumbnail (storyboard Mqn-Av-Zo2).
-                    Button { selectedImage = nil } label: {
-                        Image("whiteDeleteImage")
-                            .renderingMode(.template)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 30, height: 30)
-                            .foregroundStyle(Color("charcoalGrayColor"))
-                    }
-                    .offset(x: -2, y: 2)
-                    .accessibilityLabel("Remove image")
-                }
+                imageThumbnail(localImage: image)
+            } else if let url = remoteImageURL {
+                imageThumbnail(remoteURL: url)
             } else {
                 Button { showPhotoPicker = true } label: {
                     Text("Add Image")
@@ -1894,6 +1938,69 @@ struct EditRecipeView: View {
             Spacer()
         }
         .padding(.horizontal, 24)
+    }
+
+    /// 120×120 thumbnail for a locally-picked UIImage — 1:1 with UIKit
+    /// `showImgView` post-pick (`didSelectImagesFromPhotos` L382-386).
+    @ViewBuilder
+    private func imageThumbnail(localImage: UIImage) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Image(uiImage: localImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 120, height: 120)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            imageDeleteButton
+        }
+    }
+
+    /// 120×120 thumbnail for a remote URL — 1:1 with UIKit
+    /// `showImgView.sd_setImage(with: imgUrl, placeholderImage: .myDrink)`
+    /// at `EditViewController` L133-141.
+    @ViewBuilder
+    private func imageThumbnail(remoteURL: URL) -> some View {
+        ZStack(alignment: .topTrailing) {
+            AsyncImage(url: remoteURL) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().aspectRatio(contentMode: .fill)
+                case .empty:
+                    Image("myDrink")
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .padding(16)
+                case .failure:
+                    Image("myDrink")
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .padding(16)
+                @unknown default:
+                    Color("lightBorderGrayColor")
+                }
+            }
+            .frame(width: 120, height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            imageDeleteButton
+        }
+    }
+
+    /// Delete overlay button — `whiteDeleteImage` asset at 30×30,
+    /// `charcoalGrayColor` tint, 2pt from the top-right
+    /// (storyboard `Mqn-Av-Zo2`). 1:1 with UIKit
+    /// `EditViewModel.deleteImage()` which clears both
+    /// `selectedImageForRecipe` AND `recipe?.image?.url`.
+    private var imageDeleteButton: some View {
+        Button {
+            selectedImage = nil
+            remoteImageURL = nil
+        } label: {
+            Image("whiteDeleteImage")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 30, height: 30)
+                .foregroundStyle(Color("charcoalGrayColor"))
+        }
+        .offset(x: -2, y: 2)
+        .accessibilityLabel("Remove image")
     }
 
     // MARK: - Ingredients block — matches `EditViewController+TableView`
@@ -2208,16 +2315,17 @@ struct EditRecipeView: View {
         // UIKit bottom constraint: iOS 26 → 12pt, pre-26 → 36pt
         // (plus 27pt if a custom tab-bar is visible; our SwiftUI tab bar
         // is already excluded from the inset stack so 12/36 is fine).
-        .padding(.bottom, iOS26BottomInset)
+        // Add bottom safe area (~34pt on notched iPhones) since the
+        // parent VStack `ignoresSafeArea(.bottom)` and the button bar
+        // is now in the main content flow (no safeAreaInset wrapper).
+        .padding(.bottom, iOS26BottomInset + 34)
         .padding(.top, 12)
         .frame(maxWidth: .infinity)
-        // UIKit parity: the Save/Craft stack is INSIDE the glass `mainView`
-        // (storyboard `xzw-6X-XYP` inside `9FU-1Q-j4b`), so the button
-        // bar area must render on the same glass as the panel. Without
-        // this the `.safeAreaInset(.bottom)` region renders outside the
-        // panel's `.background(panelBackground)` and breaks the
-        // continuous glass surface UIKit shows.
-        .background(bottomButtonBarBackground)
+        // No separate background — the Save/Craft stack lives INSIDE
+        // the panel's `.background(panelBackground)` VStack in `body`,
+        // so a single continuous glass surface covers everything.
+        // Previously a separate `bottomButtonBarBackground` produced
+        // a visible seam between the panel and the button bar.
     }
 
     /// Glass continuation for the Save/Craft button-bar inset.
@@ -2585,8 +2693,15 @@ struct EditRecipeView: View {
             let rhsQty = Int((other.quantity ?? 0).rounded())
             if lhsQty != rhsQty { return true }
         }
-        // Image change — a newly picked `selectedImage` always counts.
+        // Image change — a newly picked `selectedImage` always counts,
+        // AND deleting an existing remote image (`remoteImageURL` cleared
+        // while the original recipe had a non-empty `image.url`) also
+        // counts as a change. 1:1 with UIKit
+        // `EditViewModel.hasUnsavedChanges` which compares the recipe
+        // snapshot's `image.url` to the current value.
         if selectedImage != nil { return true }
+        let originalHasImage = !(original.image?.url?.isEmpty ?? true)
+        if originalHasImage && remoteImageURL == nil { return true }
         return false
     }
 
