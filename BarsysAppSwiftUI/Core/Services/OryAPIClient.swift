@@ -1201,13 +1201,6 @@ final class OryAPIClient: APIClient {
     }
 }
 
-// MARK: - Constants additions
-
-extension Constants {
-    static let unableToProcessResponse = "Unable to process the response. Please try again."
-    static let noResponseFromServer = "No response received from the server."
-}
-
 // MARK: - LoginSignUpResponseModel (port of the UIKit model)
 //
 // Decodes the Ory login/registration response. Field names + CodingKeys
