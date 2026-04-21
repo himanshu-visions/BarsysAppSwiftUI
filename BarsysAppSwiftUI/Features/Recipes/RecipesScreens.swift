@@ -2430,7 +2430,12 @@ struct EditRecipeView: View {
             topTrailingRadius: 12,
             style: .continuous
         )
-        .fill(.regularMaterial)
+        // 0.8 alpha (0.2 reduction off 1.0) so the underlying screen
+        // (FavoritesVC / RecipeDetailsVC) stays faintly visible through
+        // the edit panel — matches UIKit `mainView.addGlassEffect()`
+        // where the native `UIGlassEffect` renders more transparent
+        // than SwiftUI's default `.regularMaterial`.
+        .fill(.regularMaterial.opacity(0.95))
     }
 
     /// Top-only rounded clipping shape — 1:1 with UIKit storyboard

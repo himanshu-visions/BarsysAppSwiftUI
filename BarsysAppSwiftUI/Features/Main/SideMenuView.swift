@@ -391,11 +391,16 @@ private struct SideMenuPanel: View {
             // UIKit build shows a solid white panel.
             Group {
                 if #available(iOS 26.0, *) {
+                    // 0.8 alpha (0.2 reduction off 1.0) so the underlying
+                    // page stays faintly visible through the panel —
+                    // matches UIKit `menuView.addGlassEffect` where the
+                    // native `UIGlassEffect` renders more transparent
+                    // than SwiftUI's default `.regularMaterial`.
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.regularMaterial)
+                        .fill(.regularMaterial.opacity(0.95))
                 } else {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white)
+                        .fill(Color.white.opacity(0.95))
                 }
             }
 
