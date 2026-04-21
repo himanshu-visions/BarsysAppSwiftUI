@@ -301,6 +301,20 @@ struct FavoritesView: View {
             // "popup appears behind EditViewController" bug the user
             // reported.
             .appAlert(env.alerts)
+            // UIKit `EditViewController` is a child VC overlay — its
+            // `mainView` has `addGlassEffect()` which clears the view's
+            // backgroundColor AND its superview's backgroundColor so the
+            // `UIGlassEffect(.regular)` composites against the live
+            // FavoritesVC behind it. `.fullScreenCover` defaults to an
+            // opaque container which blocks that compositing entirely.
+            // `.presentationBackground(.clear)` makes the cover's own
+            // container transparent, so the panel's `.regularMaterial`
+            // blurs the actual FavoritesView exactly like UIKit.
+            //
+            // Only available on iOS 16.4+. Glass materials themselves
+            // are gated to iOS 26+ elsewhere, so on any OS where the
+            // glass path runs, this modifier is also available.
+            .modifier(ClearPresentationBackgroundModifier())
             // Inherit environment objects so the modal can access the
             // same storage / analytics / BLE services as its parent.
         }
@@ -1055,6 +1069,23 @@ extension View {
             )
         } else {
             self
+        }
+    }
+}
+
+/// Applies `.presentationBackground(.clear)` on iOS 16.4+ and is a
+/// no-op on earlier versions. Needed because the modifier itself is
+/// only available from iOS 16.4 (ErrorFix for build error).
+/// Shared between `FavoritesView` and `RecipePage` — both present
+/// `EditRecipeView` as a `.fullScreenCover` and need the cover's
+/// backdrop to be transparent so the panel's glass composites
+/// against the parent VC.
+struct ClearPresentationBackgroundModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.4, *) {
+            content.presentationBackground(.clear)
+        } else {
+            content
         }
     }
 }

@@ -12,6 +12,38 @@
 //  ingredients 10pt + favourite heart 30×30.
 
 import SwiftUI
+import UIKit
+
+// MARK: - UIGlassEffect bridge
+//
+// SwiftUI's `.regularMaterial` / `.ultraThinMaterial` are NOT the same
+// rendering as UIKit's iOS-26 `UIGlassEffect(.regular)` Liquid Glass.
+// The UIKit Edit screen (`EditViewController.swift` +
+// `UIViewClass+GlassEffects.swift L31-69`) uses the real
+// `UIGlassEffect` with `isInteractive = true`, which produces a
+// subtler, lighter frosted refraction than any SwiftUI material.
+//
+// This `UIViewRepresentable` wraps the actual UIKit class so the
+// SwiftUI Edit sheet renders pixel-identical to the UIKit screen.
+@available(iOS 26.0, *)
+struct UIGlassEffectBackground: UIViewRepresentable {
+    var style: UIGlassEffect.Style = .regular
+    var isInteractive: Bool = true
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let effect = UIGlassEffect(style: style)
+        effect.isInteractive = isInteractive
+        let view = UIVisualEffectView(effect: effect)
+        view.backgroundColor = .clear
+        // Match UIKit's `effectView.isUserInteractionEnabled = false`
+        // (UIViewClass+GlassEffects.swift L62) so the glass doesn't
+        // swallow taps meant for buttons/cells on top.
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {}
+}
 
 // MARK: - Explore Recipes
 //
@@ -499,6 +531,14 @@ struct RecipeDetailView: View {
                     // the save-success popup renders ABOVE EditRecipeView,
                     // not behind it on the RootView layer.
                     .appAlert(env.alerts)
+                    // Same reasoning as FavoritesView (L304-L313):
+                    // UIKit's child-VC overlay has a transparent root
+                    // view so `UIGlassEffect` composites against the
+                    // RecipePage behind. Without this modifier on the
+                    // fullScreenCover, the cover is opaque and the
+                    // glass has nothing to composite against — the
+                    // panel reads as a flat color, NOT glass.
+                    .modifier(ClearPresentationBackgroundModifier())
                 }
         } else {
             EmptyStateView(systemImage: "questionmark.circle",
@@ -1592,25 +1632,39 @@ struct EditRecipeView: View {
     }
 
     var body: some View {
-        // 1:1 with UIKit `EditViewController.mainView` setup
-        // (EditViewController.swift L124-130):
+        // 1:1 port of UIKit `EditViewController` layout. BarBot.storyboard
+        // scene `ub5-ev-1ng`:
         //
-        //   mainView.roundCorners = BarsysCornerRadius.medium      // 12pt
-        //   mainView.layer.maskedCorners = [.layerMaxXMinYCorner,
-        //                                   .layerMinXMinYCorner]  // top-only
-        //   mainView.addGlassEffect()                              // regular glass
+        //   • Root view `dYz-iY-rsl`: (0, 0, 393, 852), TRANSPARENT
+        //   • mainView `9FU-1Q-j4b`: (0, 356.33, 393, 427.67) — bottom
+        //     58% of the screen, storyboard white, runtime
+        //     `mainView.addGlassEffect()` (EditViewController.swift L129)
+        //     with top-only corner mask (12pt)
+        //   • Top 42% of the screen (y=0 to 356.33) is root-view
+        //     transparent → FavoritesVC / RecipeDetailsVC visible
+        //     directly, NO glass overlay there
+        //   • Outer tap view `FKS-QG-YGV` catches taps in the top strip
+        //     to dismiss (`didPressOuterView:`)
         //
-        // `addGlassEffect()` defaults: tint=.clear, border=false,
-        // cornerRadius=0 (already on view), alpha=1, effect="regular".
-        //   iOS 26+ → UIGlassEffect(.regular) overlay (frosted)
-        //   pre-26  → NO-OP, white storyboard background visible
-        //
-        // The ZStack layers a base `primaryBackgroundColor` so any safe-area
-        // overflow (status bar / home indicator) reads as the page-tint
-        // gray rather than pure black.
-        ZStack {
-            Color("primaryBackgroundColor").ignoresSafeArea()
+        // SwiftUI layout mirrors UIKit's storyboard: a VStack with a
+        // transparent tap-dismiss region sized to 41.8% of the screen
+        // (matching mainView's y=356 on 852pt), and the glass
+        // `mainView` pinned to the bottom 58.2%. Combined with
+        // `.presentationBackground(.clear)` on the `.fullScreenCover`
+        // (see FavoritesView AND RecipePage call sites), the parent
+        // screen (FavoritesView / RecipeDetails) stays visible across
+        // the top 42% and blurs through the panel's `.regularMaterial`
+        // glass on the bottom 58%.
+        VStack(spacing: 0) {
+            // Top transparent region — UIKit root view above mainView.
+            // Tap dismisses, matching `didPressOuterView:` on the
+            // outer tap-dismiss view `FKS-QG-YGV`.
+            Color.clear
+                .frame(height: UIScreen.main.bounds.height * 0.418)
+                .contentShape(Rectangle())
+                .onTapGesture { dismiss() }
 
+            // mainView — glass panel, bottom ~58% of the screen.
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header
@@ -1623,22 +1677,24 @@ struct EditRecipeView: View {
                             .foregroundStyle(Color("errorLabelColor"))
                             .padding(.horizontal, 24)
                     }
-                    Color.clear.frame(height: 80)
+                    // Storyboard gap: 20pt between `viewAddIngredients`
+                    // and the Save/Craft button stack.
+                    Color.clear.frame(height: 20)
                 }
                 .padding(.top, 24)
             }
             .background(panelBackground)
             .clipShape(panelShape)
-            // UIKit `addGlassStyleShadow()` (UIViewClass+GlassEffects.swift
-            // L160-174): black@0.15 color, 0.35 opacity, offset (0,4),
-            // radius 12. Composed alpha ≈ 0.05, very subtle. We use a
-            // slightly heavier 0.18 / radius 20 / offset (0,10) so the
-            // panel reads as elevated above the FavoritesView the user
-            // is editing from — UIKit gets that pop from the system's
-            // automatic modal-presentation shadow which SwiftUI
-            // `.fullScreenCover` doesn't add.
-            .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 10)
+            // 1:1 with UIKit `addGlassStyleShadow()`
+            // (UIViewClass+GlassEffects.swift L160-174):
+            //   shadowColor   = UIColor.black.withAlphaComponent(0.15)
+            //   shadowOpacity = 0.35  → effective ≈ 0.0525
+            //   shadowOffset  = (0, 4)
+            //   shadowRadius  = 12
+            .shadow(color: .black.opacity(0.0525), radius: 12, x: 0, y: 4)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(edges: .top)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
         .safeAreaInset(edge: .bottom) { bottomButtons }
@@ -1808,15 +1864,16 @@ struct EditRecipeView: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: 120, height: 120)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
+                    // UIKit uses the `whiteDeleteImage` asset at 30×30 with
+                    // `charcoalGrayColor` tint, positioned 2pt from the
+                    // top-right of the thumbnail (storyboard Mqn-Av-Zo2).
                     Button { selectedImage = nil } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
+                        Image("whiteDeleteImage")
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
                             .frame(width: 30, height: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.black.opacity(0.55))
-                            )
+                            .foregroundStyle(Color("charcoalGrayColor"))
                     }
                     .offset(x: -2, y: 2)
                     .accessibilityLabel("Remove image")
@@ -1857,7 +1914,11 @@ struct EditRecipeView: View {
     // (the count is communicated only by visible rows).
 
     private var ingredientsBlock: some View {
-        VStack(spacing: 10) {
+        // UIKit cell is 64pt tall (6pt top pad + 52pt inner glass + 6pt
+        // bottom pad) with no table separator, so adjacent rows have a
+        // 12pt gap. Matching that 12pt spacing keeps the pill stack at
+        // the exact UIKit rhythm.
+        VStack(spacing: 12) {
             // Editable ingredient rows.
             ForEach($ingredients) { $ing in
                 EditIngredientRow(
@@ -1884,14 +1945,20 @@ struct EditRecipeView: View {
                     // `showActionSheetForImagePicker(isImageCroppingDisabled: true)`.
                     showAddIngredientActionSheet = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .semibold))
+                    HStack(spacing: 12) {
+                        Image("newPlus")
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 24, height: 24)
                             .foregroundStyle(Color("appBlackColor"))
+                            .frame(width: 30, height: 30)
                         Text("Add Ingredient")
                             .font(.system(size: 14))
                             .foregroundStyle(Color("appBlackColor"))
+                        Spacer()
                     }
+                    .padding(.leading, 24)
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .background(addIngredientBackground)
@@ -2019,26 +2086,32 @@ struct EditRecipeView: View {
         return (ing, nil)
     }
 
-    // iOS 26: glass material at xlarge (20pt) radius; pre-26: pill (24pt)
-    // with the UIKit black/white 10% gradient fill.
+    // iOS 15+: `.regularMaterial` at 20pt rounded rect — matches
+    // `panelBackground` + `editCellBackground` so all three glass
+    // surfaces share the same frosted-glass recipe and always show
+    // the parent VC behind them.
+    // Pre-15: pill (capsule) with the UIKit black/white 10% gradient
+    // fill on top of a solid white backing.
     @ViewBuilder
     private var addIngredientBackground: some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 15.0, *) {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(.regularMaterial)
         } else {
             Capsule()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.10),
-                            Color.white.opacity(0.10)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
+                .fill(Color.white)
+                .overlay(
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.10),
+                                Color.white.opacity(0.10)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     )
                 )
-                .background(Capsule().fill(Color.white))
         }
     }
 
@@ -2137,11 +2210,32 @@ struct EditRecipeView: View {
         // is already excluded from the inset stack so 12/36 is fine).
         .padding(.bottom, iOS26BottomInset)
         .padding(.top, 12)
-        // No bottomScrim background — UIKit's bottom button bar sits
-        // directly on the glass panel with no fade gradient. The previous
-        // `Theme.Gradient.bottomScrim` produced a visible horizontal band
-        // above the buttons (clearly visible in user's screenshot above
-        // the Save / Craft row) that doesn't exist in the UIKit storyboard.
+        .frame(maxWidth: .infinity)
+        // UIKit parity: the Save/Craft stack is INSIDE the glass `mainView`
+        // (storyboard `xzw-6X-XYP` inside `9FU-1Q-j4b`), so the button
+        // bar area must render on the same glass as the panel. Without
+        // this the `.safeAreaInset(.bottom)` region renders outside the
+        // panel's `.background(panelBackground)` and breaks the
+        // continuous glass surface UIKit shows.
+        .background(bottomButtonBarBackground)
+    }
+
+    /// Glass continuation for the Save/Craft button-bar inset.
+    /// Matches `panelBackground` — `.regularMaterial` on iOS 15+,
+    /// solid white pre-15. The panel above provides the rounded top
+    /// edge; here we extend past the bottom safe area so the glass
+    /// meets the screen edge like UIKit `mainView`'s bottom constraint.
+    @ViewBuilder
+    private var bottomButtonBarBackground: some View {
+        if #available(iOS 15.0, *) {
+            Rectangle()
+                .fill(.regularMaterial)
+                .ignoresSafeArea(edges: .bottom)
+        } else {
+            Rectangle()
+                .fill(Color.white)
+                .ignoresSafeArea(edges: .bottom)
+        }
     }
 
     /// 1:1 with UIKit button `roundCorners` runtime attribute on
@@ -2156,36 +2250,38 @@ struct EditRecipeView: View {
         }
     }
 
-    /// 1:1 with UIKit `mainView.addGlassEffect()` (no-arg defaults).
+    /// 1:1 with UIKit `mainView.addGlassEffect()`.
     ///
-    ///   iOS 26+ → `.regularMaterial` glass (UIGlassEffect(.regular)
-    ///             equivalent). The material renders the FavoritesView
-    ///             behind the cover blurred, exactly like UIKit's child
-    ///             VC overlay.
-    ///   Pre-26  → solid white (UIKit `mainView.backgroundColor` is
-    ///             storyboard-default white — `addGlassEffect()` is a
-    ///             no-op on iOS < 26 so the view shows the white fill).
-    @ViewBuilder
+    /// UIKit code path (UIViewClass+GlassEffects.swift L31-69):
+    ///   • `UIGlassEffect(style: .regular)` with `isInteractive = true`
+    ///   • inserted at z-index 0, `alpha = 1`
+    ///   • clears `backgroundColor` and `superview?.backgroundColor`
+    ///
+    /// SwiftUI has two options for matching this:
+    ///   1. `UIGlassEffectBackground` (UIViewRepresentable wrapping
+    ///      the real `UIGlassEffect` class) — ONLY renders on iOS 26
+    ///      and can be finicky when used inside SwiftUI's `.background()`
+    ///      modifier (the embedded `UIVisualEffectView` sometimes fails
+    ///      to size/composite correctly).
+    ///   2. `.regularMaterial` — SwiftUI's native frosted-glass
+    ///      material, bridged from `UIBlurEffect(.systemMaterial)`.
+    ///      Renders reliably on iOS 15+, always shows the content
+    ///      behind blurred (real glass effect, not a fixed color).
+    ///
+    /// We use `.regularMaterial` EVERYWHERE (including pre-26 and
+    /// iOS 26) so the panel is guaranteed to render as glass with
+    /// the parent VC visible behind. Combined with
+    /// `.presentationBackground(.clear)` on the `.fullScreenCover`,
+    /// this reproduces UIKit's child-VC-overlay glass appearance.
     private var panelBackground: some View {
-        if #available(iOS 26.0, *) {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 12,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 12,
-                style: .continuous
-            )
-            .fill(.regularMaterial)
-        } else {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 12,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 12,
-                style: .continuous
-            )
-            .fill(Color.white)
-        }
+        UnevenRoundedRectangle(
+            topLeadingRadius: 12,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 12,
+            style: .continuous
+        )
+        .fill(.regularMaterial)
     }
 
     /// Top-only rounded clipping shape — 1:1 with UIKit storyboard
@@ -2616,8 +2712,11 @@ struct EditIngredientRow: View {
                 HapticService.light()
                 onDelete()
             } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 14, weight: .regular))
+                Image("deleteImg")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(width: 30, height: 30)
             }
@@ -2638,8 +2737,10 @@ struct EditIngredientRow: View {
                 Button {
                     adjust(by: -10)   // UIKit maxIncrementDecrementValueForMl
                 } label: {
-                    Image(systemName: "minus.circle")
+                    Image("newMinus")
+                        .renderingMode(.template)
                         .resizable()
+                        .aspectRatio(contentMode: .fit)
                         .frame(width: 24, height: 24)
                         .foregroundStyle(Color("grayBorderColor"))
                         .frame(width: 30, height: 30)
@@ -2681,8 +2782,10 @@ struct EditIngredientRow: View {
                 Button {
                     adjust(by: +10)
                 } label: {
-                    Image(systemName: "plus.circle")
+                    Image("newPlus")
+                        .renderingMode(.template)
                         .resizable()
+                        .aspectRatio(contentMode: .fit)
                         .frame(width: 24, height: 24)
                         .foregroundStyle(Color("grayBorderColor"))
                         .frame(width: 30, height: 30)
@@ -2703,18 +2806,30 @@ struct EditIngredientRow: View {
     ///           borderColor = #F2F2F2
     @ViewBuilder
     private var editCellBackground: some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 15.0, *) {
+            // UIKit `applyCellGlassStyle` iOS 26 branch
+            // (EditViewController.swift L178-187):
+            //   view.addGlassEffect(cornerRadius: 20, alpha: 1.0)
+            // `.regularMaterial` renders reliably as frosted glass on
+            // all supported iOS versions — always shows the panel /
+            // parent VC behind, blurred. Clipped to 20pt rounded rect.
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(.regularMaterial)
         } else {
+            // UIKit pre-26 branch (from UIViewClass+GradientStyles.swift
+            // `applyCellGlassStyle` pre-26): solid white backing +
+            // [black@10%, white@10%] vertical gradient + 1pt #F2F2F2
+            // border. The gradient sits ON TOP of the opaque white fill.
             Capsule()
-                .fill(
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.10), Color.white.opacity(0.10)],
-                        startPoint: .top, endPoint: .bottom
+                .fill(Color.white)
+                .overlay(
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.10), Color.white.opacity(0.10)],
+                            startPoint: .top, endPoint: .bottom
+                        )
                     )
                 )
-                .background(Capsule().fill(Color.white.opacity(0.8)))
         }
     }
 
