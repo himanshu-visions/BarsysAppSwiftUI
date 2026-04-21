@@ -2382,19 +2382,29 @@ struct BarBotCraftView: View {
     /// dismiss). Completing the API bridge is a follow-up task.
     private func handleRecipeTap(_ recipe: BarBotRecipeElement) {
         HapticService.light()
-        // Detect Barsys-catalog recipe — UIKit L170 uses name + idStr
-        // match against `mergedObject?.answerModel?.barsys?.recipes`.
-        // The SwiftUI BarBotRecipeElement carries `full_recipe_id` as
-        // its sole identifier for AI recipes; a non-nil / non-empty
-        // value means the recipe needs a server fetch.
+        // Detect Barsys-catalog recipe — 1:1 with UIKit
+        // `MainBarBotCell+CollectionView.swift` L170:
+        //   isBarsysRecipe = mergedObject.answerModel.barsys.recipes
+        //                       .contains{ $0.name == mergedRecipe.name
+        //                                  && $0.idStr == mergedRecipe.idStr }
+        //
+        // In SwiftUI the Barsys branch of the chat response pre-fills
+        // `BarBotRecipeElement.full_recipe_id` as an empty string (the
+        // recipe is already saved in the Barsys catalog), whereas
+        // AI-generated recipes have a non-empty `full_recipe_id` that
+        // needs to be fetched via `getFullRecipeApi`. A missing/empty
+        // `full_recipe_id` is therefore the proxy UIKit uses to take
+        // the "direct navigation" branch.
         let isBarsysCached = (recipe.full_recipe_id ?? "").isEmpty
 
         if isBarsysCached {
-            // Direct navigation — matches UIKit "isBarsysRecipe" branch
-            // (L172-188) where the recipe is built inline from the
-            // chat response and pushed immediately.
-            router.push(.recipeDetail(RecipeID(recipe.full_recipe_id ?? UUID().uuidString)),
-                        in: .barBot)
+            // UIKit L172-188 — build a full Recipe from the cached
+            // BarBotRecipeElement and push RecipePage directly (no API
+            // fetch, no waiting popup). Upsert into storage so the
+            // route-by-id handler can resolve the recipe.
+            let fullRecipe = buildRecipeFromBarsysCached(recipe)
+            env.storage.upsert(recipe: fullRecipe)
+            router.push(.recipeDetail(fullRecipe.id), in: .barBot)
             return
         }
 
@@ -2422,6 +2432,77 @@ struct BarBotCraftView: View {
     private func handleFullRecipeFetched(_ recipe: Recipe?) {
         fetchedFullRecipe = recipe
         showWaitingRecipePopup = false
+    }
+
+    /// 1:1 port of UIKit `MainBarBotCell+CollectionView.swift` L172-188.
+    ///
+    /// Converts a Barsys-cached `BarBotRecipeElement` (returned inline in
+    /// the chat response — no `full_recipe_id` fetch required) into a
+    /// fully-populated `Recipe` ready for the Recipe Page. Ingredient
+    /// quantities are floored to 5 ml for non-garnish / non-additional
+    /// rows to match the UIKit `makeAiRecipe` loop.
+    ///
+    /// The resulting `Recipe.id` is stable for the same `BarBotRecipeElement`
+    /// so repeated taps resolve to the same storage entry and the route
+    /// `recipeDetail(id)` push resolves cleanly.
+    private func buildRecipeFromBarsysCached(_ element: BarBotRecipeElement) -> Recipe {
+        // Stable ID: prefer `full_recipe_id` when present (it is for the
+        // Barsys branch even when UIKit pretends it is cached — the field
+        // is still decoded from the server payload), otherwise derive a
+        // deterministic id from the name so a second tap on the same
+        // row resolves to the same storage entry.
+        let idValue: String = {
+            if let fid = element.full_recipe_id, !fid.isEmpty { return fid }
+            let slug = (element.name ?? "cached").lowercased()
+                .replacingOccurrences(of: " ", with: "-")
+            return "barbot-cached-\(slug)"
+        }()
+
+        // UIKit applies 5 ml floor to every non-garnish / non-additional
+        // ingredient. The SwiftUI `BarBotIngredient` does not carry a
+        // category field, so `normalizedIngredients` clamps everything —
+        // in practice Barsys cached rows are all base / mixer entries,
+        // so the behaviour matches the UIKit result on the real payload.
+        let mappedIngredients: [Ingredient] = (element.ingredients ?? []).map { ing in
+            let floored: Double = max(ing.quantity ?? 5.0, 5.0)
+            return Ingredient(
+                name: ing.name ?? "",
+                unit: ing.unit ?? Constants.mlText,
+                notes: nil,
+                category: nil,
+                quantity: floored,
+                perishable: false,
+                substitutes: nil,
+                ingredientOptional: false
+            )
+        }
+
+        let image: ImageModel? = element.imageModel.flatMap { img in
+            guard let url = img.url, !url.isEmpty else { return nil }
+            return ImageModel(url: url, alt: element.name)
+        }
+
+        return Recipe(
+            id: RecipeID(idValue),
+            name: element.name,
+            description: element.descriptions ?? "",
+            image: image,
+            ice: "",
+            ingredients: mappedIngredients,
+            instructions: [],
+            mixingTechnique: "",
+            glassware: Glassware(type: "", chilled: false, rimmed: "", notes: nil),
+            tags: [],
+            variations: nil,
+            ingredientNames: "",
+            isFavourite: false,
+            barsys360Compatible: false,
+            favCreatedAt: nil,
+            isMyDrinkFavourite: false,
+            slug: nil,
+            userId: nil,
+            createdAt: ""
+        )
     }
 }
 
