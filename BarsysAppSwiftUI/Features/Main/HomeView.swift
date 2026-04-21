@@ -685,7 +685,7 @@ struct NavigationRightGlassButtons: View {
             // inside with 7 horizontal padding + 20pt spacing for leading is 5 + traling is 15
             // — matches the UIKit runtime layout where the
             // stackView `KMo-iR-2JY` is 61pt wide inside the
-            // 100pt pill.
+            // 71pt pill.
             HStack(spacing: 7) {
                 leadingButton
                 profileButton
