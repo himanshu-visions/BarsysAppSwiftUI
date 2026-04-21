@@ -487,6 +487,16 @@ struct RecipeDetailView: View {
     @State private var originalIngredients: [Ingredient] = []
     @State private var showUnsavedAlert = false
     @State private var unsavedPopup: BarsysPopup? = nil
+
+    /// 1:1 with UIKit `RecipePageViewController` which shows the same
+    /// `unsavedChangesForRecipe` alert from TWO different entry points:
+    ///   • Craft button tap — on Discard, reset edits then proceed to craft.
+    ///   • Favourite nav-icon tap — on Discard, reset edits then navigate
+    ///     to the Favorites screen (UIKit `navigateToFavourites()`).
+    /// Recording which action triggered the alert lets the shared
+    /// `onPrimary` closure route correctly when Discard is tapped.
+    enum PendingUnsavedAction { case craft, navigateToFavorites }
+    @State private var pendingUnsavedAction: PendingUnsavedAction = .craft
     /// UIKit `RecipePageViewController.didPressAddToFavoriteButton` in
     /// the "Save to My Drinks" branch adds `editVc` as a CHILD view
     /// controller — `self.view.addSubview(editVc.view)` + `addChild` —
@@ -593,10 +603,28 @@ struct RecipeDetailView: View {
                     localIsFavourite = recipe.isFavourite ?? false
                 }
                 // Unsaved changes popup — glass-card style matching UIKit
+                // `unsavedChangesForRecipe` alert. The `pendingUnsavedAction`
+                // state records which CTA opened the popup (craft button
+                // vs top-right favorite nav) so Discard routes correctly.
                 .barsysPopup($unsavedPopup, onPrimary: {
-                    // "Discard" — dismiss handled by nav
+                    // "Discard" tapped — reset edited ingredients to the
+                    // recipe's stored quantities (UIKit
+                    // `viewModel.discardQuantityChanges()`).
+                    loadIngredients(from: recipe)
+                    switch pendingUnsavedAction {
+                    case .navigateToFavorites:
+                        // UIKit `navigateToFavourites()` L348-351:
+                        //   BarBotCoordinator(nav:).showFavourites(tabSelected: 0)
+                        router.push(.favorites)
+                    case .craft:
+                        // Craft button already handles its own post-discard
+                        // path in the craft closure — nothing to do here.
+                        break
+                    }
+                    pendingUnsavedAction = .craft // reset to default
                 }, onSecondary: {
-                    // "Keep editing" — stay on page
+                    // "Keep Editing" — stay on the page with edits intact.
+                    pendingUnsavedAction = .craft
                 })
                 // 1:1 port of UIKit child-VC embed:
                 //   editVc.presentedFromController = self
@@ -1218,50 +1246,70 @@ struct RecipeDetailView: View {
             }
         }
         // Shared 100×48 glass pill (iOS 26+) / bare 61×24 icon stack
-        // (pre-26) with a RECIPE-SPECIFIC heart as the leading icon.
+        // (pre-26) — 1:1 with UIKit `RecipePageViewController` top-right
+        // nav container.
         //
-        // 1:1 UIKit parity: `RecipePageViewController` wraps the
-        // per-recipe favorite button + side-menu button inside the
-        // SAME `navigationRightGlassView` container used by every
-        // other tab-level screen. The only thing that changes is the
-        // leading icon's glyph (`heart.fill` when favourited, `heart`
-        // otherwise) + the action (toggle recipe favorite + toast).
+        // IMPORTANT — UIKit semantics for the leading favorite icon:
+        //
+        //   `didPressFavouriteButton` (RecipePageViewController.swift
+        //    L322-351) does NOT toggle the recipe's like state. It
+        //    **navigates to the Favorites screen** via
+        //    `BarBotCoordinator(navigationController:).showFavourites(tabSelected: 0)`.
+        //
+        //   Toggling the per-recipe "like" state in UIKit is done by
+        //   the BOTTOM button `btnAddToFavourites` (the "Add to
+        //   Favourites" / "Remove from Favourites" action in the
+        //   recipe-page footer) — a separate control with its own
+        //   `likeUnlikeApi` call path.
+        //
+        //   The previous SwiftUI port wired the top-right icon to the
+        //   toggle behaviour, which conflated the two. Now the
+        //   top-right icon matches UIKit — a navigation shortcut to
+        //   the Favorites tab (which is the same shortcut Home /
+        //   MyBar / ControlCenter / Explore already ship).
+        //
+        //   Guard: if the user has unsaved quantity edits, UIKit shows
+        //   the `unsavedChangesForRecipe` confirmation alert before
+        //   navigating (L333-346). SwiftUI mirrors the same guard via
+        //   the existing `unsavedPopup` state.
         ToolbarItemGroup(placement: .topBarTrailing) {
             NavigationRightGlassButtons(
-                leadingSystemImage: localIsFavourite
-                    ? "heart.fill"
-                    : "heart",
-                leadingAccessibilityLabel: "Favourite",
-                onFavorites: {
-                    let willBeFav = !localIsFavourite
-                    localIsFavourite = willBeFav
-                    env.storage.toggleFavorite(recipe.id)
-                    // 1:1 port of UIKit: likeUnlikeApi + revert on failure
-                    Task {
-                        do {
-                            _ = try await env.api.likeUnlike(
-                                recipeId: recipe.id.value, isLike: willBeFav)
-                        } catch {
-                            localIsFavourite = !willBeFav
-                            env.storage.toggleFavorite(recipe.id)
-                        }
-                    }
-                    env.analytics.track(
-                        (willBeFav ? TrackEventName.favouriteRecipeAdded
-                                   : TrackEventName.favouriteRecipeRemoved).rawValue
-                    )
-                    env.alerts.show(
-                        message: willBeFav
-                            ? Constants.likeSuccessMessage
-                            : Constants.unlikeSuccessMessage
-                    )
-                },
+                onFavorites: { handleFavoritesNavTap() },
                 onProfile: {
                     withAnimation(.easeInOut(duration: 0.4)) {
                         router.showSideMenu = true
                     }
                 }
             )
+        }
+    }
+
+    /// 1:1 with UIKit `didPressFavouriteButton` + `showUnsavedChangesAlertForFavourites`
+    /// (RecipePageViewController.swift L322-346).
+    ///   1. HapticService.light()
+    ///   2. If the user has unsaved quantity edits → show
+    ///      `unsavedChangesForRecipe` alert with Keep Editing / Discard.
+    ///      On Discard → revert edits + navigate to Favorites.
+    ///      On Keep Editing → cancel silently.
+    ///   3. Else → navigate straight to Favorites.
+    private func handleFavoritesNavTap() {
+        HapticService.light()
+        if hasUnsavedChanges {
+            unsavedPopup = .confirm(
+                title: Constants.unsavedChangesForRecipe,
+                message: nil,
+                primaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                secondaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                isDestructive: true
+            )
+            // Tag the pending action so `onPrimary` (Discard) routes to
+            // Favorites instead of starting a craft. Reuses the same
+            // `unsavedPopup` binding; the discard handler already
+            // restores `editedIngredients` from the backing recipe —
+            // after that we push Favorites.
+            pendingUnsavedAction = .navigateToFavorites
+        } else {
+            router.push(.favorites)
         }
     }
 

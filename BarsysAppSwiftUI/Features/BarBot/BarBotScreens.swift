@@ -104,6 +104,45 @@ struct BarBotActionCard: Codable, Identifiable, Hashable {
 
     /// Ports filterActionCards — only keep the four supported types.
     static let allowedTypes: Set<String> = ["chat", "device", "craft", "shop"]
+
+    /// JSON mapping — the API schema keys the subroute field as
+    /// `action_id` (UIKit `BarBotActionCardModel.actionID` decodes
+    /// from the same key via its CodingKeys). Previously the SwiftUI
+    /// port decoded from `value`, which doesn't exist in the payload —
+    /// so `value` was always `nil`, making every `"device"` card fall
+    /// through to the `.switchTab(.homeOrControlCenter)` default and
+    /// silently jumping to the Home/ControlCenter tab instead of
+    /// triggering the pair-device / clean-device / setup action.
+    /// Decoding from BOTH keys keeps backward compatibility with any
+    /// mock/sample payloads that used `value` directly.
+    enum CodingKeys: String, CodingKey {
+        case type, label, value, action_id
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.type  = try c.decodeIfPresent(String.self, forKey: .type)
+        self.label = try c.decodeIfPresent(String.self, forKey: .label)
+        // Prefer `action_id` (the real API field); fall back to `value`
+        // for legacy fixtures.
+        self.value = try c.decodeIfPresent(String.self, forKey: .action_id)
+            ?? c.decodeIfPresent(String.self, forKey: .value)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(type,  forKey: .type)
+        try c.encodeIfPresent(label, forKey: .label)
+        // Emit as the canonical API key so downstream consumers can
+        // round-trip the payload without the field disappearing.
+        try c.encodeIfPresent(value, forKey: .action_id)
+    }
+
+    init(type: String?, label: String?, value: String?) {
+        self.type = type
+        self.label = label
+        self.value = value
+    }
 }
 
 struct BarBotSession: Codable, Identifiable, Hashable {
@@ -1405,19 +1444,30 @@ struct ChatMessageRow: View {
         .frame(minHeight: 45)
     }
 
-    // Answer block — ports `recipeTypeAnswerMainView`:
-    //   • sender avatar (senderImageView) sits on the left side.
-    //   • answer bubble = PaddingLabel: 12pt charcoalGray on white, 4pt radius.
-    //   • Section headers above recipe/mixlist carousels (Barsys Recipes /
-    //     Barsys Mixlists/Cocktail Kits you can Buy).
-    //   • Action-card header "Most asked suggestions" (12pt bold,
-    //     charcoalTextColor50Alpha).
+    // Answer block — 1:1 port of `MainBarBotCell.xib` RecipeView
+    // (`VgW-kt-PBR`, lines 142-180 of the xib).
+    //
+    // UIKit places `senderImageView` (the 32×32 avatar) on the
+    // TRAILING side of the QUESTION view only (`eyu-xb-YDE` at
+    // frame x=288, constraint `vo8-hG-opk: leading = questionText.trailing
+    // + 10`). The ANSWER view (`VgW-kt-PBR`) contains ONLY the
+    // `PaddingLabel` answer text and the recipe/mixlist scrolls —
+    // NO avatar image. The previous SwiftUI port added an extra
+    // `senderImageView` on the LEFT of the answer, which doesn't
+    // match UIKit.
+    //
+    // Layout content:
+    //   • answer bubble = PaddingLabel: 12pt charcoalGray on white,
+    //     4pt corner, padding (top=5, left=0, bottom=5, right=5).
+    //   • Section headers above recipe/mixlist carousels.
+    //   • Action-card header "Most asked suggestions" (12pt bold).
+    //
+    // Alignment: the answer view pins to the cell's LEADING edge
+    // (UIKit `J2m-ue-rS8` frame x=0) with no avatar inset — the
+    // text starts flush with the question bubble's left edge
+    // (which itself respects the cell's leading padding).
     @ViewBuilder private var answer: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image("senderImageView")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 32, height: 32)
+        HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 if let text = msg.answerText, !text.isEmpty {
                     Text(text)
@@ -1883,7 +1933,17 @@ struct BarBotCraftView: View {
                                 .id(msg.id)
                             }
                         }
-                        .padding(16)
+                        // 1:1 port of UIKit table constraints
+                        // `7og-f6-cQc` / `Al5-qR-aTc` (BarBot.storyboard):
+                        //   abC-OL-V6v.leading  = MXV-bk-CV2.leading  + 24
+                        //   abC-OL-V6v.trailing = MXV-bk-CV2.trailing - 24
+                        // The tableView `NdP-HU-tFF` sits flush inside
+                        // abC-OL-V6v (0pt inset), so the effective L/R
+                        // margin from the screen edge is 24pt, not 16pt.
+                        // The previous port used a symmetric `padding(16)`
+                        // which cut 8pt off each side vs UIKit.
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 16)
                         .background(
                             GeometryReader { geo in
                                 Color.clear.preference(

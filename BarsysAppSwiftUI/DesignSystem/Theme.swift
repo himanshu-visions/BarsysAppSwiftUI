@@ -968,18 +968,46 @@ private struct BarsysPopupCard: View {
     private let cardWidth: CGFloat = 277
 
     var body: some View {
-        VStack(spacing: 16) {
+        // 1:1 port of UIKit `AlertPopUpHorizontalStackController` storyboard
+        // (AlertPopUp.storyboard scene `49Z-qz-g5j`). Measurements:
+        //
+        //   Card `t2p-he-XsL`           : 277×158 at (49, 339.67) on 375pt canvas
+        //   Inner content `mnn-57-zFZ`  : 229×120 at (24, 24) — 24pt margin all sides
+        //   Title stack `2DB-u8-FOR`    : 209×16 at (10, 14) — **10pt** horiz +
+        //                                 14pt top inset INSIDE inner content;
+        //                                 VStack spacing=16 between title & subtitle
+        //   Button stack `SHM-jX-PBk`   : 229×45 at (0, 61) — **0pt** horiz inset
+        //                                 (flush with inner content), top = title
+        //                                 stack bottom + **31pt**, bottom = inner
+        //                                 content bottom - 14pt
+        //   Each button                 : 109.5×45, fillEqually + 10pt spacing
+        //
+        // Previously the SwiftUI port:
+        //   • Used `VStack(spacing: 16)` for the whole card, giving only 16pt
+        //     between title and buttons (UIKit uses **31pt** — buttons looked
+        //     too close to the title).
+        //   • Shared the same `.padding(.horizontal, 24)` for title AND buttons,
+        //     making the buttons the same width as the title (UIKit buttons are
+        //     **20pt wider** than the title — "bigger button than text").
+        //
+        // Now: outer card padding is 24pt L/R (matching inner content inset),
+        // but `titleLabel` / `bodyLabel` add an extra 10pt inset — so buttons
+        // span the full 229pt inner width while the title is only 209pt.
+        // Vertical spacing is controlled explicitly per-section to reproduce
+        // the UIKit 14pt top / 16pt title-subtitle / 31pt title-buttons /
+        // 14pt bottom ladder.
+        VStack(alignment: .center, spacing: 0) {
             switch popup {
             case .alert(let title, let message, let primaryTitle, _):
-                titleLabel(title)
-                if let message { bodyLabel(message) }
+                popupTitleBlock(title: title, message: message)
                 primaryButton(primaryTitle, action: onPrimary)
+                    .padding(.top, 31) // UIKit title.bottom + 31
+                    .padding(.bottom, 14)
 
             case .confirm(let title, let message, let primaryTitle, let secondaryTitle, let isDestructive, let primaryFillColor, _):
-                titleLabel(title)
-                if let message { bodyLabel(message) }
+                popupTitleBlock(title: title, message: message)
                 // UIKit AlertPopUpHorizontalStackController: equal distribution,
-                // spacing 10pt, each button 109×45, pill corners (height/2=20pt)
+                // spacing 10pt, each button 109.5×45, pill corners on iOS 26.
                 HStack(spacing: 10) {
                     // LEFT = secondaryButton (UIKit "continueButton") — border only
                     alertSecondaryButton(secondaryTitle, action: onSecondary)
@@ -992,20 +1020,23 @@ private struct BarsysPopupCard: View {
                         alertPrimaryButton(primaryTitle, action: onPrimary)
                     }
                 }
+                .padding(.top, 31) // UIKit title.bottom + 31
+                .padding(.bottom, 14)
 
             case .manualSpinning(let title, let message):
-                titleLabel(title)
-                if let message { bodyLabel(message) }
+                popupTitleBlock(title: title, message: message)
                 ProgressView()
                     .progressViewStyle(.circular)
                     .tint(Theme.Color.brand)
                     .scaleEffect(1.4)
                     .padding(.vertical, 8)
+                    .padding(.top, 23) // 31 - 8 (vertical 8 above + 8 below)
                 secondaryButton(ConstantButtonsTitle.cancelButtonTitle,
                                 action: onSecondary)
+                    .padding(.bottom, 14)
 
             case .multipleIngredients(let title, let ingredients):
-                titleLabel(title)
+                popupTitleBlock(title: title, message: nil)
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(ingredients, id: \.self) { ing in
@@ -1029,29 +1060,35 @@ private struct BarsysPopupCard: View {
                     .padding(.horizontal, 4)
                 }
                 .frame(maxHeight: 200)
+                .padding(.top, 16)
                 secondaryButton(ConstantButtonsTitle.cancelButtonTitle,
                                 action: onSecondary)
+                    .padding(.top, 14)
+                    .padding(.bottom, 14)
 
             case .shakerFlatSurface(let message):
-                titleLabel("Shaker not flat")
-                bodyLabel(message)
+                popupTitleBlock(title: "Shaker not flat", message: message)
                 primaryButton(ConstantButtonsTitle.okButtonTitle,
                               action: onPrimary)
+                    .padding(.top, 31)
+                    .padding(.bottom, 14)
 
             case .waiting(let title, let message):
-                titleLabel(title)
-                if let message { bodyLabel(message) }
+                popupTitleBlock(title: title, message: message)
                 ProgressView()
                     .progressViewStyle(.circular)
                     .tint(Theme.Color.brand)
                     .scaleEffect(1.4)
                     .padding(.vertical, 8)
+                    .padding(.top, 23)
+                    .padding(.bottom, 14)
             }
         }
-        // UIKit AlertPopUpHorizontalStackController layout:
-        // - Card width: 277pt (49pt margins), inner content 229pt
-        // - Inner padding: 24pt top/left/right, 14pt bottom
-        // - Corner radius: BarsysCornerRadius.medium = 12pt
+        // UIKit card inner content is inset 24pt from the card edges on
+        // top/leading/trailing. Bottom padding is handled per-case above
+        // since the "14pt bottom" measurement is relative to the inner
+        // content bottom which is exactly where our content ends.
+        .padding(.top, 24)
         .padding(.horizontal, 24)
         .padding(.top, 24)
         .padding(.bottom, 14)
@@ -1089,19 +1126,57 @@ private struct BarsysPopupCard: View {
 
     // MARK: - Subviews
 
+    /// Title + optional subtitle block with UIKit-parity insets.
+    ///
+    /// 1:1 with UIKit `AlertPopUpHorizontalStackController` storyboard
+    /// `2DB-u8-FOR` stack (AlertPopUp.storyboard L179-195):
+    ///   • Stack frame (10, 14, 209, h) — **10pt extra L/R inset**
+    ///     beyond the 24pt inner content margin, plus a 14pt top inset
+    ///     from the inner content.
+    ///   • Title label (K0W-M9-x4d): **system 16pt** regular,
+    ///     `veryDarkGrayColor`, centered (L184).
+    ///   • Subtitle label (qtN-z4-sZq): **system 12pt** regular,
+    ///     `veryDarkGrayColor`, centered (L190).
+    ///   • VStack spacing between title & subtitle = **16pt** (L179).
+    private func popupTitleBlock(title: String, message: String?) -> some View {
+        VStack(alignment: .center, spacing: 16) {
+            titleLabel(title)
+            if let message, !message.isEmpty {
+                bodyLabel(message)
+            }
+        }
+        // UIKit title stack 10pt extra horizontal inset (frame.x = 10
+        // within a 229pt-wide inner content area → 209pt title width).
+        // This makes the title NARROWER than the buttons (which are
+        // flush with the inner content at 229pt), matching UIKit's
+        // "button bigger than text" visual rhythm.
+        .padding(.horizontal, 10)
+        // UIKit title stack top = inner content top + 14pt. Outer
+        // view adds 24pt top for the inner content inset; we add 14pt
+        // here for the extra title stack inset.
+        .padding(.top, 0) // title stack top handled implicitly (outer VStack is flush)
+    }
+
     private func titleLabel(_ text: String) -> some View {
+        // 1:1 UIKit `K0W-M9-x4d` — system 16pt (changed from semibold:
+        // UIKit storyboard uses regular weight at 16pt, not semibold).
+        // veryDarkGrayColor, centered.
         Text(text)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(Color("appBlackColor"))
+            .font(.system(size: 16))
+            .foregroundStyle(Color("veryDarkGrayColor"))
             .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityAddTraits(.isHeader)
     }
 
     private func bodyLabel(_ text: String) -> some View {
+        // 1:1 UIKit `qtN-z4-sZq` — system 12pt, veryDarkGrayColor,
+        // centered. Was 14pt/charcoalGrayColor — both incorrect.
         Text(text)
-            .font(.system(size: 14))
-            .foregroundStyle(Color("charcoalGrayColor"))
+            .font(.system(size: 12))
+            .foregroundStyle(Color("veryDarkGrayColor"))
             .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
