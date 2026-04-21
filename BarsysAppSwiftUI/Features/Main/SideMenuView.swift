@@ -1021,17 +1021,23 @@ struct DeviceConnectedPopup: View {
 
     var body: some View {
         ZStack {
-            // Full-screen frosted backdrop — 1:1 with UIKit
-            // `jVb-RO-feQ.blurEffect = .prominent` (a heavier frost than
-            // `.thin` / `.regular`). SwiftUI's `.regularMaterial` is the
-            // closest documented bridge to the iOS `prominent` blur
-            // intensity — `.thinMaterial` was too subtle and let the
-            // page background bleed through cleanly enough to make the
-            // popup card lose contrast against the connected-device
-            // illustration. Tap anywhere outside the card to dismiss.
-            Rectangle()
-                .fill(.regularMaterial)
+            // Backdrop — 1:1 with UIKit storyboard: `jVb-RO-feQ`
+            // (UIVisualEffectView) ships with `alpha="0.0"` and the
+            // full-screen button `Zj9-2g-TnC` has no action. The
+            // presenting VC is shown with `.overFullScreen`
+            // + `backgroundColor = .clear`, so the home screen stays
+            // visible and UNBLURRED behind the popup. Only the popup
+            // CARD itself carries the glass effect (its `.regularMaterial`
+            // fill natively blurs what's beneath it in its bounds).
+            //
+            // Previously this layer filled the whole screen with
+            // `.regularMaterial`, frosting the entire home screen —
+            // which doesn't match the UIKit design. Now the layer is
+            // an invisible tap-catcher only; the card provides the
+            // glass effect exactly where UIKit puts it.
+            Color.black.opacity(0.001)
                 .ignoresSafeArea()
+                .contentShape(Rectangle())
                 .onTapGesture { isPresented = false }
                 .transition(.opacity)
 
@@ -1062,7 +1068,16 @@ struct DeviceConnectedPopup: View {
                                 lineWidth: 1
                             )
                     )
-                    .barsysShadow(.glass)
+                    // UIKit `addBlurEffect` shadow values
+                    // (UIViewClass+GlassEffects.swift L137-140):
+                    //   color  = black @ 0.20 alpha
+                    //   opacity = 0.3  (effective black @ 0.06)
+                    //   radius  = 25
+                    //   offset  = (0, 10)
+                    // Wider, softer drop than `.barsysShadow(.glass)`
+                    // — matches the diffuse halo around the popup in
+                    // the UIKit reference screenshot.
+                    .shadow(color: .black.opacity(0.06), radius: 25, x: 0, y: 10)
 
                 // Inner content (`SDQ-Vi-uWQ`): 247 × 277, top=30,
                 // leading=24, trailing=24, bottom=30 of card.
@@ -1122,6 +1137,10 @@ struct DeviceConnectedPopup: View {
                                         .stroke(Color("borderColor"), lineWidth: 1)
                                 )
                         }
+                        // UIKit `btnDisconnect.addBounceEffect()` —
+                        // press-scale animation on touch. `BounceButtonStyle`
+                        // (BarBotScreens.swift) is the shared 1:1 port.
+                        .buttonStyle(BounceButtonStyle())
                         .accessibilityLabel("Disconnect device")
                         .accessibilityHint("Disconnects \(device.name)")
                         .padding(.bottom, 30)
@@ -1137,23 +1156,33 @@ struct DeviceConnectedPopup: View {
                 .frame(width: cardWidth, height: cardHeight)
 
                 // Cross button (`wcP-Xk-wlX`): 50 × 50 at top-right
-                // (top=0, trailing=0 of card).
+                // (top=0, trailing=0 of card). Uses the shipped
+                // `crossIcon` asset (UIKit storyboard image="crossIcon")
+                // tinted `appBlackColor` via template rendering mode —
+                // NOT an SF-symbol `xmark` which would look slightly
+                // different than the UIKit popup.
                 Button {
                     HapticService.light()
                     isPresented = false
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .regular))
+                    Image("crossIcon")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 12, height: 12)
                         .foregroundStyle(Color("appBlackColor"))
                         .frame(width: 50, height: 50)
                 }
                 .accessibilityLabel("Close")
+                .accessibilityHint("Dismiss device connected popup")
             }
             .frame(width: cardWidth, height: cardHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .transition(.scale.combined(with: .opacity))
         }
         .animation(.easeInOut(duration: 0.25), value: isPresented)
+        // UIKit `DeviceConnectedController.viewDidLoad()` plays a
+        // success haptic the moment the popup is shown.
+        .onAppear { HapticService.success() }
     }
 
     /// Asset names match UIKit `UIImage.barsys360 / .barsysCoaster /
