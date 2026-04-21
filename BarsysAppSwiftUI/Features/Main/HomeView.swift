@@ -681,8 +681,8 @@ struct NavigationRightGlassButtons: View {
         if #available(iOS 26.0, *) {
             // Glass pill (iOS 26+): **exactly 100×48** to match
             // UIKit `navigationRightGlassView` frame (storyboard
-            // `Kri-Ka-NoE`: width=100, height=48). Icons sit
-            // inside with 14pt horizontal padding + 16pt spacing
+            // `Kri-Ka-NoE`: width=71, height=48). Icons sit
+            // inside with 7 horizontal padding + 20pt spacing for leading is 5 + traling is 15
             // — matches the UIKit runtime layout where the
             // stackView `KMo-iR-2JY` is 61pt wide inside the
             // 100pt pill.
