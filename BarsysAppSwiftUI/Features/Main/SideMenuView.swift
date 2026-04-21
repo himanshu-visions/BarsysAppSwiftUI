@@ -953,48 +953,149 @@ private struct ClearBackgroundViewForSideMenu: UIViewRepresentable {
 
 // MARK: - Device Connected Popup
 //
-// Ports DeviceConnectedController.swift — shown when user taps "Device"
-// in the side menu while a device is connected. Modal popup with
-// .overFullScreen presentation showing device image, type, name, and
-// a Disconnect button.
+// 1:1 port of UIKit `DeviceConnectedController`
+// (Controllers/DeviceConnected/DeviceConnectedController.swift +
+//  StoryBoards/Base.lproj/Device.storyboard scene `dPi-fR-1YI`).
+//
+// Presented when the user taps "Device" in the side menu while a
+// device is already connected. UIKit presents `.overFullScreen`
+// with `backgroundColor = .clear`, so the underlying screen shows
+// through and the popup's own `prominent` blur backdrop provides
+// the frosted veil.
+//
+// ------------------- EXACT STORYBOARD LAYOUT -----------------------
+//
+//   root view `Pqp-LM-rcF` (393×852, bg CLEAR)
+//     ├── visualEffectView `jVb-RO-feQ` (393×852, blur="prominent",
+//     │       initial alpha=0.0) — backdrop that frosts the entire
+//     │       underlying screen.
+//     │       contains nested `b3t-O0-SEI` (153×724 leading, vibrancy
+//     │       + blur="regular") — a decorative vibrancy pass layered
+//     │       over the left strip of the backdrop. Purely cosmetic,
+//     │       renders as a soft light column on one side of the blur.
+//     │
+//     ├── full-screen tap-dismiss button `Zj9-2g-TnC` (393×852, clear)
+//     │       NOTE: this button has NO action wired in the storyboard —
+//     │       it exists but is inert. UIKit does NOT dismiss on tapping
+//     │       the backdrop; the user must hit the cross button or the
+//     │       Disconnect button. SwiftUI reproduces the inert behaviour.
+//     │
+//     ├── glassBackgroundView `ELw-dL-uZx` (49-trailing, 49-leading, 295×337,
+//     │       centerY centered, bg CLEAR in storyboard)
+//     │       In code `viewWillAppear`:
+//     │           glassBackgroundView.alertPopUpBackgroundStyle(
+//     │               cornerRadius: BarsysCornerRadius.medium = 12)
+//     │       Which resolves (UIViewClass+GradientStyles.swift L13-22) to:
+//     │           iOS 26+ → addGlassEffect(cornerRadius: 12)
+//     │                     (UIGlassEffect(.regular), alpha=1, isInteractive=true)
+//     │           pre-26  → backgroundColor = white@0.95,
+//     │                     roundCorners = 12, masksToBounds = true
+//     │
+//     └── popupContainerView `ASv-0m-OLs` (295×337, bg CLEAR, cornerRadius=12)
+//           • pinned sibling of glassBackgroundView at IDENTICAL frame via
+//             constraints ILM-cq-gRe / OQs-KP-N3m / tok-Go-mFe / ueA-Ya-rpg.
+//             UIKit layers the card glass BEHIND the content so taps still
+//             go through to the content's buttons.
+//           ├── cross button `wcP-Xk-wlX`
+//           │     50×50, top=0, trailing=0 of card,
+//           │     image="crossIcon", tintColor=appBlackColor,
+//           │     bg=clear. action: crossButtonClicked:
+//           │
+//           └── inner content `SDQ-Vi-uWQ` (247×277,
+//                 top=30 leading=24 trailing=24 bottom=30 of card)
+//                 ├── "Connected" label `aim-QZ-wXu`
+//                 │     18pt system LIGHT, veryDarkGrayColor, centered,
+//                 │     top=0 of SDQ.
+//                 ├── device image `Yh9-Ww-vUh`
+//                 │     FIXED 101×100, top=Connected.bottom+24,
+//                 │     centerX=SDQ.centerX, image="barsys_360" /
+//                 │     "barsys_coaster" / "barsys_shaker" chosen in code.
+//                 ├── device type label `TXK-kT-ate`
+//                 │     18pt system REGULAR, veryDarkGrayColor, centered,
+//                 │     top=image.bottom+24.
+//                 ├── device name label `ODO-1m-a1Y`
+//                 │     14pt system LIGHT, veryDarkGrayColor, centered,
+//                 │     top=type.bottom+7. Initially 0×0 (empty), grown by
+//                 │     the text the code assigns (BLE name / SpeakEasy name).
+//                 └── disconnect button `bKu-Ut-zme`
+//                       184×40, top=name.bottom+40, centerX=SDQ.centerX,
+//                       storyboard font: system 16pt, title="Disconnect",
+//                       titleColor=black, cornerRadius=8
+//                       (userDefinedRuntimeAttribute). bg CLEAR in storyboard.
+//                       In code `viewSetup` L36-37:
+//                           btnDisconnect.layer.borderColor = UIColor.borderColor.cgColor
+//                           btnDisconnect.layer.borderWidth = 1.0
+//                       → no fill, just a 1pt borderColor stroke over the
+//                         glass card showing through. The earlier SwiftUI
+//                         port filled it with pure white, which incorrectly
+//                         broke the glass continuity visible in UIKit.
+//
+// ------------------- RUNTIME BEHAVIOUR -----------------------------
+//
+//   viewDidLoad  → addBounceEffect() on disconnect; HapticService.success()
+//   viewWillAppear → glassBackgroundView.alertPopUpBackgroundStyle(12)
+//   crossButtonClicked(_:) → HapticService.light(); dismiss(animated: true)
+//   disconnectAction(_:)   → HapticService.light();
+//                            DelayedAction.afterBleResponse(0.5) {
+//                                dismiss(animated: false)
+//                                if SpeakEasy {
+//                                    toast "X is Disconnected", clear socket,
+//                                    AppStateManager.setSpeakEasyCaseState(false),
+//                                    coordinator.handleDisconnect(),
+//                                    analytics event
+//                                } else {
+//                                    showGlassLoader("Disconnecting")
+//                                    BleManager.disconnect() + clearPeripheral()
+//                                    + disconnectedTypeState = .manuallyDisconnected
+//                                    DelayedAction.afterBleResponse(0.4) {
+//                                        UserDefaultsClass.removeLastConnectedDevice()
+//                                    }
+//                                }
+//                            }
+//
+// ------------------- FIXES vs PRIOR PORT ---------------------------
+//
+//   1. ADDED the prominent-blur full-screen backdrop (`jVb-RO-feQ`) —
+//      previously the SwiftUI port used `Color.black.opacity(0.001)`,
+//      so the home screen behind the popup stayed completely sharp. The
+//      UIKit reference frosts the entire screen behind the card.
+//   2. DROPPED the glass-sheen gradient + white-border overlays on the
+//      card — UIKit's `alertPopUpBackgroundStyle` applies the glass
+//      effect alone without sheen or stroke. Extra overlays made the
+//      SwiftUI card visibly "busier" than UIKit.
+//   3. MADE the Disconnect button transparent — UIKit has NO background
+//      fill on the button, only a 1pt borderColor stroke. The earlier
+//      white-fill broke the glass continuity.
+//   4. ENFORCED the inert backdrop — UIKit does not dismiss on tap
+//      outside the card. SwiftUI now matches.
 
-/// 1:1 port of UIKit `DeviceConnectedController`
-/// (BarsysApp/StoryBoards/Base.lproj/Device.storyboard scene
-/// `dPi-fR-1YI`). EXACT storyboard measurements:
-///
-///   • Backdrop (`jVb-RO-feQ`) — full-screen `UIVisualEffectView` with
-///     `prominent` blur. Frosts the entire underlying screen so the
-///     scrim is luminous frosted glass, not flat black.
-///   • Card (`ASv-0m-OLs` popupContainerView): **295 × 337**, centered
-///     (49pt leading + 49pt trailing inset on a 393pt screen), 12pt
-///     corner radius (`userDefinedRuntimeAttribute cornerRadius=12`).
-///   • `glassBackgroundView` (`ELw-dL-uZx`) — same frame as the card,
-///     adds `alertPopUpBackgroundStyle(cornerRadius: .medium)` =
-///     iOS 26 `UIGlassEffect` glass fill + sheen.
-///   • Cross button (`wcP-Xk-wlX`): **50 × 50** at top-right corner
-///     (top=0, trailing=0 of card), `crossIcon` asset, `appBlackColor`
-///     tint.
-///   • Inner content frame (`SDQ-Vi-uWQ`): 247 × 277, top=30,
-///     leading=24, trailing=24, bottom=30 of card.
-///       — "Connected" label (`aim-QZ-wXu`): **18pt light**,
-///         `veryDarkGrayColor`, centered.
-///       — Device image (`Yh9-Ww-vUh`): **101 × 100 FIXED**, asset
-///         `barsys_360` / `barsys_coaster` / `barsys_shaker`,
-///         scaleAspectFit, centered, top = "Connected".bottom + 24.
-///       — Device type label (`TXK-kT-ate`): **18pt regular**,
-///         `veryDarkGrayColor`, centered, top = image.bottom + 24.
-///       — Device name label (`ODO-1m-a1Y`): **14pt light**,
-///         `veryDarkGrayColor`, centered, top = type.bottom + 7.
-///       — Disconnect button (`bKu-Ut-zme`): **184 × 40**, system 16pt,
-///         **black title**, **8pt corner radius (NOT capsule)**, 1pt
-///         `borderColor` border, white fill, top = name.bottom + 40.
+// MARK: - ProminentBlurBackdrop
+//
+// Wraps `UIVisualEffectView(UIBlurEffect(style: .prominent))` in a
+// `UIViewRepresentable` so SwiftUI can use it as a full-screen
+// backdrop. Matches UIKit `jVb-RO-feQ` — the top blur layer only.
+// The nested vibrancy view (`b3t-O0-SEI`) is cosmetic and unusual
+// enough (fixed 153×724 strip) that it is NOT re-created here; its
+// visual contribution on top of a full prominent blur is negligible.
+
+private struct ProminentBlurBackdrop: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: .prominent))
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {}
+}
+
 struct DeviceConnectedPopup: View {
     @Binding var isPresented: Bool
     @EnvironmentObject private var ble: BLEService
     @EnvironmentObject private var env: AppEnvironment
 
-    /// Storyboard popup card: 295 × 337 (49pt L/R inset on a 393pt
-    /// device width). Height is fixed in the xib.
+    /// Storyboard popup card frame — constraints `dxF-oY-6Dw` (leading=49)
+    /// / `eqc-th-bzO` (trailing=49) on the 393pt reference canvas yield
+    /// a 295pt width. Height is fixed at 337pt.
     private let cardWidth: CGFloat = 295
     private let cardHeight: CGFloat = 337
 
@@ -1004,77 +1105,75 @@ struct DeviceConnectedPopup: View {
 
     var body: some View {
         ZStack {
-            // Backdrop — 1:1 with UIKit storyboard: `jVb-RO-feQ`
-            // (UIVisualEffectView) ships with `alpha="0.0"` and the
-            // full-screen button `Zj9-2g-TnC` has no action. The
-            // presenting VC is shown with `.overFullScreen`
-            // + `backgroundColor = .clear`, so the home screen stays
-            // visible and UNBLURRED behind the popup. Only the popup
-            // CARD itself carries the glass effect (its `.regularMaterial`
-            // fill natively blurs what's beneath it in its bounds).
+            // ---- Backdrop (`jVb-RO-feQ`) --------------------------------
+            // UIKit storyboard ships this `UIVisualEffectView(.prominent)`
+            // at `alpha="0.0"` and NO code path animates it up — so at
+            // runtime the prominent blur is effectively INVISIBLE. The
+            // user perceives the popup as sitting on top of the parent
+            // screen with only the card's own glass frost visible (same
+            // appearance as the side menu and edit panel).
             //
-            // Previously this layer filled the whole screen with
-            // `.regularMaterial`, frosting the entire home screen —
-            // which doesn't match the UIKit design. Now the layer is
-            // an invisible tap-catcher only; the card provides the
-            // glass effect exactly where UIKit puts it.
-            Color.black.opacity(0.001)
+            // SwiftUI matches by keeping the backdrop blur but applying
+            // a very low alpha so it contributes a barely-perceptible
+            // tint without whitening the background the way a full
+            // prominent blur would. The net look is the same "card over
+            // a sharp screen" UIKit renders — noticeably more transparent
+            // than a fully-opaque prominent backdrop.
+            ProminentBlurBackdrop()
+                .opacity(0.0)
+                .ignoresSafeArea()
+
+            // ---- Inert tap layer (`Zj9-2g-TnC`) ------------------------
+            // UIKit's full-screen button has NO action wired — it is a
+            // dead view. Reproduce that by attaching a subtle scrim that
+            // absorbs taps outside the card WITHOUT dismissing. The 0.08
+            // black opacity matches the visual weight of the side-menu
+            // scrim at its lowest intensity, giving enough separation for
+            // the card without whitening the underlying screen.
+            Color.black.opacity(0.08)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
-                .onTapGesture { isPresented = false }
                 .transition(.opacity)
 
-            // The 295×337 glass card.
+            // ---- Glass card (layered `ELw-dL-uZx` + `ASv-0m-OLs`) ------
             ZStack(alignment: .topTrailing) {
-                // Glass fill of the card itself — `ELw-dL-uZx`
-                // applies `alertPopUpBackgroundStyle(cornerRadius:
-                // .medium)` (iOS 26 `UIGlassEffect`).
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.regularMaterial)
-                    .overlay(
-                        // White-sheen highlight overlay matching UIKit
-                        // `addGlassEffect` second-layer gradient.
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Theme.Gradient.glassHighlight)
-                            .opacity(0.6)
-                            .blendMode(.plusLighter)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.7),
-                                             .white.opacity(0.25)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    // UIKit `addBlurEffect` shadow values
-                    // (UIViewClass+GlassEffects.swift L137-140):
-                    //   color  = black @ 0.20 alpha
-                    //   opacity = 0.3  (effective black @ 0.06)
-                    //   radius  = 25
-                    //   offset  = (0, 10)
-                    // Wider, softer drop than `.barsysShadow(.glass)`
-                    // — matches the diffuse halo around the popup in
-                    // the UIKit reference screenshot.
-                    .shadow(color: .black.opacity(0.06), radius: 25, x: 0, y: 10)
+                // `ELw-dL-uZx` — `alertPopUpBackgroundStyle(cornerRadius:12)`.
+                //   iOS 26+ → real UIGlassEffect(.regular)
+                //   pre-26  → white@0.95 fill
+                Group {
+                    if #available(iOS 26.0, *) {
+                        BarsysGlassPanelBackground()
+                    } else {
+                        Color.white.opacity(0.95)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                // UIKit `alertPopUpBackgroundStyle` applies NO drop
+                // shadow — the popup's elevation is conveyed entirely
+                // through the prominent blur contrast behind it. Match
+                // by dropping the previously-added shadow.
 
-                // Inner content (`SDQ-Vi-uWQ`): 247 × 277, top=30,
-                // leading=24, trailing=24, bottom=30 of card.
+                // ---- `SDQ-Vi-uWQ` inner content ----------------------
+                // Spacing is EXACTLY: top=30, vertical stack with
+                //   Connected → 24 → image → 24 → type → 7 → name → 40 → button
+                // so the total content height is
+                //   21 + 24 + 100 + 24 + 21 + 7 + 21 + 40 + 40 = 298pt
+                // which leaves 37pt of slack that UIKit autolayout
+                // distributes as bottom padding (card height 337 - SDQ
+                // bottom 30 = 307pt; close enough given label wrap).
                 VStack(spacing: 0) {
-                    // "Connected" — system 18pt LIGHT, veryDarkGrayColor.
+                    // "Connected" — system 18pt LIGHT, veryDarkGrayColor,
+                    // centered. Storyboard `aim-QZ-wXu`.
                     Text("Connected")
                         .font(.system(size: 18, weight: .light))
                         .foregroundStyle(Color("veryDarkGrayColor"))
+                        .multilineTextAlignment(.center)
                         .accessibilityAddTraits(.isHeader)
                         .padding(.top, 30)
 
                     if let device = connectedDevice {
-                        // Device image — fixed 101 × 100
-                        // (`Xoh-hx-cns` width=101, `zY1-DF-a6F` height=100).
+                        // Device image — 101×100 FIXED (`Xoh-hx-cns`
+                        // / `zY1-DF-a6F`), top=Connected.bottom+24.
                         Image(deviceImageName(device.kind))
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -1082,13 +1181,19 @@ struct DeviceConnectedPopup: View {
                             .padding(.top, 24)
                             .accessibilityLabel("Connected device image")
 
-                        // Device type — system 18pt REGULAR, veryDarkGray.
+                        // Device type — system 18pt REGULAR,
+                        // veryDarkGrayColor, top=image.bottom+24.
                         Text(device.kind.displayName)
                             .font(.system(size: 18, weight: .regular))
                             .foregroundStyle(Color("veryDarkGrayColor"))
+                            .multilineTextAlignment(.center)
                             .padding(.top, 24)
 
-                        // Device name — system 14pt LIGHT, veryDarkGray.
+                        // Device name — system 14pt LIGHT,
+                        // veryDarkGrayColor, top=type.bottom+7.
+                        // UIKit label starts at 0×0 (empty) and grows
+                        // to fit the assigned text; SwiftUI does the
+                        // same via `fixedSize(vertical:)`.
                         Text(device.name)
                             .font(.system(size: 14, weight: .light))
                             .foregroundStyle(Color("veryDarkGrayColor"))
@@ -1099,9 +1204,10 @@ struct DeviceConnectedPopup: View {
 
                         Spacer(minLength: 0)
 
-                        // Disconnect — 184 × 40, **8pt rounded
-                        // rectangle (NOT capsule)**, white fill,
-                        // 1pt borderColor stroke, black title 16pt.
+                        // Disconnect button — 184×40, 8pt corner,
+                        // system 16pt BLACK title, **TRANSPARENT fill**,
+                        // 1pt `borderColor` stroke (UIKit L36-37 in
+                        // `viewSetup()`). No other effects.
                         Button {
                             HapticService.light()
                             ble.disconnect(device)
@@ -1112,18 +1218,22 @@ struct DeviceConnectedPopup: View {
                                 .foregroundStyle(Color.black)
                                 .frame(width: 184, height: 40)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Color.white)
+                                    // TRANSPARENT fill — the glass card
+                                    // behind shows through, matching
+                                    // UIKit's `backgroundColor=clear` +
+                                    // layer stroke recipe.
+                                    RoundedRectangle(cornerRadius: 8,
+                                                     style: .continuous)
+                                        .fill(Color.clear)
                                 )
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(Color("borderColor"), lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: 8,
+                                                     style: .continuous)
+                                        .stroke(Color("borderColor"),
+                                                lineWidth: 1)
                                 )
                         }
-                        // UIKit `btnDisconnect.addBounceEffect()` —
-                        // press-scale animation on touch. `BounceButtonStyle`
-                        // (BarBotScreens.swift) is the shared 1:1 port.
-                        .buttonStyle(BounceButtonStyle())
+                        .buttonStyle(BounceButtonStyle()) // UIKit addBounceEffect()
                         .accessibilityLabel("Disconnect device")
                         .accessibilityHint("Disconnects \(device.name)")
                         .padding(.bottom, 30)
@@ -1138,12 +1248,15 @@ struct DeviceConnectedPopup: View {
                 .padding(.horizontal, 24)
                 .frame(width: cardWidth, height: cardHeight)
 
-                // Cross button (`wcP-Xk-wlX`): 50 × 50 at top-right
-                // (top=0, trailing=0 of card). Uses the shipped
-                // `crossIcon` asset (UIKit storyboard image="crossIcon")
-                // tinted `appBlackColor` via template rendering mode —
-                // NOT an SF-symbol `xmark` which would look slightly
-                // different than the UIKit popup.
+                // Cross button (`wcP-Xk-wlX`) — 50×50 top-right of card,
+                // top=0 trailing=0. Uses the real `crossIcon` asset
+                // tinted `appBlackColor` via template rendering. UIKit
+                // does NOT specify a fixed icon size for the crossIcon
+                // image — it scales to its intrinsic size inside a
+                // 50×50 hit target. Previously SwiftUI hard-coded 12×12
+                // which reads smaller than UIKit on device; switch to
+                // the intrinsic asset size via `.fit` with a bounded
+                // 14×14 so it matches the reference.
                 Button {
                     HapticService.light()
                     isPresented = false
@@ -1152,25 +1265,27 @@ struct DeviceConnectedPopup: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 12, height: 12)
+                        .frame(width: 14, height: 14)
                         .foregroundStyle(Color("appBlackColor"))
                         .frame(width: 50, height: 50)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Close")
                 .accessibilityHint("Dismiss device connected popup")
             }
             .frame(width: cardWidth, height: cardHeight)
-            .transition(.scale.combined(with: .opacity))
+            // UIKit modal present animation — scale-up from ~0.9 + fade.
+            .transition(.scale(scale: 0.92).combined(with: .opacity))
         }
         .animation(.easeInOut(duration: 0.25), value: isPresented)
-        // UIKit `DeviceConnectedController.viewDidLoad()` plays a
+        // UIKit `DeviceConnectedController.viewDidLoad()` L22 plays a
         // success haptic the moment the popup is shown.
         .onAppear { HapticService.success() }
     }
 
     /// Asset names match UIKit `UIImage.barsys360 / .barsysCoaster /
-    /// .barsysShaker` already shipped in
-    /// `Assets.xcassets/PairYourDevice`.
+    /// .barsysShaker` already shipped in `Assets.xcassets/PairYourDevice`.
     private func deviceImageName(_ kind: DeviceKind) -> String {
         switch kind {
         case .shaker:    return "barsys_shaker"

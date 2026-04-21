@@ -219,31 +219,63 @@ struct DeviceListPopup: View {
 
     var body: some View {
         ZStack {
-            // Layer 1: Full-screen tap-to-dismiss (dAT-Cp-YmL)
-            Color.black.opacity(0.001)
+            // ---- Layer 1: Inert tap-absorber (`dAT-Cp-YmL`) -----------------
+            // UIKit storyboard declares this as a full-screen `UIButton` but
+            // NO action is wired to it — it is an inert tap-absorber, NOT a
+            // dismiss-on-tap layer. The user must use the cross button or
+            // actually connect to a device to leave the screen. Previously
+            // SwiftUI called `dismissPopup()` on tap which didn't match
+            // UIKit (the user could accidentally cancel a pending scan).
+            // Now the backdrop swallows the tap silently — identical to
+            // UIKit behaviour.
+            Color.black.opacity(0.08)
                 .ignoresSafeArea()
-                .onTapGesture {
-                    guard !isConnecting else { return }
-                    dismissPopup()
-                }
+                .contentShape(Rectangle())
+                // The onTapGesture with an empty action intercepts the
+                // touch so it doesn't leak to views below without
+                // triggering a dismiss.
+                .onTapGesture { /* inert — matches UIKit dAT-Cp-YmL */ }
 
-            // Layer 2: Glass background (xJB-3B-j9G, cornerRadius 12)
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.regularMaterial)
+            // ---- Layer 2+3: Glass card (`xJB-3B-j9G` + `CCd-kw-jXK`) --------
+            // UIKit layers two views at the EXACT same frame:
+            //   • `xJB-3B-j9G` (glassBackgroundView) — gets
+            //     `alertPopUpBackgroundStyle(cornerRadius: .medium=12)` in
+            //     `viewWillAppear` (DeviceListViewController.swift L111):
+            //         iOS 26+ → real `UIGlassEffect(.regular)` via
+            //                   `addGlassEffect(cornerRadius: 12)` (no
+            //                   border, no fill).
+            //         pre-26  → `backgroundColor = white@0.95`,
+            //                   `roundCorners = 12`, `masksToBounds = true`.
+            //   • `CCd-kw-jXK` (popupContainerView) — cornerRadius=12 from
+            //     the storyboard `userDefinedRuntimeAttribute`, bg CLEAR
+            //     (default). Hosts the content. Previously SwiftUI filled
+            //     this with pure `Color.white` which OCCLUDED the glass
+            //     layer underneath — the popup appeared solid white on
+            //     iOS 26 instead of the soft-glass frost UIKit renders.
+            //     Now the container is transparent, letting the glass
+            //     behind it show through exactly like UIKit.
+            ZStack(alignment: .topTrailing) {
+                // Glass layer — unified recipe shared with the side menu,
+                // edit panel, and DeviceConnectedPopup so all four glass
+                // surfaces look identical.
+                Group {
+                    if #available(iOS 26.0, *) {
+                        BarsysGlassPanelBackground()
+                    } else {
+                        Color.white.opacity(0.95)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .frame(width: popupSize, height: popupSize)
 
-            // Layer 3: Popup container (CCd-kw-jXK, white, cornerRadius 12)
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white)
-                    .frame(width: popupSize, height: popupSize)
-
+                // Transparent content host — matches `CCd-kw-jXK` bg=clear.
                 popupContent
                     .frame(width: popupSize, height: popupSize)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                // Cross button (d2e-Hj-opA, 50×50, "crossIcon", appBlackColor tint)
-                // Hidden during connecting — matches UIKit btnCross.isHidden = true
+                // Cross button (`d2e-Hj-opA`, 50×50, `crossIcon`,
+                // appBlackColor tint). Hidden during connecting — matches
+                // UIKit `btnCross.isHidden = true`.
                 if !isConnecting {
                     Button {
                         HapticService.light()
@@ -253,16 +285,26 @@ struct DeviceListPopup: View {
                             .renderingMode(.template)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 12, height: 12)
+                            .frame(width: 14, height: 14)
                             .foregroundStyle(Color("appBlackColor"))
                             .frame(width: 50, height: 50)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Close")
                     .accessibilityHint("Dismiss device list")
                 }
             }
+            // Group the two layered views at the same exact size —
+            // matches the UIKit constraint pair that pins
+            // xJB.leading/top/trailing/bottom = CCd.*.
+            .frame(width: popupSize, height: popupSize)
+            // UIKit `alertPopUpBackgroundStyle` applies NO drop shadow —
+            // the popup's separation comes from the glass contrast alone.
+            // Previously a custom shadow was added; now dropped for parity.
 
-            // Layer 4: Error popup overlay (3yk-pB-6CA, hidden by default)
+            // ---- Layer 4: Error popup overlay (`3yk-pB-6CA`) ----------------
+            // Hidden by default, surfaces after a connection failure.
             if showError {
                 errorPopupOverlay
             }
