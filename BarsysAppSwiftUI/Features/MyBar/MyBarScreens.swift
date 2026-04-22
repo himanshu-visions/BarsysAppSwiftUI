@@ -973,6 +973,16 @@ private struct MyBarPrimaryButton: View {
     let title: String
     let action: () -> Void
 
+    /// Reactive theme awareness — used ONLY to override the dark-mode
+    /// brand-gradient asset back to the light-mode orange RGB. UIKit's
+    /// `PrimaryOrangeButton.makeOrangeStyle()` always renders the
+    /// brand orange gradient regardless of appearance, but the SwiftUI
+    /// port's `brandGradientTop` / `brandGradientBottom` colour assets
+    /// have a dark-appearance variant that resolves to dark grey /
+    /// near-black — which made the "Take A Photo" / "Show Recipes"
+    /// primary buttons render as invisible dark pills in dark mode.
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Button(action: action) {
             Text(title)
@@ -990,11 +1000,32 @@ private struct MyBarPrimaryButton: View {
     @ViewBuilder
     private var primaryFill: some View {
         if #available(iOS 26.0, *) {
-            LinearGradient(
-                colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            if colorScheme == .dark {
+                // DARK MODE ONLY: bypass the asset-based colour
+                // resolution and use the LIGHT-mode brand-orange RGB
+                // values from `brandGradientTop` / `brandGradientBottom`
+                // (peach → tan gradient). The asset's dark variant
+                // renders as dark grey which makes the primary
+                // button unreadable; the brand button should stay
+                // orange in both appearances.
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.980, green: 0.878, blue: 0.800),
+                        Color(red: 0.949, green: 0.761, blue: 0.631)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            } else {
+                // Light mode: unchanged — uses the existing colour
+                // assets so light-mode pixels stay bit-identical to
+                // the existing UIKit-parity rendering.
+                LinearGradient(
+                    colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
         } else {
             Color("brandTanColor")
         }
