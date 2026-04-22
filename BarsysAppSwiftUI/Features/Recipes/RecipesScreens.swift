@@ -493,6 +493,14 @@ struct RecipeDetailView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    /// Reactive theme awareness — used ONLY by the primary-orange
+    /// Craft-button background (`primaryOrangeButtonBackground`) to
+    /// override the dark-appearance variant of the
+    /// `brandGradientTop` / `brandGradientBottom` colour assets (which
+    /// wrongly resolve to dark grey / near-black in dark mode) back
+    /// to the light-mode orange RGB so the Craft button stays
+    /// readable in dark mode. Light mode is untouched.
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var editedIngredients: [Ingredient] = []
     @State private var originalIngredients: [Ingredient] = []
@@ -1276,13 +1284,42 @@ struct RecipeDetailView: View {
     /// Ports UIKit `makeOrangeStyle()` — PrimaryOrangeButton.swift:
     ///   iOS 26+: Capsule with brand gradient #FAE0CC → #F2C2A1
     ///   Pre-26:  Flat segmentSelectionColor (#E0B392) with 8pt corners
+    ///
+    /// DARK MODE ONLY: the `brandGradientTop` / `brandGradientBottom`
+    /// colour assets have a dark-appearance variant that resolves to
+    /// dark grey / near-black — which would render the Recipe Craft
+    /// button as an invisible dark pill in dark mode. UIKit's
+    /// `PrimaryOrangeButton.makeOrangeStyle()` always uses the brand
+    /// orange gradient regardless of appearance, so we bypass the
+    /// asset resolution in dark mode and hard-code the LIGHT-mode
+    /// orange RGB values (`#FAE0CC` / `#F2C2A1`). Light-mode pixels
+    /// stay bit-identical to the existing rendering.
     @ViewBuilder
     private var primaryOrangeButtonBackground: some View {
         if #available(iOS 26.0, *) {
             Capsule(style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        colors: colorScheme == .dark
+                            ? [
+                                // Explicit LIGHT-mode brand-orange RGB
+                                // so dark mode still shows the intended
+                                // peach → tan gradient instead of the
+                                // asset's dark-grey dark-appearance
+                                // variant. Values match the light
+                                // entries in
+                                // `brandGradientTop.colorset` /
+                                // `brandGradientBottom.colorset`.
+                                Color(red: 0.980, green: 0.878, blue: 0.800),
+                                Color(red: 0.949, green: 0.761, blue: 0.631)
+                            ]
+                            : [
+                                // Light mode — unchanged, resolves via
+                                // the existing asset catalog so
+                                // pixels stay bit-identical.
+                                Color("brandGradientTop"),
+                                Color("brandGradientBottom")
+                            ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
