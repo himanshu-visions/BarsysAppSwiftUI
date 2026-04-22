@@ -115,10 +115,78 @@ final class CraftingViewModel: ObservableObject {
     /// Reset only via `resetForMakeAgain()`.
     @Published var hasStartedDispensing: Bool = false
 
+    /// 1:1 port of UIKit `garnishIngredientsArr` — mandatory garnish
+    /// (`category.primary == "garnish" && ingredientOptional == false`).
+    /// Display-only: never poured. Rendered on DrinkCompleteView as
+    /// "Don't forget to add" steps.
+    @Published var garnishIngredients: [Ingredient] = []
+
+    /// 1:1 port of UIKit `additionalIngredientsArr` — optional garnish
+    /// (`category.primary == "garnish" && ingredientOptional == true`).
+    /// Display-only: never poured.
+    @Published var additionalIngredients: [Ingredient] = []
+
+    /// Surfaced to the view as an alert when a craft-entry
+    /// precondition fails. Mirrors UIKit's
+    /// `showDefaultAlert(message: Constants.xxx, cancelTitle: okay)`
+    /// calls in `RecipePageViewModel.checkBarsys360Craftability` +
+    /// `RecipeCraftingClass.craftCoasterRecipeWithUpdatedQuantity` +
+    /// `RecipeCraftingClass.craftRecipeFromRecipeListing` — all of
+    /// which emit one of the five error messages on failure. The
+    /// view pops back to the caller on dismiss to match the UIKit
+    /// behaviour where the craft push is aborted.
+    @Published var craftError: CraftabilityError?
+
+    /// Surfaced to the view as the perishable prompt. Only emitted on
+    /// the Barsys 360 path (UIKit guards with `!isSpeakEasyCase`).
+    /// The view must call either `continueAfterPerishable(ble:)` on
+    /// "Okay" or dismiss the crafting screen on "Clean" (the cleaning
+    /// navigation is owned by the view so the ViewModel stays
+    /// independent of the router).
+    @Published var perishablePromptVisible: Bool = false
+
     private(set) var recipe: Recipe?
     /// Mirrors UIKit `arrStations` populated by `MixlistsUpdateClass.getStationsHere`
     /// on the Barsys 360 path.
     private(set) var arrStations: [CraftingIngredientRow] = []
+
+    /// Pre-computed craft command — built by `load360AndSendCommand`
+    /// and cached when the perishable prompt fires so we can replay
+    /// it once the user taps "Okay" to continue crafting.
+    private var pendingCraftCommand: String?
+
+    /// 1:1 port of UIKit `CraftabilityError` + the five error
+    /// branches used by UIKit's three craft-entry functions
+    /// (`checkBarsys360Craftability`, `craftCoasterRecipeWithUpdatedQuantity`,
+    /// `craftRecipeFromRecipeListing`). Each case maps to the exact
+    /// UIKit `Constants.xxx` message via `message`.
+    enum CraftabilityError: Equatable {
+        /// `baseAndMixerIngredientsArrWithUpdatedQuantity.count == 0`
+        /// → "Ingredient not available in recipe."
+        case noIngredients
+        /// Recipe ingredient quantity < `NumericConstants.minimumQtyDouble`
+        /// (= 5.0 ml) → "Ingredient quantity low."
+        case lowIngredientQuantity
+        /// No station in `arrStations` whose
+        /// `(category.primary, category.secondary)` matches a recipe
+        /// ingredient → "Please check your station: one or more
+        /// ingredients are missing."
+        case ingredientNotInStation
+        /// Station has an assigned ingredient but its
+        /// `ingredientQuantity < recipe.ingredient.quantity` →
+        /// "Please check your station(s): one or more ingredients
+        /// have insufficient quantity."
+        case insufficientStationQuantity
+
+        var message: String {
+            switch self {
+            case .noIngredients: return Constants.ingredientsNotAvailableInRecipe
+            case .lowIngredientQuantity: return Constants.lowIngredientQty
+            case .ingredientNotInStation: return Constants.ingredientDoesNotExistInStation
+            case .insufficientStationQuantity: return Constants.insufficientIngredientQuantityFor360
+            }
+        }
+    }
 
     // MARK: - Device detection helpers
 
@@ -159,6 +227,34 @@ final class CraftingViewModel: ObservableObject {
 
     /// 1:1 port of `CraftingViewController.makeDrinkInitiallyOrAgain()`.
     /// Branches on connected device type and drives the correct command.
+    ///
+    /// Ingredient-filter rules — ported verbatim from UIKit
+    /// `RecipePageViewModel+DataLoading.swift` L37-40:
+    ///
+    ///   • `baseAndMixer` = primary != "garnish" && primary != "additional"
+    ///     → THESE are the only ingredients the device pours. The 360
+    ///       command builder iterates over them; the coaster/shaker
+    ///       command builder iterates over them.
+    ///   • `garnish`       = primary == "garnish" && ingredientOptional == false
+    ///     → Display-only. Shown on DrinkCompleteView as "Don't forget
+    ///       to add" steps. NEVER poured.
+    ///   • `additional`    = primary == "garnish" && ingredientOptional == true
+    ///     → Display-only (optional garnish). NEVER poured.
+    ///
+    /// Previously the SwiftUI port seeded `recipeIngredients` from the
+    /// UNFILTERED `recipe.ingredients`, so garnish + additional rows
+    /// were being sent to the device as pourable quantities. This
+    /// resulted in the device trying to pour garnish (lemon wedge,
+    /// mint leaf, etc.) which either fails at the firmware level or
+    /// (worse) dispenses junk because the station doesn't match.
+    ///
+    /// Validation chain (1:1 with UIKit `checkBarsys360Craftability`
+    /// + `craftCoasterRecipeWithUpdatedQuantity`):
+    ///   1. `baseAndMixer.count == 0` → `.noIngredients`
+    ///   2. any ingredient `quantity < minimumQtyDouble (= 5 ml)`
+    ///      → `.lowIngredientQuantity`
+    ///   3. Device-specific checks inside
+    ///      `load360AndSendCommand` / `sendCoasterOrShakerCommand`.
     func start(recipe: Recipe, ble: BLEService) async {
         self.recipe = recipe
         self.glassStatusText = initialGlassStatusText
@@ -167,16 +263,70 @@ final class CraftingViewModel: ObservableObject {
         self.completed = 0
         self.hasStartedDispensing = false
         self.overallProgress = 0
+        self.craftError = nil
+        self.perishablePromptVisible = false
+        self.pendingCraftCommand = nil
 
-        // Seed the rendered ingredient list from the recipe so the table
-        // shows rows before the device responds.
-        recipeIngredients = (recipe.ingredients ?? []).map {
+        let allIngredients = recipe.ingredients ?? []
+
+        // UIKit split (RecipePageViewModel+DataLoading.swift L37-40).
+        let baseAndMixer = allIngredients.filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional"
+        }
+        // `.unique(by: name.lowercased())` dedup — UIKit applies this
+        // to garnish / additional (L29-30, L39-40) so repeat entries
+        // in the recipe don't double-render on DrinkComplete.
+        let garnishArr = allIngredients
+            .filter { ing in
+                let p = (ing.category?.primary ?? "").lowercased()
+                return p == "garnish" && (ing.ingredientOptional ?? false) == false
+            }
+            .uniqued(by: { $0.name.lowercased() })
+        let additionalArr = allIngredients
+            .filter { ing in
+                let p = (ing.category?.primary ?? "").lowercased()
+                return p == "garnish" && (ing.ingredientOptional ?? false) == true
+            }
+            .uniqued(by: { $0.name.lowercased() })
+
+        self.garnishIngredients = garnishArr
+        self.additionalIngredients = additionalArr
+
+        // Seed the pourable-only rendered list. `station: .a` is a
+        // placeholder; the 360 path re-resolves the real station in
+        // `load360AndSendCommand` via category matching, and the
+        // coaster/shaker path ignores `station` entirely (command
+        // format is positional quantity-only).
+        recipeIngredients = baseAndMixer.map { ing in
             CraftingIngredientRow(
-                station: .a, // actual station is resolved after server fetch
-                ingredientName: $0.name,
-                ingredientQuantity: $0.quantity ?? 0,
-                category: $0.category
+                station: .a,
+                ingredientName: ing.name,
+                ingredientQuantity: ing.quantity ?? 0,
+                category: ing.category
             )
+        }
+
+        // Validation 1 — noIngredients (UIKit L17-20 in
+        // checkBarsys360Craftability; UIKit L293-297 in
+        // craftCoasterRecipeWithUpdatedQuantity).
+        if recipeIngredients.isEmpty {
+            craftError = .noIngredients
+            return
+        }
+
+        // Validation 2 — lowIngredientQuantity. UIKit's coaster path
+        // (L311-316) checks `quantity < minimumQtyDouble` per
+        // ingredient. UIKit `minimumQtyDouble` = 5.0 ml
+        // (Constants.swift L73). The same semantics apply to the
+        // 360 path — UIKit has a dead-code check (L32-35) against
+        // an empty `finalArrayMapped` which never fires, but the
+        // intent is clearly "block pours below 5 ml" so we apply it
+        // uniformly on both device paths.
+        let minQty = 5.0
+        if recipeIngredients.contains(where: { $0.ingredientQuantity < minQty }) {
+            craftError = .lowIngredientQuantity
+            return
         }
 
         switch deviceKind(ble) {
@@ -190,33 +340,123 @@ final class CraftingViewModel: ObservableObject {
         }
     }
 
-    /// Ports `CraftingViewController.getIngredientsFor360StartCraftingFlow()`:
-    /// loads the 6 device stations from the server, sorts + filters the
-    /// recipe ingredient list, then sends the composed `200,…` command.
+    /// Called by the view when the user taps "Okay" on the perishable
+    /// prompt. 1:1 with UIKit `showCustomAlertMultipleButtons` "Okay"
+    /// branch (RecipeCraftingClass.swift L81 — empty closure that
+    /// implicitly proceeds; crafting continues because the command
+    /// was already cached).
+    func continueAfterPerishable(ble: BLEService) {
+        perishablePromptVisible = false
+        guard let command = pendingCraftCommand else { return }
+        pendingCraftCommand = nil
+        _ = ble.send(.craftRaw(command: command))
+    }
+
+    /// Called by the view when the user taps "Clean" on the perishable
+    /// prompt. 1:1 with UIKit `showCustomAlertMultipleButtons` "Clean"
+    /// branch (RecipeCraftingClass.swift L83-86 — pushes
+    /// `StationCleaningFlowViewController` then pops the crafting
+    /// stack). In SwiftUI the view handles the navigation; this
+    /// method only resets internal state so the craft attempt is
+    /// abandoned cleanly.
+    func cancelForPerishableCleaning() {
+        perishablePromptVisible = false
+        pendingCraftCommand = nil
+        state = .idle
+    }
+
+    /// Ports UIKit `CraftingViewController.getIngredientsFor360StartCraftingFlow()`
+    /// + `RecipeCraftingClass.craftRecipeFromRecipeListing` (the 360
+    /// branch L30-107) + `RecipePageViewModel.checkBarsys360Craftability`
+    /// (L16-100). All three UIKit call sites run the SAME validation
+    /// sequence before building + sending the craft command, so we
+    /// consolidate them here.
+    ///
+    /// Sequence — EXACT order matters:
+    ///   1. Load the 6 A–F stations from the server.
+    ///   2. For every recipe ingredient (base+mixer only):
+    ///      a. Find the station whose `(category.primary, category.secondary)`
+    ///         matches the ingredient's, lowercased.
+    ///         • No match → `.ingredientNotInStation`, abort.
+    ///      b. If that station has an assigned ingredient AND its
+    ///         `ingredientQuantity < recipe.ingredient.quantity`
+    ///         → `.insufficientStationQuantity`, abort.
+    ///   3. Build the "200,…" command string (already correct).
+    ///   4. Compute the perishable-stations list — any station whose
+    ///      `perishable == true` AND `updatedAt` is older than 24h.
+    ///      `StationsAPIService.loadStations` already pre-computed
+    ///      this as `StationSlot.isPerishable`.
+    ///   5. If any perishable station AND NOT speakeasy → cache
+    ///      the command in `pendingCraftCommand` and flag
+    ///      `perishablePromptVisible`. The view shows the
+    ///      `Constants.perishableDescriptionTitle` alert; "Okay" calls
+    ///      `continueAfterPerishable` which sends the cached command,
+    ///      "Clean" calls `cancelForPerishableCleaning` + navigates.
+    ///   6. Else send the command immediately.
     private func load360AndSendCommand(ble: BLEService) async {
         let deviceName = ble.getConnectedDeviceName()
         let stations = await StationsAPIService.loadStations(deviceName: deviceName)
+        // 1:1 port of UIKit `CraftingViewModel.processStationsForCrafting`
+        // + `BleCommandBuilder.buildCommandString` — station category
+        // (primary + secondary) is REQUIRED for the command builder to
+        // match recipe ingredients to stations.
         arrStations = stations.map {
             CraftingIngredientRow(
                 station: $0.station,
                 ingredientName: $0.ingredientName,
                 ingredientQuantity: $0.ingredientQuantity,
-                category: nil
+                category: $0.category
             )
         }
 
-        // UIKit only pours non-empty stations. Filter rows that have
-        // either no name, "--", or "NA"/"N/A".
-        recipeIngredients = recipeIngredients.filter { row in
-            let trimmed = row.ingredientName.trimmingCharacters(in: .whitespaces)
-            return !trimmed.isEmpty
-                && trimmed != "--"
-                && trimmed.lowercased() != "n/a"
-                && trimmed.lowercased() != "na"
+        // Validation 3 — ingredientNotInStation + insufficientStationQuantity.
+        // 1:1 port of the for-loop in UIKit
+        // `checkBarsys360Craftability` L55-82 and
+        // `craftRecipeFromRecipeListing` L47-76.
+        for ingredient in recipeIngredients {
+            let rp = (ingredient.category?.primary ?? "").lowercased()
+            let rs = (ingredient.category?.secondary ?? "").lowercased()
+            let matchingStation = stations.first { station in
+                let sp = (station.category?.primary ?? "").lowercased()
+                let ss = (station.category?.secondary ?? "").lowercased()
+                return sp == rp && ss == rs
+            }
+            guard let station = matchingStation else {
+                craftError = .ingredientNotInStation
+                return
+            }
+            // UIKit check: `existingStationObject.ingredientName != nil
+            //   && existingStationObject.ingredientQuantity <
+            //      currentIngredientQuantity`
+            // i.e. if the station has an assigned ingredient but not
+            // enough of it to cover the recipe's ask, block the craft.
+            if !station.ingredientName.isEmpty
+                && station.ingredientQuantity < ingredient.ingredientQuantity {
+                craftError = .insufficientStationQuantity
+                return
+            }
         }
 
+        // Build the command once — same "200,s1,q1,...,s6,q6" format
+        // used by UIKit `BleCommandBuilder.buildCommandString`. The
+        // row list is already filtered to base+mixer by `start(...)`.
         let command = build360Command(stations: arrStations,
                                       recipeIngredients: recipeIngredients)
+
+        // Validation 4 — perishable stations. 1:1 with UIKit
+        // `showCustomAlertMultipleButtons(title: perishableDescriptionTitle,…)`
+        // guard in `RecipeCraftingClass.craftRecipeFromRecipeListing`
+        // L79-89 + `performBarsys360CraftCheck` L91-99. UIKit skips the
+        // prompt when `isSpeakEasyCase` because the remote operator —
+        // not the app user — decides cleaning.
+        let perishableStations = stations.filter { $0.isPerishable }
+        let isSpeakEasy = AppStateManager.shared.isSpeakEasyCase
+        if !perishableStations.isEmpty && !isSpeakEasy {
+            pendingCraftCommand = command
+            perishablePromptVisible = true
+            return
+        }
+
         _ = ble.send(.craftRaw(command: command))
     }
 
@@ -297,6 +537,9 @@ final class CraftingViewModel: ObservableObject {
         stationQuantityFeedback = ""
         overallProgress = 0
         glassStatusText = initialGlassStatusText
+        craftError = nil
+        perishablePromptVisible = false
+        pendingCraftCommand = nil
     }
 
     // MARK: - BLE response dispatch
@@ -919,6 +1162,98 @@ struct CraftingView: View {
             didResolvePourConfirm = true
             dismiss()
         })
+        // Craftability-error popup — 1:1 port of UIKit
+        // `showDefaultAlert(message: <error>, cancelTitle: OK)` calls in
+        // `RecipePageViewController+Actions.performBarsys360CraftCheck`
+        // L85-89 + `RecipeCraftingClass.craftCoasterRecipeWithUpdatedQuantity`
+        // L294-296 + `RecipeCraftingClass.craftRecipeFromRecipeListing`
+        // L61, L71 (also L192, L202 for the customized-recipe path). All
+        // five UIKit branches emit the same single-OK alert and then
+        // abort the craft push — in SwiftUI the CraftingView is already
+        // on-screen (we build+validate inside `start`), so OK dismisses
+        // us back to the previous screen.
+        .barsysPopup(craftErrorBinding, onPrimary: {
+            viewModel.craftError = nil
+            dismiss()
+        })
+        // Perishable-cleaning popup — 1:1 port of UIKit
+        // `showCustomAlertMultipleButtons(title: perishableDescriptionTitle,
+        //   cancelButtonTitle: cleanAlertTitle,
+        //   continueButtonTitle: okayButtonTitle,
+        //   cancelButtonColor: .segmentSelectionColor,
+        //   isCloseButtonHidden: true)` in
+        // `performBarsys360CraftCheck` L91-99 + `RecipeCraftingClass.craftRecipeFromRecipeListing`
+        // L81-88 + `craftCustomizedRecipeFromMakeMyOwn` L218-230.
+        //
+        // Button mapping:
+        //   • Primary (RIGHT, `cancelButtonTitle` = "Clean",
+        //     segmentSelectionColor fill) → pop back to stations
+        //     cleaning — we dismiss here; the caller re-routes.
+        //   • Secondary (LEFT, `continueButtonTitle` = "Okay") →
+        //     proceed with the craft (run the cached command).
+        //
+        // Note on swap: UIKit's `cancelButtonTitle` is the orange
+        // primary-action button (because UIKit's "cancel" semantics
+        // here = "cancel the craft and clean"), which maps to our
+        // `primaryTitle` slot. "Okay" is the dismiss-and-continue,
+        // matching our `secondaryTitle`.
+        .barsysPopup(perishablePromptBinding, onPrimary: {
+            HapticService.medium()
+            viewModel.cancelForPerishableCleaning()
+            // Pop back — the station cleaning flow is a separate
+            // screen the user can reach from Control Center. We
+            // avoid hard-coding navigation here to stay router-
+            // agnostic (the UIKit navigation is also conditional
+            // on a `navigationController` being present).
+            dismiss()
+        }, onSecondary: {
+            viewModel.continueAfterPerishable(ble: ble)
+        })
+    }
+
+    /// Bridge `viewModel.craftError` → `BarsysPopup?` so we can reuse
+    /// the shared `.barsysPopup(...)` modifier. UIKit uses a single
+    /// `showDefaultAlert(message:, cancelTitle: OK)` for every error
+    /// case — we mirror that by always rendering `.alert` with the
+    /// localized message as the title (matches UIKit which puts the
+    /// copy in the alert title, not message body).
+    private var craftErrorBinding: Binding<BarsysPopup?> {
+        Binding(
+            get: {
+                guard let err = viewModel.craftError else { return nil }
+                return .alert(
+                    title: err.message,
+                    message: nil,
+                    primaryTitle: ConstantButtonsTitle.okButtonTitle
+                )
+            },
+            set: { newValue in
+                if newValue == nil { viewModel.craftError = nil }
+            }
+        )
+    }
+
+    /// Bridge `viewModel.perishablePromptVisible` → `BarsysPopup?`.
+    /// Mirrors UIKit `showCustomAlertMultipleButtons(title:
+    /// perishableDescriptionTitle, cancelButtonTitle: cleanAlertTitle,
+    /// continueButtonTitle: okayButtonTitle, …)` 1:1.
+    private var perishablePromptBinding: Binding<BarsysPopup?> {
+        Binding(
+            get: {
+                guard viewModel.perishablePromptVisible else { return nil }
+                return .confirm(
+                    title: Constants.perishableDescriptionTitle,
+                    message: nil,
+                    primaryTitle: Constants.cleanAlertTitle,
+                    secondaryTitle: Constants.okayButtonTitle,
+                    primaryFillColor: "segmentSelectionColor",
+                    isCloseHidden: true
+                )
+            },
+            set: { newValue in
+                if newValue == nil { viewModel.perishablePromptVisible = false }
+            }
+        )
     }
 
     /// Single source of truth for "should we show the pour confirmation

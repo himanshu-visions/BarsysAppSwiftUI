@@ -124,7 +124,7 @@ struct ReadyToPourView: View {
         .onAppear {
             guard !didLoad else { return }
             didLoad = true
-            loadData()
+            Task { await loadData() }
         }
         // 1:1 with UIKit `ReadyToPourListViewController+Search.swift`
         // `getMixlists` (L67-85). When the Mixlists tab loads an empty
@@ -318,21 +318,90 @@ struct ReadyToPourView: View {
 
     // MARK: - Data loading
 
-    private func loadData() {
-        // Fetch ready-to-pour recipes + mixlists from storage.
-        // UIKit: ReadyToPourListViewModel.getBarsys360ReadyToPourRecipes()
-        // uses DBManager.fetchMatchingRecipeLists + fetchReadyToPourMixlist.
-        //
-        // We currently use the full recipe/mixlist lists as the matching
-        // infrastructure is in storage. For Barsys360, filter by compatible.
-        let is360 = ble.isBarsys360Connected()
-        if is360 {
-            recipes = env.storage.allRecipes().filter { $0.barsys360Compatible == true }
-            mixlists = env.storage.barsys360Mixlists()
-        } else {
+    /// 1:1 port of UIKit
+    /// `MixlistsUpdateClass.getBarsys360ReadyToPourRecipes` +
+    /// `MixlistsUpdateClass.getBarsys360ReadyToPourMixlists`
+    /// (MixlistsUpdateClass.swift L97-125 / L208-236):
+    ///
+    ///   1. Fetch the 6 A–F stations from the server.
+    ///   2. If there are zero stations OR every station's ingredient
+    ///      name is empty → return `[]` (no recipes / mixlists).
+    ///   3. Build `allowedIngredients = [(primary, secondary)]` from
+    ///      the currently-assigned station categories.
+    ///   4. Delegate to `DBManager._fetchMatchingRecipeLists(...)` /
+    ///      `_fetchReadyToPourMixlist(...)` which SQL-filter to only
+    ///      keep recipes (and mixlists of recipes) whose **every**
+    ///      non-garnish / non-additional ingredient's
+    ///      `(categoryPrimary, categorySecondary)` pair is in the
+    ///      allowed set — and which have **at least one** non-garnish
+    ///      ingredient (the SQL uses an INNER JOIN which drops empty
+    ///      recipes).
+    ///
+    /// The SwiftUI equivalents already exist in `StorageService`:
+    ///   • `recipesMatchingIngredients(_:)` → mirrors
+    ///     `_fetchMatchingRecipeLists`.
+    ///   • `readyToPourMixlists(allowedIngredients:barsys360Only:)` →
+    ///     mirrors `_fetchReadyToPourMixlist`.
+    ///
+    /// Previous bug: `loadData()` called `storage.allRecipes()
+    /// .filter { barsys360Compatible == true }` which only checked
+    /// a precomputed compatibility flag — NOT the currently-assigned
+    /// stations. That surfaced recipes that had ingredients missing
+    /// from the device (Barsys 360 cannot pour them) AND recipes
+    /// with zero ingredients.
+    @MainActor
+    private func loadData() async {
+        guard ble.isBarsys360Connected() else {
+            // Non-360 devices don't have the per-station matching flow
+            // in UIKit either — keep the existing "show everything"
+            // fallback so Coaster / Shaker behaviour is unchanged.
             recipes = env.storage.allRecipes()
             mixlists = env.storage.allMixlists()
+            return
         }
+
+        let deviceName = ble.getConnectedDeviceName()
+        let stations = await StationsAPIService.loadStations(deviceName: deviceName)
+
+        // Step 2: empty station list OR every slot empty → show nothing.
+        // Mirrors UIKit L99-110 — the two explicit `completion([])`
+        // early-returns.
+        guard !stations.isEmpty else {
+            recipes = []
+            mixlists = []
+            return
+        }
+        let hasAnyIngredient = stations.contains { !$0.ingredientName.isEmpty }
+        guard hasAnyIngredient else {
+            recipes = []
+            mixlists = []
+            return
+        }
+
+        // Step 3: `allowedIngredients` from the currently-assigned
+        // stations only. UIKit's loop
+        // (MixlistsUpdateClass.swift L114-118) iterates every slot and
+        // uses a tautological guard `primary != nil || primary != ""`
+        // which is always true — harmless because empty slots have
+        // empty category pairs that no recipe ingredient matches.
+        // We take the cleaner route: skip slots with no assigned
+        // ingredient, which yields the exact same SQL-filter result
+        // but avoids pushing dummy `("","")` pairs downstream.
+        let allowed: [(primary: String, secondary: String)] = stations.compactMap { slot in
+            guard !slot.ingredientName.isEmpty else { return nil }
+            let p = (slot.category?.primary ?? "").lowercased()
+            let s = (slot.category?.secondary ?? "").lowercased()
+            return (primary: p, secondary: s)
+        }
+
+        // Step 4: run the same filter UIKit does — every non-garnish
+        // ingredient must match an assigned station category pair, and
+        // the recipe must have at least one such ingredient.
+        recipes = env.storage.recipesMatchingIngredients(allowed)
+        mixlists = env.storage.readyToPourMixlists(
+            allowedIngredients: allowed,
+            barsys360Only: true
+        )
     }
 
     // MARK: - Actions
@@ -342,13 +411,13 @@ struct ReadyToPourView: View {
         let willBeFav = !(recipe.isFavourite ?? false)
         env.storage.toggleFavorite(recipe.id)
         // Re-read from storage to update UI
-        loadData()
+        Task { await loadData() }
         Task {
             do {
                 _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: willBeFav)
             } catch {
                 env.storage.toggleFavorite(recipe.id)
-                loadData()
+                await loadData()
             }
         }
         env.analytics.track(

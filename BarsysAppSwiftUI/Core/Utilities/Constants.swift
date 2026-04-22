@@ -269,6 +269,12 @@ enum Constants {
     /// station. Matches UIKit `Constants.ingredientDoesNotExistInStation`.
     static let ingredientDoesNotExistInStation = "Ingredient doesn't exist in station. Set up stations first."
 
+    /// Validation copy shown by UIKit
+    /// `checkBarsys360Craftability` + `craftCoasterRecipeWithUpdatedQuantity`
+    /// when `baseAndMixerIngredientsArrWithUpdatedQuantity.count == 0`.
+    /// Matches UIKit `Constants.ingredientsNotAvailableInRecipe`.
+    static let ingredientsNotAvailableInRecipe = "Ingredient not available in recipe."
+
     /// Shown on the "Ingredients may be spoiled…" alert — the left
     /// button title for the Clean action.
     static let cleanAlertTitle = "Clean"

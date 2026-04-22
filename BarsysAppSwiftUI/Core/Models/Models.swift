@@ -495,3 +495,15 @@ extension Array where Element: Hashable {
         return filter { seen.insert($0).inserted }
     }
 }
+
+extension Array {
+    /// 1:1 port of UIKit `Array.unique(by:)` (defined in
+    /// `BarsysApp/Helpers/Extensions/Array+Unique.swift`).
+    /// Returns the array with duplicates removed by the given keyPath,
+    /// preserving order. Used by the Crafting split to dedup garnish /
+    /// additional arrays by `name.lowercased()`.
+    func uniqued<Key: Hashable>(by key: (Element) -> Key) -> [Element] {
+        var seen = Set<Key>()
+        return filter { seen.insert(key($0)).inserted }
+    }
+}
