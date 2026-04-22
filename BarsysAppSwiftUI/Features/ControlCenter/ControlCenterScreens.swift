@@ -1931,52 +1931,92 @@ struct StationsMenuView: View {
                     }
                 }
             case .controlCenter:
+                // Bottom-action truth table (per latest product spec,
+                // cross-checked against UIKit
+                // `StationsMenuViewController.setupBottomButtonsUI` +
+                // `StationsMenuViewModel.computeBottomButtonsState` +
+                // `computeRefillButtonState`):
+                //
+                //   ┌────────────────────┬──────────┬───────────┬──────────────┐
+                //   │ state              │ Clean    │ Refill    │ Add Ingred.  │
+                //   ├────────────────────┼──────────┼───────────┼──────────────┤
+                //   │ occupied, no peri. │ VISIBLE  │ VISIBLE   │ hidden       │
+                //   │                    │          │ enabled   │              │
+                //   │ occupied, peri.    │ VISIBLE  │ VISIBLE   │ hidden       │
+                //   │                    │          │ DISABLED  │              │
+                //   │                    │          │ grey text │              │
+                //   │ empty, peri.       │ VISIBLE  │ hidden    │ hidden       │
+                //   │                    │ (only)   │           │              │
+                //   │ empty, no peri.    │ VISIBLE  │ hidden    │ VISIBLE      │
+                //   └────────────────────┴──────────┴───────────┴──────────────┘
+                //
+                // Rules:
+                //   • Clean is ALWAYS VISIBLE in control-center
+                //     origin.
+                //   • Refill only appears when the selected slot is
+                //     occupied. When any station on-screen is
+                //     perishable-expired, Refill stays visible but is
+                //     disabled with light-grey title colour (UIKit
+                //     `btnRefill.setTitleColor(.lightGrayColor)` +
+                //     `isUserInteractionEnabled = false`, fill stays
+                //     orange via `makeOrangeStyle()`).
+                //   • Add Ingredient only appears when the selected
+                //     slot is empty AND no perishable-expired station
+                //     exists (mirroring UIKit's
+                //     `shouldHideAddIngredient == perishableAvailable`
+                //     override).
                 if isOccupied {
-                    // UIKit stack gRn-1d-c0y: spacing=8, distribution=fillEqually
+                    // UIKit stack gRn-1d-c0y: spacing=8, distribution=fillEqually.
                     HStack(spacing: 8) {
                         primaryActionButton(title: "Clean", color: Color.white,
                                             textColor: Color("appBlackColor"),
                                             stroke: Color("borderColor")) {
                             router.push(.stationCleaning)
                         }
-                        primaryActionButton(title: "Refill",
-                                            color: perishableLocking ? Color("disabledGrayColor") : Theme.Color.brand) {
-                            // 1:1 port of UIKit
-                            // `StationsMenuViewController.didPressRefillButton`:
-                            //   let flowToAdd = viewModel.flowForRefill()
-                            //   ControlCenterCoordinator(…)
-                            //     .showSelectQuantity(flowToAdd: flowToAdd)
-                            // `flowForRefill()` returns the currently-
-                            // selected station's `StationCleaningFlow`
-                            // (ingredient + qty + perishable + category).
-                            // We park that payload on the router so
-                            // `SelectQuantityView` can read it back when
-                            // posting the refill — UIKit uses the
-                            // `flowToAdd` the same way.
-                            guard !perishableLocking else { return }
-                            let slot = viewModel.selectedSlot
-                            router.pendingStationUpdate = AppRouter.PendingStationUpdate(
-                                ingredientName: slot?.ingredientName ?? "",
-                                quantityMl: slot?.ingredientQuantity ?? 0,
-                                primaryCategory: nil, // category not modelled on StationSlot; API re-reads server truth on refetch
-                                secondaryCategory: nil,
-                                isPerishable: slot?.isPerishable ?? false,
-                                isAddingNewIngredient: false,
-                                stationName: viewModel.selectedStation.rawValue
-                            )
-                            router.push(.selectQuantity(slot?.ingredientName
-                                ?? viewModel.selectedStation.rawValue))
-                        }
-                        .disabled(perishableLocking)
+                        // Refill button — orange fill ALWAYS (matches
+                        // UIKit `makeOrangeStyle()` called
+                        // unconditionally); text colour drops to
+                        // `lightGrayColor` when perishable is present
+                        // to signal the disabled state; taps are
+                        // blocked via both `.disabled(…)` and the
+                        // `guard` inside the action closure.
+                        refillButton(perishableLocking: perishableLocking)
+                    }
+                } else if perishableLocking {
+                    // Empty slot + perishable-expired station on
+                    // screen → only Clean is actionable. Rendered as
+                    // a single full-width Clean button (no companion
+                    // in the HStack) so the user's attention is
+                    // pinned to the required recovery action.
+                    primaryActionButton(title: "Clean", color: Color.white,
+                                        textColor: Color("appBlackColor"),
+                                        stroke: Color("borderColor")) {
+                        router.push(.stationCleaning)
                     }
                 } else {
-                    primaryActionButton(title: "Add Ingredient", color: Theme.Color.brand) {
-                        // UIKit triggers image picker → ingredient detection.
-                        // SwiftUI: open the photo picker; the result is
-                        // routed through `pickedImage` → detection
-                        // pipeline → `BarsysPopup.multipleIngredients`.
-                        imagePickerSource = .camera
-                        showImagePicker = true
+                    // Empty slot + no perishable → Clean AND Add
+                    // Ingredient. UIKit's raw visibility logic hides
+                    // Clean in this case (it stays at the
+                    // `BottomButtonsState.cleanHidden` default of
+                    // true for the empty branch), but the product
+                    // spec surfaces Clean alongside Add Ingredient so
+                    // the user can always reach the cleaning flow
+                    // without first having to occupy a station.
+                    HStack(spacing: 8) {
+                        primaryActionButton(title: "Clean", color: Color.white,
+                                            textColor: Color("appBlackColor"),
+                                            stroke: Color("borderColor")) {
+                            router.push(.stationCleaning)
+                        }
+                        primaryActionButton(title: "Add Ingredient",
+                                            color: Theme.Color.brand) {
+                            // UIKit triggers image picker → ingredient detection.
+                            // SwiftUI: open the photo picker; the result is
+                            // routed through `pickedImage` → detection
+                            // pipeline → `BarsysPopup.multipleIngredients`.
+                            imagePickerSource = .camera
+                            showImagePicker = true
+                        }
                     }
                 }
             }
@@ -2022,20 +2062,20 @@ struct StationsMenuView: View {
     }
 
     /// Inlined `brandCapsule(height: 45, cornerRadius: 22.5)` with a
-    /// dark-mode-only gradient override — identical visual recipe to
-    /// the shared helper in light mode (same font, text colour,
-    /// shadow, shape), but in dark mode the gradient's colour stops
-    /// are hard-coded to the LIGHT-mode brand-orange RGB pulled
-    /// straight from `brandGradientTop.colorset` /
-    /// `brandGradientBottom.colorset`. The shared `.brandCapsule`
-    /// resolves those asset references at draw time, and the asset
-    /// catalog's dark-appearance variant is near-black — which made
-    /// the "Add Ingredient" button on StationsMenu render as an
-    /// invisible dark pill in dark mode. UIKit's
-    /// `PrimaryOrangeButton.makeOrangeStyle()` always uses the brand
-    /// orange regardless of appearance, so we mirror that here
-    /// without touching the shared helper or other screens.
-    private func brandOrangeCapsuleLabel(title: String) -> some View {
+    /// dark-mode-only gradient override + a `textColor` parameter so
+    /// callers can grey-out the title (e.g. Refill when a perishable
+    /// station is locking the screen) without sacrificing the brand
+    /// orange fill. UIKit `btnRefill.setTitleColor(.lightGrayColor)`
+    /// + `btnRefill.makeOrangeStyle()` does the same: orange pill,
+    /// grey letters when disabled.
+    ///
+    /// Shared-helper divergence (same reason as other screens):
+    /// `brandGradientTop` / `brandGradientBottom` have a
+    /// dark-appearance variant that resolves to near-black, which
+    /// would make the pill invisible in dark mode. Hard-coded light-
+    /// mode RGB in the dark branch keeps the pill orange.
+    private func brandOrangeCapsuleLabel(title: String,
+                                         textColor: SwiftUI.Color = .black) -> some View {
         let height: CGFloat = 45
         let iOS26Available: Bool = {
             if #available(iOS 26.0, *) { return true } else { return false }
@@ -2056,7 +2096,7 @@ struct StationsMenuView: View {
             ]
         return Text(title)
             .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(SwiftUI.Color.black)
+            .foregroundStyle(textColor)
             .frame(maxWidth: .infinity)
             .frame(height: height)
             .background(
@@ -2079,6 +2119,55 @@ struct StationsMenuView: View {
                 }
             )
             .barsysShadow(.floatingButton)
+    }
+
+    /// Refill button — 1:1 port of UIKit
+    /// `StationsMenuViewController.setBottomButtonsAccordingToPerishableCount`
+    /// (L162-172) + `computeRefillButtonState` (L250-257):
+    ///
+    ///   • Fill: ALWAYS brand orange. UIKit calls
+    ///     `btnRefill.makeOrangeStyle()` unconditionally, so the pill
+    ///     never fades to grey — only the title does.
+    ///   • Text: `.lightGrayColor` when any perishable-expired
+    ///     station exists anywhere on screen, `.black` otherwise.
+    ///     Mirrors UIKit
+    ///     `setTitleColor(perishableAvailable ? .lightGrayColor :
+    ///     .black, for: .normal)`.
+    ///   • Taps: disabled when perishable. Belt-and-braces with a
+    ///     `guard !perishableLocking` inside the action, matching
+    ///     UIKit's `btnRefill.isUserInteractionEnabled = refillState.isEnabled`.
+    @ViewBuilder
+    private func refillButton(perishableLocking: Bool) -> some View {
+        // `lightGrayColor` asset resolves to UIKit
+        // `#999999` in light / `#8E8E93` in dark — same asset UIKit
+        // uses for `.lightGrayColor`.
+        let titleColor: SwiftUI.Color = perishableLocking
+            ? SwiftUI.Color("lightGrayColor")
+            : SwiftUI.Color.black
+        Button {
+            HapticService.light()
+            // 1:1 port of UIKit
+            // `StationsMenuViewController.didPressRefillButton`:
+            //   let flowToAdd = viewModel.flowForRefill()
+            //   ControlCenterCoordinator(…).showSelectQuantity(...)
+            guard !perishableLocking else { return }
+            let slot = viewModel.selectedSlot
+            router.pendingStationUpdate = AppRouter.PendingStationUpdate(
+                ingredientName: slot?.ingredientName ?? "",
+                quantityMl: slot?.ingredientQuantity ?? 0,
+                primaryCategory: nil, // category not modelled on StationSlot
+                secondaryCategory: nil,
+                isPerishable: slot?.isPerishable ?? false,
+                isAddingNewIngredient: false,
+                stationName: viewModel.selectedStation.rawValue
+            )
+            router.push(.selectQuantity(slot?.ingredientName
+                ?? viewModel.selectedStation.rawValue))
+        } label: {
+            brandOrangeCapsuleLabel(title: "Refill", textColor: titleColor)
+        }
+        .buttonStyle(BounceButtonStyle())
+        .disabled(perishableLocking)
     }
 
     /// Commit the mapped-setup stations to the server, then pop back
