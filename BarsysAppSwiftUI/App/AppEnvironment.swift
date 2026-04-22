@@ -136,7 +136,7 @@ final class AppEnvironment: ObservableObject {
             preferences: preferences,
             ble: BLEService(),
             socket: SocketService(),
-            braze: BrazeService(),
+            braze: BrazeService.shared,
             analytics: AnalyticsService(),
             catalog: catalog
         )

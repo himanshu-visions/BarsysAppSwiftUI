@@ -605,6 +605,38 @@ struct RecipeDetailView: View {
                     // initial render. Subsequent toggles update
                     // localIsFavourite directly (instant UI feedback).
                     localIsFavourite = recipe.isFavourite ?? false
+                    // 1:1 with UIKit `RecipePageViewModel+CraftAndAnalytics`
+                    // `trackViewRecipe()` (L144-200) — fires every time the
+                    // recipe page lands. Property dictionary mirrors the
+                    // Braze branch (L194-198): recipe id/name/image and
+                    // device id+type when a BLE device is connected so
+                    // Braze can segment users by hardware. `source` is
+                    // derived from the recipe's own flags (matches UIKit
+                    // RecipeSource enum values: "barsys" / "user" / "ai").
+                    let recipeSource: String = {
+                        // UIKit RecipeSource mapping
+                        // (Helpers/Constants/Constants+Enums.swift
+                        // `RecipeSource`): a non-empty `userId` on the
+                        // recipe means it's a user-created "My Drink"
+                        // (source = "user"); anything else is a stock
+                        // Barsys recipe (source = "barsys"). The BarBot
+                        // "ai" branch fires from BarBotScreens, not
+                        // from this detail-page hook.
+                        let uid = recipe.userId ?? ""
+                        return uid.isEmpty ? "barsys" : "user"
+                    }()
+                    var props: [String: Any] = [
+                        "source": recipeSource,
+                        "recipe_id": recipe.id.value,
+                        "recipe_name": recipe.displayName,
+                        "recipe_image": recipe.image?.url ?? ""
+                    ]
+                    if let connected = ble.connected.first {
+                        props["deviceId"] = connected.name
+                        props["deviceType"] = connected.kind.displayName
+                    }
+                    env.analytics.track(TrackEventName.viewRecipe.rawValue,
+                                        properties: props)
                 }
                 // Unsaved changes popup — glass-card style matching UIKit
                 // `unsavedChangesForRecipe` alert. The `pendingUnsavedAction`

@@ -18,7 +18,6 @@
 		2DDEE29057B3A4BEEA98AB3C /* BarsysAppSwiftUIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9520BE5EA73D918BBA4A51F /* BarsysAppSwiftUIApp.swift */; };
 		32442CE329D5EC0838B2C14C /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2221E2830DE89B36422C96FA /* Theme.swift */; };
 		40149097F3434AEEFB5F5594 /* RecipesScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE8814D5CF27412A36189D9 /* RecipesScreens.swift */; };
-		7DF4E2C5DB1440B7BA471F49 /* ReadyToPourView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DB3C2A144347C3B498B9D4 /* ReadyToPourView.swift */; };
 		50D581256B64B035E72E8119 /* DomainEnums.swift in Sources */ = {isa = PBXBuildFile; fileRef = 722AF4F9EAE49F31AF8C3305 /* DomainEnums.swift */; };
 		577D584BB0F964054CA33163 /* FavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B86C1B54179D76EE8CA022C /* FavoritesView.swift */; };
 		60FEB1FC2A79DBBF14AFDC7B /* SideMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA686EF7D08ABB23D5031CF /* SideMenuView.swift */; };
@@ -26,12 +25,14 @@
 		755F6F145D6CB02852CEC613 /* CraftingScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C4CE234BAA57D9A05F31854 /* CraftingScreens.swift */; };
 		7746FE41E84B9F983EFA3258 /* SF-Pro-Display-Semibold.otf in Resources */ = {isa = PBXBuildFile; fileRef = BEE68851FD3214674E6599EE /* SF-Pro-Display-Semibold.otf */; };
 		7C9A55ECE9D9306C425CBD09 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0B38D72809437F7A4E92BB /* Constants.swift */; };
+		7DF4E2C5DB1440B7BA471F49 /* ReadyToPourView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DB3C2A144347C3B498B9D4 /* ReadyToPourView.swift */; };
 		8019E293075E35CB7FDB6DDA /* LocalCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0150F73E373B9D456171F2A2 /* LocalCache.swift */; };
 		80B2A857CB69F19F4A636C08 /* BarBotScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AF15A2409CF543E0CF9252E /* BarBotScreens.swift */; };
 		827E35555A17B4BCEA254422 /* SFPRODISPLAYMEDIUM.OTF in Resources */ = {isa = PBXBuildFile; fileRef = 15E85A8B8999D3128520A5EE /* SFPRODISPLAYMEDIUM.OTF */; };
 		85CB196B317761E03FF61F79 /* MyProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2756AA2F464A301173DEC820 /* MyProfileView.swift */; };
 		8FBE6FB5C9EBFEB8574C884A /* SignUpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83CE4FCDE9CBD320E3D73ECC /* SignUpView.swift */; };
 		A35F2761BE7AA6FE26C2BD29 /* ScreenEdgePanGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E91FC882D3CCBC9AD9F9341B /* ScreenEdgePanGesture.swift */; };
+		AA11BB22CC33DD44EE551001 /* SpeakeasySocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */; };
 		AC5514ADED5D1211F4348453 /* ControlCenterScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4712600A8FAF4BD1A466C4FF /* ControlCenterScreens.swift */; };
 		B449820D412CC96425675749 /* SF-Pro-Display-Black.otf in Resources */ = {isa = PBXBuildFile; fileRef = 00AE3A5BB15AF2FBE25F382A /* SF-Pro-Display-Black.otf */; };
 		B55F2C38FA2A88D8CD9761ED /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28D2AFB82D96A543290BEEEC /* AppEnvironment.swift */; };
@@ -41,7 +42,8 @@
 		C737E89940EB404F9F45CC71 /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 466627296E5B80833D7CA5F0 /* AppRouter.swift */; };
 		D12E12500F5BBACD37F1BAC2 /* OryAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */; };
 		D97FC15AC7D31879AF295EB0 /* Services.swift in Sources */ = {isa = PBXBuildFile; fileRef = 291A901391A852222CC64F10 /* Services.swift */; };
-		AA11BB22CC33DD44EE551001 /* SpeakeasySocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */; };
+		BA2EBB5E4DA8C7B1E7F3F1B1 /* BrazeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2EBB5E4DA8C7B1E7F3F1B2 /* BrazeService.swift */; };
+		AC0A1B2C3D4E5F6071828392 /* AnalyticsConsentManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0A1B2C3D4E5F6071828391 /* AnalyticsConsentManager.swift */; };
 		DB0A79F222FE4BA2A079FDF8 /* TutorialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCDD315E11422E6F842CADFF /* TutorialView.swift */; };
 		E1F09062ED59BC399467FD24 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A784DE6AE56C30198F6AFD89 /* Models.swift */; };
 		E256DC185A6D94C9A288086A /* UserDefaultsClass.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA1779BB60E125FE19ED8397 /* UserDefaultsClass.swift */; };
@@ -69,7 +71,8 @@
 		2756AA2F464A301173DEC820 /* MyProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyProfileView.swift; sourceTree = "<group>"; };
 		28D2AFB82D96A543290BEEEC /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		291A901391A852222CC64F10 /* Services.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services.swift; sourceTree = "<group>"; };
-		AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakeasySocketManager.swift; sourceTree = "<group>"; };
+		BA2EBB5E4DA8C7B1E7F3F1B2 /* BrazeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrazeService.swift; sourceTree = "<group>"; };
+		AC0A1B2C3D4E5F6071828391 /* AnalyticsConsentManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsConsentManager.swift; sourceTree = "<group>"; };
 		2AF8FCE2A89EA033DEC8CC0F /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
 		2D0B38D72809437F7A4E92BB /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
 		36289E47075AC22B19ED3F3C /* SocketCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketCommands.swift; sourceTree = "<group>"; };
@@ -90,7 +93,9 @@
 		93487409AD57239F519AC397 /* DeviceScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceScreens.swift; sourceTree = "<group>"; };
 		95F8E3C191C39FB0B41A0FE4 /* Bridging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bridging.swift; sourceTree = "<group>"; };
 		A44A6E7932297B5A7B213C3C /* AuthFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthFlowView.swift; sourceTree = "<group>"; };
+		A6DB3C2A144347C3B498B9D4 /* ReadyToPourView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadyToPourView.swift; sourceTree = "<group>"; };
 		A784DE6AE56C30198F6AFD89 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakeasySocketManager.swift; sourceTree = "<group>"; };
 		AE9DDCF615653317BC5F2BAC /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		B578286B9A7F4550D4B6AD65 /* PreferencesScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesScreens.swift; sourceTree = "<group>"; };
 		BA1779BB60E125FE19ED8397 /* UserDefaultsClass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsClass.swift; sourceTree = "<group>"; };
@@ -99,7 +104,6 @@
 		CCDD315E11422E6F842CADFF /* TutorialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialView.swift; sourceTree = "<group>"; };
 		D9520BE5EA73D918BBA4A51F /* BarsysAppSwiftUIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarsysAppSwiftUIApp.swift; sourceTree = "<group>"; };
 		DAE8814D5CF27412A36189D9 /* RecipesScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipesScreens.swift; sourceTree = "<group>"; };
-		A6DB3C2A144347C3B498B9D4 /* ReadyToPourView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadyToPourView.swift; sourceTree = "<group>"; };
 		DCA686EF7D08ABB23D5031CF /* SideMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideMenuView.swift; sourceTree = "<group>"; };
 		E765512FACA96C473B765A8F /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		E91FC882D3CCBC9AD9F9341B /* ScreenEdgePanGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenEdgePanGesture.swift; sourceTree = "<group>"; };
@@ -279,6 +283,8 @@
 		8D82EFA3D0D2E373AF7DB1A7 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				AC0A1B2C3D4E5F6071828391 /* AnalyticsConsentManager.swift */,
+				BA2EBB5E4DA8C7B1E7F3F1B2 /* BrazeService.swift */,
 				0150F73E373B9D456171F2A2 /* LocalCache.swift */,
 				257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */,
 				291A901391A852222CC64F10 /* Services.swift */,
@@ -397,6 +403,9 @@
 				Base,
 			);
 			mainGroup = 8D3FC6DB5D0827F168A73277;
+			packageReferences = (
+				8D8A44BD2F98B5B0002B3317 /* XCRemoteSwiftPackageReference "braze-swift-sdk" */,
+			);
 			productRefGroup = 1BADDC1D73C1A20F347483E1 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -439,6 +448,8 @@
 				8019E293075E35CB7FDB6DDA /* LocalCache.swift in Sources */,
 				D12E12500F5BBACD37F1BAC2 /* OryAPIClient.swift in Sources */,
 				D97FC15AC7D31879AF295EB0 /* Services.swift in Sources */,
+				BA2EBB5E4DA8C7B1E7F3F1B1 /* BrazeService.swift in Sources */,
+				AC0A1B2C3D4E5F6071828392 /* AnalyticsConsentManager.swift in Sources */,
 				AA11BB22CC33DD44EE551001 /* SpeakeasySocketManager.swift in Sources */,
 				E256DC185A6D94C9A288086A /* UserDefaultsClass.swift in Sources */,
 				EBC76E4A83FED6F7C811B6EC /* UserProfileStore.swift in Sources */,
@@ -488,8 +499,8 @@
 				INFOPLIST_KEY_UIAppFonts = "SF-Pro-Display-Black.otf SF-Pro-Display-Semibold.otf SFPRODISPLAYBOLD.OTF SFPRODISPLAYMEDIUM.OTF SFPRODISPLAYREGULAR.OTF SFProDisplay-Italic.OTF";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_BackgroundColor = primaryBackgroundColor;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_ImageName = splashAppIcon;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -524,8 +535,8 @@
 				INFOPLIST_KEY_UIAppFonts = "SF-Pro-Display-Black.otf SF-Pro-Display-Semibold.otf SFPRODISPLAYBOLD.OTF SFPRODISPLAYMEDIUM.OTF SFPRODISPLAYREGULAR.OTF SFProDisplay-Italic.OTF";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_BackgroundColor = primaryBackgroundColor;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_ImageName = splashAppIcon;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -677,6 +688,17 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8D8A44BD2F98B5B0002B3317 /* XCRemoteSwiftPackageReference "braze-swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/braze-inc/braze-swift-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 	};
 	rootObject = 46F86FAA6BBF9AC94A7E4595 /* Project object */;
 }

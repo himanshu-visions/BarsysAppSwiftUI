@@ -446,6 +446,11 @@ final class MyProfileViewModel: ObservableObject {
             isEdit = false
             isProfileChanged = false
             env.analytics.track(TrackEventName.editProfileEvent.rawValue)
+            // 1:1 with UIKit `MyProfileViewModel` L148, L164 calling
+            // `TrackEventsClass().brazeUpdateProfile()` after a
+            // successful PATCH so Braze re-syncs `firstName`, `email`,
+            // `phoneNumber` for accurate IAM / push targeting.
+            env.auth.syncBrazeProfile()
             env.alerts.show(message: Constants.profileUpdateMessage)
             return true
         } catch {
@@ -515,6 +520,11 @@ final class MyProfileViewModel: ObservableObject {
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if (200..<300).contains(status) {
                 env.analytics.track(TrackEventName.deleteProfileEvent.rawValue)
+                // 1:1 with UIKit `TrackEventsClass.brazeDeleteUser(userID:)`
+                // (TrackEventsClass.swift L188-200): clear PII, swap
+                // user, `wipeData()` and disable the SDK so no further
+                // events leak after the account is gone.
+                BrazeService.shared.deleteUser(userId: env.auth.profile.id)
                 UserDefaultsClass.clearAll()
             } else {
                 env.alerts.show(message: Constants.profileUpdateError)

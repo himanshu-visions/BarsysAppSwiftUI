@@ -6,11 +6,19 @@
 //  and APNs require a UIApplicationDelegate. All other app logic lives in
 //  `BarsysAppSwiftUIApp` and `AppEnvironment`.
 //
-//  INTEGRATION POINTS (uncomment and plug in your existing implementations):
-//  - FirebaseApp.configure()
-//  - Braze.init(...) + BrazeInAppMessageUI()
-//  - IQKeyboardManager.shared.enable = true
-//  - Push notification registration
+//  Braze SDK integration (1:1 with UIKit AppDelegate.swift):
+//   • `application(_:didFinishLaunchingWithOptions:)` →
+//      `BrazeService.shared.configure()` (UIKit AppDelegate L79-103)
+//   • `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)` →
+//      `BrazeService.shared.setPushToken(_:)` (UIKit L253-255)
+//   • `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` →
+//      `BrazeService.shared.handleBackgroundNotification(_:)` (UIKit L274-280)
+//   • `userNotificationCenter(_:didReceive:withCompletionHandler:)` →
+//      `BrazeService.shared.handleUserNotification(_:)` (UIKit L274-280)
+//
+//  All Braze SDK calls go through `BrazeService` which uses
+//  `#if canImport(BrazeKit)` so this code compiles whether or not the
+//  BrazeKit / BrazeUI pods are installed.
 //
 
 import UIKit
@@ -35,13 +43,15 @@ final class AppDelegateAdaptor: NSObject, UIApplicationDelegate, UNUserNotificat
         // FirebaseApp.configure()
     }
 
+    /// 1:1 port of UIKit `AppDelegate.configureBraze()` (L79-103). The
+    /// real SDK calls live in `BrazeService.configure()` which uses
+    /// `#if canImport(BrazeKit)` so this compiles WITH or WITHOUT the
+    /// Braze pods installed. To activate Braze:
+    ///   1. Uncomment `pod 'BrazeKit'` + `pod 'BrazeUI'` in /Podfile
+    ///   2. `pod install`
+    ///   3. Re-open the .xcworkspace
     private func configureBraze() {
-        // TODO: plug in existing Braze init. See BarsysApp/AppDelegate.swift configureBraze()
-        // let configuration = Braze.Configuration(apiKey: "...", endpoint: "...")
-        // let braze = Braze(configuration: configuration)
-        // AppState.shared.braze = braze
-        // let inAppMessageUI = BrazeInAppMessageUI()
-        // braze.inAppMessagePresenter = inAppMessageUI
+        BrazeService.shared.configure()
     }
 
     private func configureKeyboardManager() {
@@ -57,21 +67,56 @@ final class AppDelegateAdaptor: NSObject, UIApplicationDelegate, UNUserNotificat
         DispatchQueue.main.async { application.registerForRemoteNotifications() }
     }
 
-    // MARK: - Push
+    // MARK: - Push token registration (1:1 with UIKit AppDelegate L253-259)
 
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        // Forward to Braze / Firebase Messaging as needed
+        // Forward to Braze. UIKit additionally hands the same token to
+        // Firebase Messaging via `Messaging.messaging().apnsToken =
+        // deviceToken` (AppDelegate.swift L254) — wire that here too
+        // once Firebase is added to the SwiftUI Podfile.
+        BrazeService.shared.setPushToken(deviceToken)
     }
 
     func application(_ application: UIApplication,
-                     didFailToRegisterForRemoteNotificationsWithError error: Error) {}
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        // UIKit just logs and continues — no special handling required.
+        // Failure here doesn't break the app, the user just won't
+        // receive push notifications until APNs registration succeeds
+        // on a future launch.
+    }
 
-    // MARK: - Foreground presentation
+    // MARK: - Background notifications (1:1 with UIKit AppDelegate L274-280)
+
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler:
+                        @escaping (UIBackgroundFetchResult) -> Void) {
+        // Hand the silent / data push to Braze first — it owns content
+        // refresh and silent push handling. If Braze didn't claim the
+        // notification we just signal `.noData` so APNs marks the
+        // delivery complete.
+        let handled = BrazeService.shared.handleBackgroundNotification(userInfo)
+        completionHandler(handled ? .newData : .noData)
+    }
+
+    // MARK: - Foreground presentation (UNUserNotificationCenterDelegate)
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // 1:1 with UIKit AppDelegate.swift L266-272 — show banner /
+        // list / sound / badge for foreground notifications, matching
+        // the user's Settings preferences.
         completionHandler([.banner, .list, .sound, .badge])
+    }
+
+    /// 1:1 port of UIKit AppDelegate.swift L274-280 — forwards the
+    /// notification tap to Braze so deep links / IAM triggers fire.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        BrazeService.shared.handleUserNotification(response)
+        completionHandler()
     }
 }

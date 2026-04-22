@@ -587,6 +587,14 @@ final class AuthService: ObservableObject {
         do {
             profile = try await api.fetchProfile()
             isAuthenticated = true
+            // 1:1 with UIKit: when the app re-launches with a stored
+            // session, `ChooseOptionsDashboardViewController` re-fires
+            // `brazeLoginUser()` + `brazeUpdateProfile()` so Braze
+            // re-attaches every subsequent custom event to the
+            // correct user — even if the SDK was reinitialised mid-
+            // session. Mirroring here on the SwiftUI restore path
+            // keeps Braze's user-id in sync across app restarts.
+            await MainActor.run { syncBrazeUser(profile: self.profile) }
         } catch {
             // Don't clear session on profile fetch failure — the token may
             // still be valid for recipe/mixlist APIs. Only clear on explicit
@@ -624,24 +632,64 @@ final class AuthService: ObservableObject {
         // that binds to `@EnvironmentObject var userStore: UserProfileStore`
         // sees the update in its next `body` evaluation.
         UserProfileStore.shared.apply(profile: profile)
+        // 1:1 with UIKit `ChooseOptionsDashboardViewController` L31-32:
+        //   TrackEventsClass().brazeLoginUser()
+        //   TrackEventsClass().brazeUpdateProfile()
+        // Fires immediately after the post-OTP profile lands so Braze
+        // attaches every subsequent custom event to the correct user
+        // and syncs first-name / email / phone for push targeting.
+        syncBrazeUser(profile: profile)
     }
 
     func login(email: String, password: String) async throws {
         profile = try await api.login(email: email, password: password)
         preferences.sessionToken = UUID().uuidString
         isAuthenticated = true
+        syncBrazeUser(profile: profile)
     }
 
     func signUp(firstName: String, lastName: String, email: String, phone: String, dob: Date?) async throws {
         profile = try await api.signUp(firstName: firstName, lastName: lastName, email: email, phone: phone, dob: dob)
         preferences.sessionToken = UUID().uuidString
         isAuthenticated = true
+        syncBrazeUser(profile: profile)
     }
 
     func logout() {
+        // 1:1 with UIKit `UIViewController+Navigation.swift` L27, L31:
+        //   TrackEventsClass().addBrazeCustomEventWithEventName(
+        //       eventName: TrackEventName.logoutEvent.rawValue)
+        //   TrackEventsClass().brazeLogoutUser()
+        // The order matches UIKit — fire the logout event WHILE the
+        // user is still attached, then unsubscribe from push and
+        // disable the SDK.
+        BrazeService.shared.track(event: TrackEventName.logoutEvent.rawValue)
+        BrazeService.shared.logoutUser()
         profile = .empty
         preferences.sessionToken = nil
         isAuthenticated = false
+    }
+
+    /// Notify Braze that the profile changed (e.g. user edited their
+    /// name / email / phone in My Profile). 1:1 with UIKit
+    /// `MyProfileViewModel` L148, L164 calling `brazeUpdateProfile()`
+    /// after a successful PATCH.
+    func syncBrazeProfile() {
+        syncBrazeUser(profile: profile)
+    }
+
+    /// Single funnel for `loginUser(userId:)` + `updateProfile(...)` —
+    /// Braze requires both calls (the SDK's `changeUser` doesn't sync
+    /// PII; you have to follow it with `set(firstName:)` etc).
+    private func syncBrazeUser(profile: UserProfile) {
+        guard !profile.id.isEmpty else { return }
+        BrazeService.shared.loginUser(userId: profile.id)
+        BrazeService.shared.updateProfile(
+            firstName: profile.firstName.isEmpty ? nil : profile.firstName,
+            email: profile.email.isEmpty ? nil : profile.email,
+            phone: profile.phone.isEmpty ? nil : profile.phone,
+            userId: profile.id
+        )
     }
 }
 
@@ -1248,6 +1296,30 @@ extension BLEService: CBCentralManagerDelegate {
 
             UserDefaultsClass.storeLastConnectedDevice(deviceName)
             UserDefaultsClass.storeIsManuallyDisconnected(false)
+            // 1:1 with UIKit `BleManager+Commands.swift` L179, L183 —
+            // fire `bluetoothAutoReconnected` when the connect was an
+            // auto-reconnect (we were trying to recover a lost link),
+            // otherwise fire the standard `onDeviceConnect` event.
+            // Both events carry `deviceId` (the BLE peripheral name)
+            // and `deviceType` (BarsysDevice.kind) so Braze can
+            // segment users by hardware.
+            let wasReconnecting = (self.reconnectionState == .attempting)
+            let brazeProps: [String: Any] = [
+                "deviceId": deviceName,
+                "deviceType": kind.displayName
+            ]
+            if wasReconnecting {
+                BrazeService.shared.track(
+                    event: TrackEventName.bluetoothAutoReconnected.rawValue,
+                    properties: ["device_id": deviceName,
+                                 "device_type": kind.displayName]
+                )
+            } else {
+                BrazeService.shared.track(
+                    event: TrackEventName.onDeviceConnect.rawValue,
+                    properties: brazeProps
+                )
+            }
             self.disconnectedState = .notManuallyDisconnected
             self.reconnectionState = .idle
 
@@ -1286,6 +1358,27 @@ extension BLEService: CBCentralManagerDelegate {
             // (ports UIKit L257-258: writeCharacteristic=nil / readCharacteristic=nil).
             self.writeCharacteristic = nil
             self.readCharacteristic = nil
+
+            // 1:1 with UIKit `BleManager+Commands.swift` L204, L210
+            // — distinguish "user manually disconnected" (fire
+            // `onDeviceDisconnect`) from "link dropped unexpectedly"
+            // (fire `onDeviceConnectionLost`). UIKit decides via
+            // `UserDefaultsClass.getIsManuallyDisconnected()`; we
+            // mirror with `disconnectedState`.
+            let wasManual = (self.disconnectedState == .manuallyDisconnected)
+            let kindName = self.connected.first { $0.id.value == uuid }?.kind.displayName
+                ?? self.deviceKind(fromName: disconnectedName)?.displayName
+                ?? ""
+            let brazeEvent = wasManual
+                ? TrackEventName.onDeviceDisconnect.rawValue
+                : TrackEventName.onDeviceConnectionLost.rawValue
+            if !disconnectedName.isEmpty {
+                BrazeService.shared.track(
+                    event: brazeEvent,
+                    properties: ["deviceId": disconnectedName,
+                                 "deviceType": kindName]
+                )
+            }
 
             // Notify app layer — shows toast + reverts tab.
             // Ports BleManager+Commands.swift line 214:
@@ -1431,16 +1524,40 @@ final class SocketService: ObservableObject {
     func send(_ event: String, payload: [String: Any] = [:]) { /* no-op mock */ }
 }
 
-// MARK: - BrazeService, Analytics
-
-final class BrazeService {
-    func track(event: String, properties: [String: Any] = [:]) {}
-    func setUser(id: String) {}
-}
+// MARK: - AnalyticsService
+//
+// Wrapper that fans event tracking out to BOTH the Braze SDK AND any
+// future internal analytics backend. 1:1 with UIKit `TrackEventsClass`
+// where every screen calls TWO things back-to-back (BarsysApp/.../*ViewModel.swift):
+//   • `TrackEventsClass().trackEvent(eventName: ...)`              — backend
+//   • `TrackEventsClass().addBrazeCustomEventWithEventName(name:)` — Braze
+//
+// The SwiftUI port collapses both into `env.analytics.track(...)` so
+// callers never have to remember to fire Braze separately. Today only
+// the Braze fan-out is implemented (no internal analytics backend in
+// the SwiftUI app yet); the backend hook is pre-wired below for when
+// the `/events/analytics` endpoint port lands.
 
 final class AnalyticsService {
-    func track(_ name: String, properties: [String: Any] = [:]) {}
-    func screen(_ name: String) {}
+
+    /// Bridges every `track(_:properties:)` call into Braze via the
+    /// shared singleton — matches UIKit's pattern of always logging
+    /// custom events to Braze with whatever extra metadata the call
+    /// site assembled (recipe_id, device_id, station_index, etc.).
+    func track(_ name: String, properties: [String: Any] = [:]) {
+        BrazeService.shared.track(event: name, properties: properties)
+        // TODO: also POST to internal `/events/analytics` once the
+        // UIKit `TrackEventsClass.trackEvent(...)` backend port lands
+        // (event envelope w/ schema_version, session_id, network, etc.)
+    }
+
+    /// Convenience shortcut for screen-view events. Mirrors callers
+    /// that just want a single screen-name string with no other
+    /// properties (e.g. `analytics.screen("Home")` → fires
+    /// `Home_Screen_Viewed` style events).
+    func screen(_ name: String) {
+        track(name)
+    }
 }
 
 // MARK: - CatalogService
