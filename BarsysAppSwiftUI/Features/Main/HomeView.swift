@@ -573,6 +573,22 @@ struct GlassCircleButton: View {
 // match UIKit on either path — UIKit wraps the two buttons in ONE
 // container, with the pill only visible on iOS 26+.
 struct NavigationRightGlassButtons: View {
+    /// Reactive theme awareness — used to conditionally tint the
+    /// leading heart + trailing profile glyphs in DARK MODE ONLY.
+    ///
+    /// In light mode, the raw PNG pixels are preserved verbatim (no
+    /// `.renderingMode(.template)`, no `.foregroundStyle`) so light
+    /// mode stays pixel-identical to the UIKit design.
+    ///
+    /// In dark mode, the icons get re-tinted with the adaptive
+    /// `appBlackColor` asset (which resolves to a near-white
+    /// `#E5E5EA` in dark mode), so the right-side glyphs read with
+    /// the SAME contrast the left-hand `NavigationLeadingGlassButton`
+    /// already has — dark heart / person icons were rendering washed
+    /// out against the bright `.ultraThinMaterial` pill + dark page
+    /// canvas, making them visibly inconsistent with the left button.
+    @Environment(\.colorScheme) private var colorScheme
+
     /// Asset name for the leading icon. Defaults to `favoriteIcon`
     /// (heart) for tab-level screens; RecipeDetail / MixlistDetail
     /// override with a recipe-specific favorited/unfavorited glyph.
@@ -790,13 +806,45 @@ struct NavigationRightGlassButtons: View {
                 )
                 .foregroundStyle(Color("appBlackColor"))
         } else {
-            Image(leadingImageName)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(
-                    width: Self.leadingIconSize.width,
-                    height: Self.leadingIconSize.height
-                )
+            // DARK MODE ONLY: re-tint via `appBlackColor` (near-white
+            // `#E5E5EA` in dark mode) so the heart icon reads with
+            // the same contrast as the left-hand
+            // `NavigationLeadingGlassButton`. In light mode we keep
+            // the bare PNG — no `renderingMode` / `foregroundStyle`
+            // override — so the light-mode pixels stay bit-identical
+            // to the existing UIKit-parity design.
+            //
+            // Safety: this runs for ALL call-sites, INCLUDING
+            // RecipeDetail / MixlistDetail which pass a recipe-
+            // specific favorited / unfavorited asset. Those assets
+            // are monochrome glyphs (see
+            // `favIconRecipe.imageset` / `favIconRecipeSelected.imageset`),
+            // so template-tinting them in dark mode yields the same
+            // filled-vs-outlined silhouette — only the colour flips
+            // from dark-grey PNG to adaptive near-white. If a call
+            // site ever needs a truly un-tintable colourful asset
+            // (brand gradient etc.) it must switch to
+            // `leadingSystemImage` OR render through a different
+            // toolbar slot.
+            if colorScheme == .dark {
+                Image(leadingImageName)
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(
+                        width: Self.leadingIconSize.width,
+                        height: Self.leadingIconSize.height
+                    )
+                    .foregroundStyle(Color("appBlackColor"))
+            } else {
+                Image(leadingImageName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(
+                        width: Self.leadingIconSize.width,
+                        height: Self.leadingIconSize.height
+                    )
+            }
         }
     }
 
@@ -805,13 +853,31 @@ struct NavigationRightGlassButtons: View {
             HapticService.light()
             onProfile()
         } label: {
-            Image("profileIcon")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(
-                    width: Self.profileIconSize.width,
-                    height: Self.profileIconSize.height
-                )
+            // DARK MODE ONLY template-tint — same rationale as the
+            // leading icon above. `profileIcon.imageset` is a
+            // monochrome person glyph so `.renderingMode(.template)`
+            // produces an identically-shaped icon at the tinted
+            // colour. Light-mode branch returns the bare PNG so no
+            // pixels shift.
+            if colorScheme == .dark {
+                Image("profileIcon")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(
+                        width: Self.profileIconSize.width,
+                        height: Self.profileIconSize.height
+                    )
+                    .foregroundStyle(Color("appBlackColor"))
+            } else {
+                Image("profileIcon")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(
+                        width: Self.profileIconSize.width,
+                        height: Self.profileIconSize.height
+                    )
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Side menu")
