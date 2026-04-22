@@ -33,7 +33,26 @@ struct BarsysAppSwiftUIApp: App {
                 .environmentObject(router)
                 .environmentObject(userStore)
                 .tint(Theme.Color.brand)
-                .preferredColorScheme(.light)
+                // Respect system appearance.
+                //
+                // Light mode is byte-identical to the historical
+                // build: every existing colorset's light variant was
+                // left untouched (only NEW dark variants were added),
+                // and the only Swift token affected — `Theme.Color.surface`
+                // — points at `surfaceColor` whose light entry is
+                // pure white sRGB(1, 1, 1), the same pixel value the
+                // hard-coded `Color.white` resolved to.
+                //
+                // Dark mode activates automatically when the device's
+                // system appearance is dark: the new asset dark
+                // variants kick in, and the system materials we use
+                // (`.regularMaterial`, `.ultraThinMaterial`,
+                // `UIGlassEffect/.systemMaterial` inside
+                // `BarsysGlassPanelBackground`) adapt natively — the
+                // side menu glass, edit-recipe glass, popup cards,
+                // and every blur surface in the app pick up their
+                // dark-mode counterparts without any per-screen code
+                // changes.
         }
     }
 }

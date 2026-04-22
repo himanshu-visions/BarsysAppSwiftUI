@@ -22,8 +22,16 @@ enum Theme {
         static let softPlatinum         = SwiftUI.Color("softPlatinumColor")
         static let whiteTranslucent     = SwiftUI.Color("whiteTranslucent70")
 
-        // Surfaces (for cards / sheets)
-        static let surface              = SwiftUI.Color.white
+        // Surfaces (for cards / sheets).
+        // `surfaceColor` is an adaptive asset:
+        //   • Light: pure white sRGB(1, 1, 1) — bit-identical to the
+        //     historical hard-coded `Color.white`, so every IconButton,
+        //     AppTextField, RecipeCard etc. renders the EXACT same
+        //     pixels in light mode as before this change.
+        //   • Dark:  elevated dark surface (#2C2C2E) — sits one step
+        //     lighter than `primaryBackgroundColor` so cards / inputs /
+        //     popups still read as raised surfaces.
+        static let surface              = SwiftUI.Color("surfaceColor")
         static let surfaceElevated      = SwiftUI.Color("warmBackgroundColor")
 
         // Brand (tan / peach)

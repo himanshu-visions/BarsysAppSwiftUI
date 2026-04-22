@@ -360,7 +360,13 @@ struct HomeView: View {
         .padding(.top, 16)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white)
+        // `Theme.Color.surface` is an adaptive asset — light variant
+        // is pure white sRGB(1, 1, 1), bit-identical to the previous
+        // hard-coded `Color.white`, so light mode renders the EXACT
+        // same pixels. Dark mode picks up the elevated dark surface
+        // (#2C2C2E) from the asset catalog so the Connect Device
+        // header row stops being a stark white slab in dark mode.
+        .background(Theme.Color.surface)
         // The entire card is also tappable via `connectDeviceTapped` — in the
         // storyboard this is an invisible overlay button (935-Gm-qEG) that
         // covers the whole card. The SwiftUI equivalent is the Button wrapping
@@ -399,7 +405,14 @@ struct HomeView: View {
             }
             .frame(height: 60)
             .frame(maxWidth: .infinity)
-            .background(Color.white)
+            // `Theme.Color.surface` is an adaptive asset — light
+            // variant is pure white sRGB(1, 1, 1), bit-identical to
+            // the previous hard-coded `Color.white`, so light mode
+            // renders the EXACT same pixels. Dark mode picks up the
+            // elevated dark surface (#2C2C2E) from the asset catalog
+            // so the Speakeasy card adapts naturally on dark
+            // backgrounds.
+            .background(Theme.Color.surface)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             // No shadow — applyCustomShadow is NOT called on this card in the
             // UIKit version.
