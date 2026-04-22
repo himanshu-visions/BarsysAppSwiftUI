@@ -1007,7 +1007,18 @@ private struct MyBarSecondaryButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 12))
-                .foregroundStyle(Color.black)
+                // Preserve EXACT pure black in light mode (bit-identical
+                // to the previous hard-coded `Color.black`); switch to
+                // a near-white tone in dark mode for legibility on the
+                // dark `Theme.Color.surface` capsule. Trait-resolved
+                // at draw time → light pixels are unchanged.
+                // Used by "Upload from Photos", "Add ingredient", and
+                // "Re-Upload" — all share this component.
+                .foregroundStyle(Color(UIColor { trait in
+                    trait.userInterfaceStyle == .dark
+                        ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                        : UIColor.black // EXACT historical black
+                }))
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
                 .background(secondaryFill)
@@ -1021,7 +1032,13 @@ private struct MyBarSecondaryButton: View {
     @ViewBuilder
     private var secondaryFill: some View {
         if #available(iOS 26.0, *) {
-            Color.white
+            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+            // bit-identical to the previous hard-coded `Color.white`,
+            // so the iOS 26+ secondary capsule is the EXACT same white
+            // pill in light mode. Dark mode picks up the elevated dark
+            // surface (#2C2C2E) so the pill stops being a stark white
+            // slab on the dark MyBar canvas.
+            Theme.Color.surface
         } else {
             Color("primaryBackgroundColor")
         }
