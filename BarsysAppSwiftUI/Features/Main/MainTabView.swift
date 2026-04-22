@@ -246,19 +246,49 @@ struct MainTabView: View {
         appearance.backgroundColor = UIColor.white.withAlphaComponent(0.01)
         appearance.backgroundEffect = nil
 
+        // Dynamic UIColor providers — light variants are bit-identical
+        // to the historical hard-coded `UIColor.black(...)` values, so
+        // the tab bar renders the EXACT same pixels in light mode as
+        // before. In dark mode the resolver returns the white-tinted
+        // counterparts so icons / titles stay legible against the dark
+        // `primaryBackgroundColor` canvas instead of disappearing into
+        // a black-on-dark blur.
+        let unselectedIconColor = UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor.white.withAlphaComponent(0.55)
+                : UIColor.black.withAlphaComponent(0.55) // EXACT historical value
+        }
+        let unselectedTitleColor = UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor.white.withAlphaComponent(0.6)
+                : UIColor.black.withAlphaComponent(0.6) // EXACT historical value
+        }
+        let selectedColor = UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor.white
+                : UIColor.black // EXACT historical value
+        }
+
         let item = UITabBarItemAppearance()
-        item.normal.iconColor = UIColor.black.withAlphaComponent(0.55)
+        item.normal.iconColor = unselectedIconColor
         item.normal.titleTextAttributes = [
-            .foregroundColor: UIColor.black.withAlphaComponent(0.6)
+            .foregroundColor: unselectedTitleColor
         ]
-        item.selected.iconColor = UIColor.black
-        item.selected.titleTextAttributes = [.foregroundColor: UIColor.black]
+        item.selected.iconColor = selectedColor
+        item.selected.titleTextAttributes = [.foregroundColor: selectedColor]
 
         if #available(iOS 26.0, *) {
             // UIKit L130: `shadowColor = UIColor.black.withAlphaComponent(0.4)`.
             // Top hairline under the glass so the tab bar reads against
             // `primaryBackgroundColor` even on iOS 26 glass.
-            appearance.shadowColor = UIColor.black.withAlphaComponent(0.4)
+            // Dynamic so the hairline is visible in both modes — light
+            // value is bit-identical to the historical hard-coded
+            // `UIColor.black.withAlphaComponent(0.4)`.
+            appearance.shadowColor = UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? UIColor.white.withAlphaComponent(0.4)
+                    : UIColor.black.withAlphaComponent(0.4) // EXACT historical value
+            }
         } else {
             // UIKit L133-139 pre-26 branch: lift the titles 12pt closer
             // to their icons (the stacked layout otherwise puts them too

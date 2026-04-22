@@ -838,11 +838,24 @@ struct NavigationRightGlassButtons: View {
 //
 // Usage: `.chooseOptionsStyleNavBar()` on the screen's root view.
 struct ChooseOptionsStyleNavBar: ViewModifier {
+    /// Read the current SwiftUI color scheme so the nav-bar
+    /// `toolbarColorScheme` can match it. In light system mode the
+    /// resolved value is `.light` — bit-identical to the previous
+    /// hard-coded `.toolbarColorScheme(.light, …)` — so light mode
+    /// renders the EXACT same nav bar pixels as before. In dark
+    /// system mode the resolver returns `.dark`, which lets the
+    /// system tint titles / SF Symbols against the dark
+    /// `primaryBackgroundColor` background instead of forcing them
+    /// to the (now invisible) light-mode tinting.
+    @Environment(\.colorScheme) private var colorScheme
+
     func body(content: Content) -> some View {
         content
             // Force the nav bar background colour to match the
             // `primaryBackgroundColor` canvas that HomeView shows
-            // behind its custom top bar.
+            // behind its custom top bar. This asset itself is now
+            // adaptive (light = #E7E7E8, dark = #1C1C1E), so the bar
+            // background follows the system appearance automatically.
             .toolbarBackground(
                 Color("primaryBackgroundColor"),
                 for: .navigationBar
@@ -851,10 +864,15 @@ struct ChooseOptionsStyleNavBar: ViewModifier {
             // (on iOS 16+ `.visible` prevents the system auto-hide
             // that happens when the top inset is empty).
             .toolbarBackground(.visible, for: .navigationBar)
-            // Light scheme so the title + buttons stay `appBlackColor`
-            // regardless of the user's dark-mode preference —
-            // matches HomeView which is implicitly light.
-            .toolbarColorScheme(.light, for: .navigationBar)
+            // Mirror the system color scheme: in light mode this
+            // resolves to `.light` (bit-identical to the previous
+            // hard-coded value, so light mode is unchanged); in dark
+            // mode it resolves to `.dark` so the toolbar title and
+            // bar buttons stay legible on the dark
+            // `primaryBackgroundColor` canvas instead of inheriting
+            // dark text on a dark bar.
+            .toolbarColorScheme(colorScheme == .dark ? .dark : .light,
+                                for: .navigationBar)
     }
 }
 

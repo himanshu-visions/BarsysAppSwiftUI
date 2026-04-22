@@ -2960,7 +2960,13 @@ struct BarBotHistoryView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white)
+                    // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+                    // bit-identical to the previous hard-coded `Color.white`,
+                    // so light mode renders the EXACT same New Chat card.
+                    // Dark mode picks up the elevated dark surface (#2C2C2E)
+                    // so the card remains a raised affordance against the
+                    // dark `primaryBackgroundColor` history panel canvas.
+                    .fill(Theme.Color.surface)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -3062,7 +3068,14 @@ struct BarBotHistoryView: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white)
+                // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+                // bit-identical to the previous hard-coded `Color.white`,
+                // so each history row is the EXACT same white card in
+                // light mode. Dark mode picks up the elevated dark
+                // surface (#2C2C2E) so rows read as raised cards on
+                // the dark history panel canvas instead of disappearing
+                // into a stark white-on-dark slab.
+                .fill(Theme.Color.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -4426,8 +4439,13 @@ struct WaitingRecipePopup: View {
                     .fill(Theme.Color.cancelButtonGray.opacity(0.15))
             }
         } else {
+            // `Theme.Color.surface` is pure white sRGB(1, 1, 1) in
+            // light mode (bit-identical to the previous hard-coded
+            // `Color.white`), elevated dark surface (#2C2C2E) in dark
+            // — keeps the pre-iOS 26 cancel button readable on the
+            // dark popup card instead of staying a stark white slab.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white)
+                .fill(Theme.Color.surface)
         }
     }
 
