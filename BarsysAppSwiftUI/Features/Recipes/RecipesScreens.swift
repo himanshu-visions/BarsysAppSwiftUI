@@ -1716,7 +1716,7 @@ final class MakeMyOwnViewModel: ObservableObject {
     /// FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe(mode: .create).
     /// Creates a new My Drink locally AND calls the POST /my/recipes API.
     func save(to storage: StorageService, api: APIClient) -> Recipe {
-        var recipe = Recipe(name: name.isEmpty ? "My Custom Drink" : name,
+        let recipe = Recipe(name: name.isEmpty ? "My Custom Drink" : name,
                             description: "Custom creation",
                             ingredients: items,
                             instructions: ["Add all ingredients in order.", "Stir or shake to taste."],

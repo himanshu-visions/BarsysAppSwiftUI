@@ -511,7 +511,7 @@ final class BarBotViewModel: ObservableObject {
         guard !text.isEmpty || selectedImage != nil else { return }
         guard canProcessNewRequest else { return }
 
-        var msg = ChatMessage(questionText: text,
+        let msg = ChatMessage(questionText: text,
                               questionImage: selectedImage,
                               isLoading: true)
         messages.append(msg)

@@ -569,19 +569,30 @@ struct FavoritesView: View {
                     .accessibilityLabel("Connected device, \(deviceKindName)")
             }
         }
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            // Shared 100×48 glass pill (iOS 26+) / bare 61×24 icon stack
-            // (pre-26). 1:1 UIKit `navigationRightGlassView` parity. On
-            // the Favorites screen itself the heart icon is a no-op
-            // (the whole screen already IS the favorites list).
-            NavigationRightGlassButtons(
-                onFavorites: {},
-                onProfile: {
-                    withAnimation(.easeInOut(duration: 0.4)) {
-                        router.showSideMenu = true
-                    }
+        // Single profile button — 1:1 port of UIKit
+        // `FavouritesRecipesAndDrinksViewController` (storyboard
+        // `yH3-J7-7bh`, L16-305): the top bar has a back chevron on
+        // the left and ONLY the profile button on the right. UIKit's
+        // `btnSideMenu.addGlassEffectToUIButton(cornerRadius: height/2)`
+        // produces a circular Liquid Glass chip — the SAME shape the
+        // system applies to its native back button. By using a plain
+        // `Button` inside `ToolbarItem(.topBarTrailing)` with an
+        // icon-only label, iOS 26 renders the trailing item with the
+        // same native back-button-style Liquid Glass chip — matching
+        // the left-hand back chevron without any custom drawing.
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                HapticService.light()
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    router.showSideMenu = true
                 }
-            )
+            } label: {
+                Image("profileIcon")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 24, height: 24)
+            }
+            .accessibilityLabel("Side menu")
         }
     }
 
