@@ -443,14 +443,21 @@ struct LoadingOverlayModifier: ViewModifier {
                         Color.black.opacity(0.30).ignoresSafeArea()
 
                         VStack(spacing: 10) {
-                            // GIF placeholder — SwiftUI doesn't ship an
-                            // animated GIF view, so we render a brand-tinted
-                            // ProgressView at the same 60×60pt footprint
-                            // UIKit reserves for `BarsysLoader.gif`.
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                                .scaleEffect(1.6)
-                                .tint(Theme.Color.brand)
+                            // 1:1 with UIKit `showGlassLoader`
+                            // (UIViewController+GlassLoader.swift L82-87):
+                            //   `SDAnimatedImageView.sd_setImage(with:
+                            //    Bundle.main.url(forResource:
+                            //    "BarsysLoader", withExtension: "gif"))`
+                            //   frame: 60×60, contentMode: .scaleAspectFit.
+                            // `AnimatedGIFView` (defined in
+                            // BarBotScreens.swift) reads the raw GIF
+                            // bytes from the data asset + plays every
+                            // frame with its encoded per-frame delay
+                            // via `CGImageSource`, matching the SDWebImage
+                            // playback the UIKit version uses. The
+                            // `BarsysLoader.dataset` is copied verbatim
+                            // from UIKit so the animation is bit-identical.
+                            AnimatedGIFView(assetName: "BarsysLoader")
                                 .frame(width: 60, height: 60)
 
                             if !state.message.isEmpty {
