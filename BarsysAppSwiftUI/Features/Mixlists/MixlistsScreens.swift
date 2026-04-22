@@ -323,6 +323,14 @@ struct MixlistDetailView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    /// Reactive theme awareness — used ONLY by the bottom
+    /// "Setup Stations" primary-orange button to override the
+    /// dark-appearance variant of the `brandGradientTop` /
+    /// `brandGradientBottom` colour assets (which wrongly resolve to
+    /// dark grey / near-black in dark mode) back to the light-mode
+    /// orange RGB so the button stays readable in dark mode.
+    /// Light mode is untouched.
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var selectedTab: MixlistDetailTab = .recipes
     @State private var showMoreSheet: Bool = false
@@ -724,7 +732,22 @@ struct MixlistDetailView: View {
                     HapticService.light()
                     setupStations(for: mixlist)
                 } label: {
-                    Text("Setup Stations").brandCapsule(height: 45, cornerRadius: 8)
+                    // Inlined `brandCapsule(height: 45, cornerRadius: 8)`
+                    // so the gradient can branch on `colorScheme`
+                    // without modifying the shared helper. The shared
+                    // `.brandCapsule` treatment resolves
+                    // `brandGradientTop` / `brandGradientBottom` via
+                    // the asset catalog, and those assets have a
+                    // dark-appearance variant that renders as near-
+                    // black — which made the Setup Stations button
+                    // invisible in dark mode. UIKit's
+                    // `PrimaryOrangeButton.makeOrangeStyle()` always
+                    // uses the light-mode brand-orange gradient
+                    // regardless of appearance, so we mirror that by
+                    // hard-coding the light-mode RGB in the dark-
+                    // mode branch. Light-mode pixels stay bit-
+                    // identical (same asset resolution as before).
+                    setupStationsLabel
                 }
                 .buttonStyle(BounceButtonStyle())
                 .accessibilityLabel("Setup Stations")
@@ -741,6 +764,64 @@ struct MixlistDetailView: View {
             // that would cause layout fluctuation on appear.
             EmptyView()
         }
+    }
+
+    /// Setup Stations button label — the brand-capsule treatment
+    /// with a dark-mode-only gradient override. Light mode behaviour
+    /// is bit-identical to the shared `brandCapsule(height: 45,
+    /// cornerRadius: 8)` helper: same font (system 16pt semibold),
+    /// same black text, same asset-resolved gradient, same
+    /// `floatingButton` shadow. In dark mode we swap the gradient's
+    /// colour stops to the explicit light-mode RGB so the capsule
+    /// stays orange instead of resolving to the asset catalog's
+    /// dark-appearance variant (which is near-black).
+    private var setupStationsLabel: some View {
+        let height: CGFloat = 45
+        let iOS26Available: Bool = {
+            if #available(iOS 26.0, *) { return true } else { return false }
+        }()
+        // Light mode: resolves via `brandGradientTop.colorset` /
+        // `brandGradientBottom.colorset` — unchanged.
+        // Dark mode: explicit light-mode RGB pulled from those asset
+        // files so the capsule stays brand-orange.
+        let gradientColors: [SwiftUI.Color] = colorScheme == .dark
+            ? [
+                SwiftUI.Color(red: 0.980, green: 0.878, blue: 0.800),
+                SwiftUI.Color(red: 0.949, green: 0.761, blue: 0.631)
+            ]
+            : [
+                SwiftUI.Color("brandGradientTop"),
+                SwiftUI.Color("brandGradientBottom")
+            ]
+        return Text("Setup Stations")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(SwiftUI.Color.black)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .background(
+                ZStack {
+                    if iOS26Available {
+                        // UIKit: CAGradientLayer with height/2 corner
+                        // radius on iOS 26 (capsule).
+                        RoundedRectangle(cornerRadius: height / 2,
+                                         style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: gradientColors,
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                    } else {
+                        // Pre-26: flat `segmentSelection` with 8pt
+                        // corner radius. Unchanged from shared helper.
+                        RoundedRectangle(cornerRadius: 8,
+                                         style: .continuous)
+                            .fill(Theme.Color.segmentSelection)
+                    }
+                }
+            )
+            .barsysShadow(.floatingButton)
     }
 
     /// 1:1 port of UIKit `MixlistDetailViewModel.shouldShowSetupStations`
