@@ -760,7 +760,16 @@ struct DevicePairedView: View {
                                             .lineLimit(3)
                                         Text(recipe.desc)
                                             .font(.system(size: 11))
-                                            .foregroundStyle(Color(red: 0.584, green: 0.584, blue: 0.584))
+                                            // `unSelectedColor` light value is sRGB(0.584,
+                                            // 0.584, 0.584) — bit-identical to the previous
+                                            // hard-coded `Color(red: 0.584, …)` (#959595), so
+                                            // light mode renders the EXACT same description
+                                            // pixels. Dark mode picks up the adaptive
+                                            // mid-gray (#8E8E93) so the ingredient line
+                                            // stays legible against the dark recommended-row
+                                            // surface. This was always the UIKit asset name —
+                                            // see comment at L743 ("ingredients 11pt unSelectedColor").
+                                            .foregroundStyle(Color("unSelectedColor"))
                                             .lineLimit(4)
                                     }
                                     .padding(14)
