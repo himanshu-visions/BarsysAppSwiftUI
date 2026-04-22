@@ -111,6 +111,10 @@ struct FavoritesView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    /// Reactive theme awareness — used to tint the top-right profile
+    /// icon to near-white ONLY in dark mode (light mode keeps the
+    /// raw PNG so pixels stay bit-identical to the existing design).
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var selectedTab: FavouritesTab = .barsysRecipes
     @State private var query: String = ""
@@ -587,10 +591,25 @@ struct FavoritesView: View {
                     router.showSideMenu = true
                 }
             } label: {
-                Image("profileIcon")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 24, height: 24)
+                // DARK MODE ONLY template-tint so the profile glyph
+                // matches the system back chevron's near-white stroke.
+                // Light mode keeps the raw PNG unchanged (no
+                // `.renderingMode`, no `.foregroundStyle`) so light-
+                // mode pixels stay bit-identical to the existing
+                // UIKit-parity design.
+                if colorScheme == .dark {
+                    Image("profileIcon")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(Color.white)
+                } else {
+                    Image("profileIcon")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 24, height: 24)
+                }
             }
             .accessibilityLabel("Side menu")
         }
