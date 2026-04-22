@@ -3071,6 +3071,14 @@ struct StationCleaningView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService
+    /// Reactive theme awareness — used ONLY by the brand-orange
+    /// action buttons ("Clean" / "Stop") to override the
+    /// dark-appearance variant of the `brandGradientTop` /
+    /// `brandGradientBottom` colour assets (which wrongly resolve to
+    /// dark grey / near-black in dark mode) back to the light-mode
+    /// orange RGB so the capsule stays readable in dark mode.
+    /// Light mode is untouched.
+    @Environment(\.colorScheme) private var colorScheme
 
     private var deviceIconName: String {
         if ble.isBarsys360Connected() { return "icon_barsys_360" }
@@ -3333,7 +3341,18 @@ struct StationCleaningView: View {
         let buttons = viewModel.visibleButtons()
         VStack(spacing: 10) {
             if buttons.contains(.clean) {
-                actionButton("Clean", color: Theme.Color.brand) {
+                // Clean button — uses the dark-mode-aware
+                // `cleanButtonLabel()` helper instead of the shared
+                // `actionButton(…, color: .brand)` path so the
+                // peach-tan gradient stays visible in dark mode. The
+                // Continue / Stop brand buttons below KEEP their
+                // existing `actionButton(…, color: .brand)` routing
+                // (and therefore the shared `.brandCapsule` helper)
+                // — per the product spec "Only clean button need to
+                // fix in dark mode" — so this change is strictly
+                // scoped to the Clean CTA.
+                Button {
+                    HapticService.light()
                     // 1:1 port of UIKit `didPressCleanButton`:
                     //   self.showGlassLoader(message: "Cleaning")
                     //   ...write BLE command...
@@ -3349,7 +3368,10 @@ struct StationCleaningView: View {
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
                         env.loading.hide()
                     }
+                } label: {
+                    cleanButtonLabel()
                 }
+                .buttonStyle(BounceButtonStyle())
             }
             if buttons.contains(.continue) {
                 actionButton(ConstantButtonsTitle.continueButtonTitle,
@@ -3427,5 +3449,64 @@ struct StationCleaningView: View {
             }
         }
         .buttonStyle(BounceButtonStyle())
+    }
+
+    /// Dark-mode-aware "Clean" button — scoped strictly to the Clean
+    /// CTA (not the Continue / Stop brand buttons on the same
+    /// screen) per the product spec's "only the Clean button"
+    /// instruction.
+    ///
+    /// Recipe: inlined `brandCapsule(height: 45, cornerRadius: 22.5)`
+    /// with a dark-mode gradient override. Light mode resolves
+    /// through the existing `brandGradientTop` /
+    /// `brandGradientBottom` colour assets (bit-identical pixels).
+    /// Dark mode hard-codes the LIGHT-mode brand-orange RGB so the
+    /// capsule stays peach-tan instead of collapsing into the
+    /// asset's near-black dark-appearance variant.
+    private func cleanButtonLabel() -> some View {
+        let height: CGFloat = 45
+        let iOS26Available: Bool = {
+            if #available(iOS 26.0, *) { return true } else { return false }
+        }()
+        let gradientColors: [SwiftUI.Color] = colorScheme == .dark
+            ? [
+                // Explicit light-mode values pulled from
+                // brandGradientTop.colorset / brandGradientBottom.colorset.
+                SwiftUI.Color(red: 0.980, green: 0.878, blue: 0.800),
+                SwiftUI.Color(red: 0.949, green: 0.761, blue: 0.631)
+            ]
+            : [
+                // Light mode — resolves via colour assets exactly
+                // like the shared helper, so light-mode pixels stay
+                // bit-identical to the existing UIKit-parity
+                // rendering.
+                SwiftUI.Color("brandGradientTop"),
+                SwiftUI.Color("brandGradientBottom")
+            ]
+        return Text("Clean")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(SwiftUI.Color.black)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .background(
+                ZStack {
+                    if iOS26Available {
+                        RoundedRectangle(cornerRadius: height / 2,
+                                         style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: gradientColors,
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                    } else {
+                        RoundedRectangle(cornerRadius: 22.5,
+                                         style: .continuous)
+                            .fill(Theme.Color.segmentSelection)
+                    }
+                }
+            )
+            .barsysShadow(.floatingButton)
     }
 }
