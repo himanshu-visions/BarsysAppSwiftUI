@@ -646,13 +646,31 @@ struct RecipeDetailView: View {
                                         properties: props)
                 }
                 // Unsaved changes popup — glass-card style matching UIKit
-                // `unsavedChangesForRecipe` alert. The `pendingUnsavedAction`
-                // state records which CTA opened the popup (craft button
-                // vs top-right favorite nav) so Discard routes correctly.
+                // `unsavedChangesForRecipe` alert.
+                //
+                // Button mapping (swapped from the previous port so the
+                // LEFT/RIGHT positions match UIKit exactly):
+                //   • RIGHT button = `primaryTitle` = "Keep Editing"
+                //     → `onPrimary` closure fires. Matches UIKit
+                //       `onCancel: { _ in }` — do nothing, user stays
+                //       on the page with edits intact.
+                //   • LEFT button = `secondaryTitle` = "Discard"
+                //     → `onSecondary` closure fires. Matches the first
+                //       completion block of `showCustomAlertMultipleButtons`
+                //       — reset edits, then navigate depending on
+                //       `pendingUnsavedAction` (craft vs favorites nav).
+                //
+                // UIKit `viewModel.discardQuantityChanges()` is mirrored
+                // by `loadIngredients(from: recipe)` which replays the
+                // recipe's stored quantities over the local edit state.
                 .barsysPopup($unsavedPopup, onPrimary: {
-                    // "Discard" tapped — reset edited ingredients to the
-                    // recipe's stored quantities (UIKit
-                    // `viewModel.discardQuantityChanges()`).
+                    // "Keep Editing" — UIKit `onCancel: { _ in }`:
+                    // do nothing, just dismiss the popup so the user
+                    // remains on the recipe page with their edits.
+                    pendingUnsavedAction = .craft
+                }, onSecondary: {
+                    // "Discard" — UIKit
+                    // `viewModel.discardQuantityChanges()` + navigate.
                     loadIngredients(from: recipe)
                     switch pendingUnsavedAction {
                     case .navigateToFavorites:
@@ -660,14 +678,11 @@ struct RecipeDetailView: View {
                         //   BarBotCoordinator(nav:).showFavourites(tabSelected: 0)
                         router.push(.favorites)
                     case .craft:
-                        // Craft button already handles its own post-discard
-                        // path in the craft closure — nothing to do here.
+                        // Craft button handles its own post-discard
+                        // flow in the craft closure — nothing to do here.
                         break
                     }
                     pendingUnsavedAction = .craft // reset to default
-                }, onSecondary: {
-                    // "Keep Editing" — stay on the page with edits intact.
-                    pendingUnsavedAction = .craft
                 })
                 // 1:1 port of UIKit child-VC embed:
                 //   editVc.presentedFromController = self
@@ -1178,12 +1193,37 @@ struct RecipeDetailView: View {
             Button {
                 HapticService.light()
                 if hasUnsavedChanges {
+                    // 1:1 port of UIKit
+                    // `RecipePageViewController.showUnsavedChangesAlertForBack`
+                    // / `showUnsavedChangesAlertForFavourites` /
+                    // `showUnsavedChangesAlertForSideMenu`
+                    // (RecipePageViewController.swift L301-384):
+                    //
+                    //   showCustomAlertMultipleButtons(
+                    //       title: Constants.unsavedChangesForRecipe,
+                    //       cancelButtonTitle: keepEditingButtonTitle,   ← RIGHT, FILLED
+                    //       continueButtonTitle: discardButtonTitle,     ← LEFT, BORDERED
+                    //       cancelButtonColor: .segmentSelectionColor,   ← orange fill on Keep
+                    //       isCloseButtonHidden: true)
+                    //
+                    // BarsysPopup mapping:
+                    //   primaryTitle   → RIGHT button (UIKit "cancelButton")
+                    //   secondaryTitle → LEFT  button (UIKit "continueButton")
+                    //
+                    // So "Keep Editing" is `primaryTitle` (right-side
+                    // orange-filled pill via default `primaryFillColor =
+                    // "segmentSelectionColor"`) and "Discard" is
+                    // `secondaryTitle` (left-side bordered pill).
+                    // `isDestructive: false` — UIKit NEVER renders the
+                    // Discard button as a red destructive CTA here; it's
+                    // always the neutral bordered capsule.
                     unsavedPopup = .confirm(
-                        title: "Unsaved changes",
-                        message: "You've changed quantities. Discard your edits?",
-                        primaryTitle: ConstantButtonsTitle.discardButtonTitle,
-                        secondaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
-                        isDestructive: true
+                        title: Constants.unsavedChangesForRecipe,
+                        message: nil,
+                        primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                        secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                        isDestructive: false,
+                        isCloseHidden: true
                     )
                 } else {
                     craft(recipe)
@@ -1365,18 +1405,26 @@ struct RecipeDetailView: View {
     private func handleFavoritesNavTap() {
         HapticService.light()
         if hasUnsavedChanges {
+            // 1:1 with UIKit
+            // `RecipePageViewController.showUnsavedChangesAlertForFavourites`
+            // (RecipePageViewController.swift L333-346). Discard is
+            // LEFT + bordered (secondaryTitle), Keep Editing is RIGHT
+            // + orange-filled (primaryTitle) — same mapping as the
+            // craft-button variant above; see comment there.
             unsavedPopup = .confirm(
                 title: Constants.unsavedChangesForRecipe,
                 message: nil,
-                primaryTitle: ConstantButtonsTitle.discardButtonTitle,
-                secondaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
-                isDestructive: true
+                primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                isDestructive: false,
+                isCloseHidden: true
             )
-            // Tag the pending action so `onPrimary` (Discard) routes to
+            // Tag the pending action so the Discard handler routes to
             // Favorites instead of starting a craft. Reuses the same
-            // `unsavedPopup` binding; the discard handler already
-            // restores `editedIngredients` from the backing recipe —
-            // after that we push Favorites.
+            // `unsavedPopup` binding; the discard handler (now
+            // `onSecondary` after the LEFT/RIGHT swap) restores
+            // `editedIngredients` from the backing recipe — after that
+            // we push Favorites.
             pendingUnsavedAction = .navigateToFavorites
         } else {
             router.push(.favorites)
