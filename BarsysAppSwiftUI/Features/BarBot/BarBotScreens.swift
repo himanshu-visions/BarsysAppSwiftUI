@@ -698,11 +698,26 @@ struct ActionCardStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .font(Theme.Font.of(.caption1))
-            .foregroundStyle(Color(red: 0x36/255, green: 0x36/255, blue: 0x36/255))
+            // Preserve the EXACT historical #363636 text color in
+            // light mode (bit-identical to the previous hard-coded
+            // value), and switch to a near-white tone in dark for
+            // legibility against the dark `Theme.Color.surface`
+            // pill. `UIColor` closure trait-resolves at draw time
+            // so light-mode users see the SAME pixel values as
+            // before this change.
+            .foregroundStyle(Color(UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.875, green: 0.875, blue: 0.875, alpha: 1.0) // #DFDFDF
+                    : UIColor(red: 0x36/255.0, green: 0x36/255.0, blue: 0x36/255.0, alpha: 1.0) // EXACT #363636
+            }))
             .padding(.horizontal, 16)
             .padding(.vertical, 2)
             .frame(minHeight: 28)
-            .background(Color.white)
+            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+            // bit-identical to the previous `Color.white`; dark mode
+            // gets the elevated dark surface (#2C2C2E) so the action
+            // card pills stop looking like white slabs on a dark page.
+            .background(Theme.Color.surface)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
@@ -1124,11 +1139,27 @@ struct BarBotRecipeCardView: View {
             }) {
                 Text(Constants.craftTitle)
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.black)
+                    // Preserve EXACT pure black in light mode (bit-
+                    // identical to the previous `Color.black`); switch
+                    // to a near-white tone in dark mode so the title
+                    // stays legible on the dark `Theme.Color.surface`
+                    // pill. Trait-resolved at draw time → light pixels
+                    // are unchanged.
+                    .foregroundStyle(Color(UIColor { trait in
+                        trait.userInterfaceStyle == .dark
+                            ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                            : UIColor.black // EXACT historical black
+                    }))
                     .frame(width: 168, height: 32)
                     .background(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color.white)
+                            // Pure white sRGB(1,1,1) in light mode
+                            // (bit-identical to the previous
+                            // `Color.white`), elevated dark surface
+                            // in dark — keeps the Craft pill from
+                            // being a stark white slab on top of the
+                            // frosted recipe card in dark mode.
+                            .fill(Theme.Color.surface)
                     )
             }
             .buttonStyle(BounceButtonStyle())
@@ -1240,11 +1271,27 @@ struct BarBotMixlistCardView: View {
             }) {
                 Text(barsys360Connected ? Constants.setupStationsTextForBarBot : Constants.viewTitle)
                     .font(.system(size: 15))
-                    .foregroundStyle(Color.black)
+                    // Preserve EXACT pure black in light mode (bit-
+                    // identical to the previous `Color.black`); switch
+                    // to a near-white tone in dark for legibility on
+                    // top of the dark `Theme.Color.surface` pill.
+                    // Trait-resolved at draw time → light pixels are
+                    // unchanged.
+                    .foregroundStyle(Color(UIColor { trait in
+                        trait.userInterfaceStyle == .dark
+                            ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                            : UIColor.black // EXACT historical black
+                    }))
                     .frame(width: 180, height: 40)
                     .background(
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(Color.white)
+                            // Pure white sRGB(1,1,1) in light mode
+                            // (bit-identical to the previous
+                            // `Color.white`), elevated dark surface in
+                            // dark — keeps the action pill from being
+                            // a stark white slab on top of the dark
+                            // mixlist card.
+                            .fill(Theme.Color.surface)
                     )
             }
             .buttonStyle(BounceButtonStyle())
@@ -1373,7 +1420,14 @@ struct ChatMessageRow: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .background(
-                                Color.white
+                                // `Theme.Color.surface` is pure white
+                                // sRGB(1, 1, 1) in light mode (bit-identical
+                                // to the previous hard-coded `Color.white`),
+                                // and the elevated dark surface (#2C2C2E)
+                                // in dark — so the question bubble stays a
+                                // crisp white pill in light mode and adapts
+                                // to a raised dark pill in dark mode.
+                                Theme.Color.surface
                                     .clipShape(
                                         .rect(topLeadingRadius: Theme.Radius.m,
                                               bottomLeadingRadius: Theme.Radius.m,
@@ -1479,7 +1533,15 @@ struct ChatMessageRow: View {
                         .foregroundStyle(Color("charcoalGrayColor"))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 4))
+                        // `Theme.Color.surface` resolves to pure white
+                        // sRGB(1, 1, 1) in light mode (bit-identical to
+                        // the previous hard-coded `Color.white`), and to
+                        // elevated dark surface (#2C2C2E) in dark — so
+                        // the answer bubble stays a clean white slab in
+                        // light mode and a raised dark surface in dark.
+                        // `charcoalGrayColor` text already adapts via
+                        // its asset dark variant for legibility.
+                        .background(Theme.Color.surface, in: RoundedRectangle(cornerRadius: 4))
                 }
                 // Ports `configureRecipeOrTextResponse` — recipes and mixlists are
                 // MUTUALLY EXCLUSIVE in UIKit (`if hasRecipes { ... } else if hasMixlists`).
