@@ -535,8 +535,17 @@ struct MixlistDetailView: View {
                 tabButton(.ingredients, title: "Ingredients")
             }
             // segmentSeparator — 1×14 black vertical rule, centered.
+            // Trait-resolved at draw time so the light variant is the
+            // EXACT historical `UIColor.black` (bit-identical pixels in
+            // light mode), and the dark variant is near-white so the
+            // separator stays visible between the Recipes / Ingredients
+            // tab labels on the dark Mixlist Detail header.
             Rectangle()
-                .fill(Color.black)
+                .fill(Color(UIColor { trait in
+                    trait.userInterfaceStyle == .dark
+                        ? UIColor.white
+                        : UIColor.black // EXACT historical black
+                }))
                 .frame(width: 1, height: 14)
         }
         .frame(height: 48)
@@ -1117,7 +1126,15 @@ struct MixlistDetailRecipeRow: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 29)
                         .background(
-                            RoundedRectangle(cornerRadius: 8).fill(Color.white)
+                            // `Theme.Color.surface` light = pure white
+                            // sRGB(1, 1, 1), bit-identical to the previous
+                            // hard-coded `Color.white`, so the Craft pill
+                            // is the EXACT same white capsule in light
+                            // mode. Dark mode picks up the elevated
+                            // dark surface (#2C2C2E) so the pill stops
+                            // being a stark white slab on the dark
+                            // recipe row card.
+                            RoundedRectangle(cornerRadius: 8).fill(Theme.Color.surface)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
@@ -1169,7 +1186,14 @@ struct MixlistDetailRecipeRow: View {
         .frame(height: cellHeight)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white)
+                // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+                // bit-identical to the previous hard-coded `Color.white`,
+                // so each Mixlist Detail recipe row remains the EXACT
+                // same white card in light mode. Dark mode picks up
+                // the elevated dark surface (#2C2C2E) so the row reads
+                // as a raised card on the dark Mixlist Detail canvas
+                // — matching the History rows / BarBot bubbles.
+                .fill(Theme.Color.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
