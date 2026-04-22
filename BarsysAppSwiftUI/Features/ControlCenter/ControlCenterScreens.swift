@@ -2064,7 +2064,19 @@ struct StationSelectorCard: View {
                     } label: {
                         Text(st.rawValue)
                             .font(.system(size: 18))
-                            .foregroundStyle(Color.black)
+                            // Trait-resolved at draw time: light branch
+                            // returns EXACT pure black (`UIColor.black`,
+                            // bit-identical to the previous hard-coded
+                            // `Color.black`); dark branch returns near-
+                            // white so the station-number digit stays
+                            // legible on the dark Control Center
+                            // background AND on the orange selected
+                            // circle.
+                            .foregroundStyle(Color(UIColor { trait in
+                                trait.userInterfaceStyle == .dark
+                                    ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                                    : UIColor.black // EXACT historical
+                            }))
                             .frame(width: 30, height: 30)
                             .background(
                                 Circle().fill(
@@ -2075,7 +2087,19 @@ struct StationSelectorCard: View {
                             )
                             .overlay(
                                 Circle().stroke(
-                                    isSelected ? Color.clear : Color.black,
+                                    isSelected
+                                        ? Color.clear
+                                        // Same adaptive treatment as the
+                                        // text — preserves the EXACT
+                                        // historical black ring in light
+                                        // and switches to a near-white
+                                        // ring in dark for visibility on
+                                        // the dark page background.
+                                        : Color(UIColor { trait in
+                                            trait.userInterfaceStyle == .dark
+                                                ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                                                : UIColor.black // EXACT historical
+                                        }),
                                     lineWidth: 1
                                 )
                             )

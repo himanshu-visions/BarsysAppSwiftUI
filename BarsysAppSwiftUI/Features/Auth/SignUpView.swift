@@ -871,7 +871,13 @@ struct DateOfBirthPickerSheet: View {
                     .padding()
                 Spacer()
             }
-            .background(Color.white)
+            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+            // bit-identical to the previous hard-coded `Color.white`,
+            // so light mode renders the EXACT same Date of Birth
+            // picker. Dark mode picks up the elevated dark surface
+            // (#2C2C2E) so the modal sheet adapts naturally instead
+            // of being a stark white slab over the dark sign-up flow.
+            .background(Theme.Color.surface)
             .navigationTitle("Date of Birth")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

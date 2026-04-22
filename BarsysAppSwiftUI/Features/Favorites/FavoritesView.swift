@@ -352,8 +352,22 @@ struct FavoritesView: View {
                     Spacer(minLength: 0)
                     Text(FavouritesTab.barsysRecipes.title)
                         .font(.system(size: 14, weight: .bold))
+                        // Trait-resolved at draw time: light branch is
+                        // EXACT pure black (`UIColor.black`) — bit-
+                        // identical to the previous hard-coded
+                        // `Color.black`; dark branch is near-white so
+                        // the selected tab label stays legible on the
+                        // dark Favourites page. Unselected uses
+                        // `UIColor.gray` (system grey) which is bit-
+                        // identical to `Color.gray` in light and the
+                        // same fixed system grey in dark (already
+                        // adaptive enough for an unselected state).
                         .foregroundStyle(selectedTab == .barsysRecipes
-                                         ? Color.black
+                                         ? Color(UIColor { trait in
+                                             trait.userInterfaceStyle == .dark
+                                                 ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                                                 : UIColor.black // EXACT historical
+                                         })
                                          : Color.gray)
                 }
                 .padding(.trailing, 30)     // titleEdgeInsets maxX=30
@@ -367,8 +381,16 @@ struct FavoritesView: View {
             .accessibilityAddTraits(selectedTab == .barsysRecipes ? [.isSelected] : [])
 
             // 1 × 16 vertical separator (fRu-Zk-Dvg).
+            // Trait-resolved at draw time so the separator is the
+            // EXACT historical `Color.black` in light (bit-identical
+            // pixels) and a near-white tone in dark for visibility
+            // between the two tab labels.
             Rectangle()
-                .fill(Color.black)
+                .fill(Color(UIColor { trait in
+                    trait.userInterfaceStyle == .dark
+                        ? UIColor.white
+                        : UIColor.black // EXACT historical
+                }))
                 .frame(width: 1, height: 16)
 
             // My Drinks — left-aligned text within its half
@@ -380,8 +402,15 @@ struct FavoritesView: View {
                 HStack {
                     Text(FavouritesTab.myDrinks.title)
                         .font(.system(size: 14, weight: .bold))
+                        // Same adaptive treatment as the Barsys Recipes
+                        // tab label above — exact pure black in light
+                        // (bit-identical), near-white in dark.
                         .foregroundStyle(selectedTab == .myDrinks
-                                         ? Color.black
+                                         ? Color(UIColor { trait in
+                                             trait.userInterfaceStyle == .dark
+                                                 ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                                                 : UIColor.black // EXACT historical
+                                         })
                                          : Color.gray)
                     Spacer(minLength: 0)
                 }

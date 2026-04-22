@@ -249,12 +249,35 @@ struct ReadyToPourView: View {
                 } label: {
                     Text(tab.title)
                         .font(.system(size: 14, weight: selectedTab == tab ? .bold : .regular))
-                        .foregroundStyle(selectedTab == tab ? Color.black : Color("unSelectedColor"))
+                        // Selected-state text — preserve EXACT pure
+                        // black in light mode (bit-identical to the
+                        // previous hard-coded `Color.black`); switch
+                        // to a near-white tone in dark mode for
+                        // legibility on the dark surface pill.
+                        // Trait-resolved at draw time → light pixels
+                        // are unchanged.
+                        .foregroundStyle(
+                            selectedTab == tab
+                                ? Color(UIColor { trait in
+                                    trait.userInterfaceStyle == .dark
+                                        ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                                        : UIColor.black // EXACT historical
+                                })
+                                : Color("unSelectedColor")
+                        )
                         .frame(maxWidth: .infinity)
                         .frame(height: 45)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(selectedTab == tab ? Color.white : Color.clear)
+                                // Selected pill bg — `Theme.Color.surface`
+                                // light = pure white sRGB(1, 1, 1),
+                                // bit-identical to the previous
+                                // `Color.white`. Dark mode picks up
+                                // elevated dark surface (#2C2C2E) so
+                                // the selected tab reads as a raised
+                                // pill against the dark Ready-to-Pour
+                                // page. Unselected stays clear.
+                                .fill(selectedTab == tab ? Theme.Color.surface : Color.clear)
                         )
                 }
                 .buttonStyle(BounceButtonStyle())
@@ -503,7 +526,12 @@ struct ReadyToPourRecipeRow: View {
                 endPoint: .bottom
             )
         } else {
-            Color.white
+            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+            // bit-identical to the previous hard-coded `Color.white`,
+            // so light mode renders the EXACT same Craft button bg.
+            // Dark mode picks up the elevated dark surface (#2C2C2E)
+            // for adaptive pre-iOS 26 rendering.
+            Theme.Color.surface
         }
     }
 

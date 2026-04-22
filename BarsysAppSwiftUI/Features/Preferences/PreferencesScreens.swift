@@ -179,7 +179,13 @@ struct CountryPickerView: View {
                             }
                         }
                     }
-                    .listRowBackground(Color.white)
+                    // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+                // bit-identical to the previous hard-coded `Color.white`
+                // — light mode renders the EXACT same row background.
+                // Dark mode picks up the elevated dark surface (#2C2C2E)
+                // so country rows read as raised cards on the dark
+                // settings page instead of stark white slabs.
+                .listRowBackground(Theme.Color.surface)
                 }
             }
             .searchable(text: $query, prompt: "Search country")
@@ -228,7 +234,13 @@ struct EmbeddedCountryPicker: View {
                         }
                     }
                 }
-                .listRowBackground(Color.white)
+                // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+                // bit-identical to the previous hard-coded `Color.white`
+                // — light mode renders the EXACT same row background.
+                // Dark mode picks up the elevated dark surface (#2C2C2E)
+                // so country rows read as raised cards on the dark
+                // settings page instead of stark white slabs.
+                .listRowBackground(Theme.Color.surface)
             }
         }
         .searchable(text: $query, prompt: "Search country")

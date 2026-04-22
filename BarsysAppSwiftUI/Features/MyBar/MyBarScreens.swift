@@ -443,8 +443,18 @@ struct MyBarView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12,
                                                     style: .continuous))
                 } else {
+                    // Pre-iOS 26 fallback: trait-resolved fill so light
+                    // mode preserves the EXACT historical white@0.95
+                    // pixels (bit-identical), and dark mode picks up an
+                    // elevated dark surface fill so the popup sheet
+                    // adapts naturally instead of being a stark white
+                    // slab on the dark MyBar canvas.
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.95))
+                        .fill(Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? UIColor(red: 0.173, green: 0.173, blue: 0.180, alpha: 0.95) // dark surface @ 0.95
+                                : UIColor.white.withAlphaComponent(0.95) // EXACT historical
+                        }))
                 }
             }
         )

@@ -792,7 +792,15 @@ struct MyProfileView: View {
                 ZStack(alignment: .bottomTrailing) {
                     profileImage
                         .frame(width: 126, height: 126)
-                        .background(Color.white)
+                        // `Theme.Color.surface` light = pure white
+                        // sRGB(1, 1, 1), bit-identical to the previous
+                        // hard-coded `Color.white`, so light mode
+                        // renders the EXACT same white profile-circle
+                        // bg. Dark mode picks up the elevated dark
+                        // surface (#2C2C2E) so the avatar circle is
+                        // visible against the dark profile page
+                        // canvas instead of disappearing.
+                        .background(Theme.Color.surface)
                         .clipShape(Circle())
 
                     Button {

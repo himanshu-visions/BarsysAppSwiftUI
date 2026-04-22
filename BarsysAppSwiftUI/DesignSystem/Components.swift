@@ -868,9 +868,18 @@ struct ToastModifier: ViewModifier {
                     .background(
                         // White @ 100% — UIKit explicitly uses
                         // `UIColor.white.withAlphaComponent(1.0)`, not a
-                        // translucent material. Keep it opaque for parity.
+                        // translucent material. `Theme.Color.surface`
+                        // light value is sRGB(1, 1, 1) — bit-identical
+                        // to the previous hard-coded `Color.white`,
+                        // so light-mode toasts render the EXACT same
+                        // opaque white pill as before. Dark mode picks
+                        // up the elevated dark surface (#2C2C2E) so the
+                        // toast text (default `Color.primary` adapts to
+                        // white in dark) remains legible against the
+                        // bar instead of disappearing into a white-on-
+                        // white invisible pill.
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.white)
+                            .fill(Theme.Color.surface)
                             .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
                     )
                     .padding(.horizontal, 20)         // UIKit min-margin 20pt

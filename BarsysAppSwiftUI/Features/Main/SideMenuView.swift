@@ -1144,7 +1144,18 @@ struct DeviceConnectedPopup: View {
                     if #available(iOS 26.0, *) {
                         BarsysGlassPanelBackground()
                     } else {
-                        Color.white.opacity(0.95)
+                        // Pre-iOS 26 fallback — trait-resolved closure
+                        // preserves the EXACT historical white@0.95 fill
+                        // in light mode (bit-identical pixels), and
+                        // returns elevated dark surface @ 0.95 in dark
+                        // so the device-connected popup card adapts
+                        // naturally instead of being a stark white slab
+                        // on the dark side menu glass.
+                        Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? UIColor(red: 0.173, green: 0.173, blue: 0.180, alpha: 0.95)
+                                : UIColor.white.withAlphaComponent(0.95) // EXACT historical
+                        })
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1215,7 +1226,19 @@ struct DeviceConnectedPopup: View {
                         } label: {
                             Text("Disconnect")
                                 .font(.system(size: 16))
-                                .foregroundStyle(Color.black)
+                                // Preserve EXACT pure black in light
+                                // mode (bit-identical to the previous
+                                // hard-coded `Color.black`); switch
+                                // to a near-white tone in dark mode
+                                // for legibility on the dark glass
+                                // panel of the device-connected popup.
+                                // Trait-resolved at draw time → light
+                                // pixels are unchanged.
+                                .foregroundStyle(Color(UIColor { trait in
+                                    trait.userInterfaceStyle == .dark
+                                        ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                                        : UIColor.black // EXACT historical
+                                }))
                                 .frame(width: 184, height: 40)
                                 .background(
                                     // TRANSPARENT fill — the glass card

@@ -1443,7 +1443,22 @@ struct DrinkCompleteView: View {
                             } label: {
                                 Text("Done")
                                     .font(.system(size: 16, weight: .medium))
-                                    .foregroundStyle(Color.black)
+                                    // Preserve EXACT pure black in
+                                    // light mode (bit-identical to the
+                                    // previous hard-coded `Color.black`).
+                                    // In dark mode, switch to a near-
+                                    // white tone so the title remains
+                                    // legible on the pre-iOS 26 clear-
+                                    // bg variant of the Done button —
+                                    // iOS 26+ gets a brand-orange
+                                    // gradient bg where black still
+                                    // works, but the closure handles
+                                    // both branches uniformly.
+                                    .foregroundStyle(Color(UIColor { trait in
+                                        trait.userInterfaceStyle == .dark
+                                            ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
+                                            : UIColor.black // EXACT historical
+                                    }))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 45)
                                     .background(drinkCompleteDoneBackground)

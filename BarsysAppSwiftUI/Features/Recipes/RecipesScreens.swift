@@ -1225,8 +1225,14 @@ struct RecipeDetailView: View {
             Capsule(style: .continuous)
                 .fill(.ultraThinMaterial)
         } else {
+            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1) —
+            // bit-identical to the previous hard-coded `Color.white`,
+            // so light mode renders the EXACT same cancel capsule.
+            // Dark mode picks up the elevated dark surface (#2C2C2E)
+            // so the pre-iOS 26 cancel button stops being a stark
+            // white slab on the dark recipe page.
             RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                .fill(Color.white)
+                .fill(Theme.Color.surface)
         }
     }
 
@@ -1570,7 +1576,20 @@ struct RecipeIngredientRow: View {
                         endPoint: .bottom
                     )
                 )
-                .background(Color.white.opacity(0.7), in: Capsule(style: .continuous))
+                // Pre-iOS 26 fallback for the glass pill: trait-resolved
+                // closure preserves the EXACT historical pure-white@0.7
+                // capsule fill in light mode (bit-identical pixels), and
+                // returns a near-clear capsule in dark so the pill blends
+                // with the dark page instead of looking like a stark
+                // semi-opaque white slab over `primaryBackgroundColor`.
+                .background(
+                    Color(UIColor { trait in
+                        trait.userInterfaceStyle == .dark
+                            ? UIColor(white: 1.0, alpha: 0.10)
+                            : UIColor(white: 1.0, alpha: 0.7) // EXACT historical
+                    }),
+                    in: Capsule(style: .continuous)
+                )
                 .overlay(
                     Capsule(style: .continuous)
                         .stroke(Color(red: 0.949, green: 0.949, blue: 0.949),
@@ -2564,8 +2583,14 @@ struct EditRecipeView: View {
             BarsysGlassPanelBackground()
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         } else {
+            // Pre-iOS 26 fallback — `Theme.Color.surface` light value
+            // is sRGB(1, 1, 1), bit-identical to the previous hard-coded
+            // `Color.white`, so light mode renders the EXACT same Add
+            // Ingredient pill capsule. Dark mode picks up the elevated
+            // dark surface (#2C2C2E) so the pill stops being a stark
+            // white slab on the dark Edit Recipe panel.
             Capsule()
-                .fill(Color.white)
+                .fill(Theme.Color.surface)
                 .overlay(
                     Capsule().fill(
                         LinearGradient(
@@ -3105,8 +3130,13 @@ struct EditRecipeView: View {
                         .fill(Theme.Color.cancelButtonGray.opacity(0.12))
                 )
         } else {
+            // Pre-iOS 26 fallback — `Theme.Color.surface` light value
+            // is sRGB(1, 1, 1), bit-identical to the previous hard-coded
+            // `Color.white`, so light mode renders the EXACT same edit
+            // cancel capsule. Dark mode picks up elevated dark surface
+            // (#2C2C2E) for visual consistency on the dark Edit panel.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white)
+                .fill(Theme.Color.surface)
         }
     }
 
@@ -3299,8 +3329,14 @@ struct EditIngredientRow: View {
         } else {
             // UIKit pre-26 branch: solid white + vertical gradient
             // overlay on a capsule (radius = pill = 24).
+            // `Theme.Color.surface` light value is sRGB(1, 1, 1),
+            // bit-identical to the previous hard-coded `Color.white`,
+            // so light mode renders the EXACT same edit cell capsule.
+            // Dark mode picks up the elevated dark surface (#2C2C2E)
+            // so ingredient cells inside the dark Edit panel read as
+            // raised cards instead of stark white slabs.
             Capsule()
-                .fill(Color.white)
+                .fill(Theme.Color.surface)
                 .overlay(
                     Capsule().fill(
                         LinearGradient(

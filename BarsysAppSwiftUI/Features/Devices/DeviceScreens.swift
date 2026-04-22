@@ -262,7 +262,18 @@ struct DeviceListPopup: View {
                     if #available(iOS 26.0, *) {
                         BarsysGlassPanelBackground()
                     } else {
-                        Color.white.opacity(0.95)
+                        // Pre-iOS 26 fallback — trait-resolved closure
+                        // preserves the EXACT historical white@0.95 fill
+                        // in light mode (bit-identical pixels), and
+                        // returns elevated dark surface @ 0.95 in dark
+                        // so the device-error popup card adapts to the
+                        // dark page surface instead of being a stark
+                        // white slab.
+                        Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? UIColor(red: 0.173, green: 0.173, blue: 0.180, alpha: 0.95)
+                                : UIColor.white.withAlphaComponent(0.95) // EXACT historical
+                        })
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

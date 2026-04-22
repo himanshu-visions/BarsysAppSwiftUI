@@ -784,14 +784,38 @@ extension View {
                     if iOS26Available {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(.regularMaterial)
+                        // White "wet glass" sheen — the primary
+                        // whitening layer on top of `.regularMaterial`.
+                        // `UIColor` closure is trait-resolved at draw
+                        // time: light mode returns the EXACT historical
+                        // 35% white alpha (bit-identical pixels so the
+                        // capsule renders the SAME wet-glass look as
+                        // before); dark mode returns 5% white alpha so
+                        // the capsule blends with the adaptive dark
+                        // material instead of reading as a prominent
+                        // light pill. Matches the visual weight of the
+                        // My Bar "Upload from Photos" capsule in dark
+                        // mode where the surface reads as an elevated
+                        // dark `Theme.Color.surface` chip.
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(SwiftUI.Color.white.opacity(0.35))
+                            .fill(Color(UIColor { trait in
+                                trait.userInterfaceStyle == .dark
+                                    ? UIColor.white.withAlphaComponent(0.05)
+                                    : UIColor.white.withAlphaComponent(0.35) // EXACT historical
+                            }))
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(Theme.Gradient.glassHighlight)
                             .opacity(0.5)
                     } else {
+                        // Pre-iOS 26 — `Theme.Color.surface` light =
+                        // pure white sRGB(1, 1, 1), bit-identical to
+                        // the previous hard-coded `Color.white`, so
+                        // light mode renders the EXACT same capsule.
+                        // Dark mode picks up elevated dark surface
+                        // (#2C2C2E) → matches My Bar upload button
+                        // style on pre-iOS 26 too.
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(SwiftUI.Color.white)
+                            .fill(Theme.Color.surface)
                     }
                 }
             )
