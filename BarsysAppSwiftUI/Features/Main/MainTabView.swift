@@ -42,6 +42,20 @@ struct MainTabView: View {
     /// picks up the right asset whenever the user toggles appearance.
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Scene-phase observer — catches the edge case where the user
+    /// backgrounds the app, flips the system theme in Settings /
+    /// Control Center, and then returns to the app. SwiftUI
+    /// coalesces `colorScheme` changes that happen while the app is
+    /// inactive into a single update on activation, which can fire
+    /// BEFORE the underlying `UITabBarItem` has finished rebuilding.
+    /// Re-running `setFourthTabToSearchItem` on every `.active`
+    /// transition guarantees the 4th tab's selected asset
+    /// (`newHomeSelectedTab` / `newHomeSelectedTabDark` /
+    /// `newControlCenterSelectedTab` / `newControlCenterSelectedTabDark`)
+    /// always matches the resolved system appearance after the app
+    /// comes back to foreground.
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         ZStack(alignment: .leading) {
             TabView(selection: $router.selectedTab) {
@@ -161,6 +175,24 @@ struct MainTabView: View {
             // settle before we overwrite the resolved selectedImage.
             .onChange(of: colorScheme) { _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    setFourthTabToSearchItem()
+                }
+            }
+            // Re-apply on scene activation so a background theme flip
+            // is reflected the moment the app returns to foreground.
+            // Without this, if the user backgrounds the app in light
+            // mode, switches the device to dark mode in Control Centre
+            // / Settings, and reopens the app, the 4th tab's selected
+            // asset would stay on the stale `newHomeSelectedTab`
+            // (light) image because SwiftUI's `colorScheme` update on
+            // re-activation can arrive before the UITabBarItem has
+            // finished rebuilding. The 0.1s defer gives UIKit's trait-
+            // collection propagation a moment to settle before we
+            // overwrite `selectedImage`; without it we occasionally
+            // raced with the system's own appearance re-evaluation.
+            .onChange(of: scenePhase) { newPhase in
+                guard newPhase == .active else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     setFourthTabToSearchItem()
                 }
             }
