@@ -2304,11 +2304,8 @@ struct BarBotCraftView: View {
         // present in the visible UIKit output.
         if isConnected && !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel(deviceKindName)
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: deviceKindName)
             }
         }
              

@@ -115,11 +115,8 @@ struct PreferencesView: View {
             // reverses it; only the 25×25 `imgDevice` is visible.
             if isConnected {
                 ToolbarItem(placement: .principal) {
-                    Image(deviceIconName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
-                        .accessibilityLabel(deviceKindName)
+                    DevicePrincipalIcon(assetName: deviceIconName,
+                                        accessibilityLabel: deviceKindName)
                 }
             }
 

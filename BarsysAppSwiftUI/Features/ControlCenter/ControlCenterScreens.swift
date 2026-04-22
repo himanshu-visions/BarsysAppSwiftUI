@@ -149,11 +149,8 @@ struct ControlCenterView: View {
             // `GX2-LX-msO` / `c9K-iH-4Xf` pin imgDevice to 25×25).
             if !deviceIconName.isEmpty {
                 ToolbarItem(placement: .principal) {
-                    Image(deviceIconName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
-                        .accessibilityLabel(deviceName)
+                    DevicePrincipalIcon(assetName: deviceIconName,
+                                        accessibilityLabel: deviceName)
                 }
             }
 
@@ -923,11 +920,8 @@ struct DevicePairedView: View {
             // reverses it. Only the `imgDevice` is visible.
             if isConnected {
                 ToolbarItem(placement: .principal) {
-                    Image(deviceIconName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
-                        .accessibilityLabel(deviceKindName)
+                    DevicePrincipalIcon(assetName: deviceIconName,
+                                        accessibilityLabel: deviceKindName)
                 }
             }
 
@@ -1884,11 +1878,8 @@ struct StationsMenuView: View {
         //  `lblDeviceName.isHidden = true` and never reverse it).
         if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel(deviceKindName)
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: deviceKindName)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
@@ -3315,11 +3306,8 @@ struct StationCleaningView: View {
         //  `lblDeviceName.isHidden = true` and never reverse it).
         if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel(deviceKindName)
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: deviceKindName)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {

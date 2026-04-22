@@ -566,11 +566,8 @@ struct FavoritesView: View {
         // reverses it).
         if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel("Connected device, \(deviceKindName)")
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: "Connected device, \(deviceKindName)")
             }
         }
         // Single profile button — 1:1 port of UIKit

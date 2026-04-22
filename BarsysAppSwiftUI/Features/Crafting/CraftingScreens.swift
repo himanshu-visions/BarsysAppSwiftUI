@@ -1907,11 +1907,8 @@ struct DrinkCompleteView: View {
         // `lblDeviceName.isHidden = true` and never reverse it).
         if (ble.isAnyDeviceConnected || isSpeakEasyCase), !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel("Connected device, \(deviceKindName)")
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: "Connected device, \(deviceKindName)")
             }
         }
 

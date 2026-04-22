@@ -775,11 +775,8 @@ struct MyProfileView: View {
         // the 25×25 `imgDevice` renders in the centre of the nav bar.
         if isConnected {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel(deviceKindName)
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: deviceKindName)
             }
         }
         // Trailing glass pill with favourite + side-menu icons —

@@ -289,11 +289,8 @@ struct ExploreRecipesView: View {
             // returns zero results outside ScanIngredientsVC).
             if isConnected {
                 ToolbarItem(placement: .principal) {
-                    Image(deviceIconName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
-                        .accessibilityLabel(deviceKindName)
+                    DevicePrincipalIcon(assetName: deviceIconName,
+                                        accessibilityLabel: deviceKindName)
                 }
             }
 
@@ -1403,11 +1400,8 @@ struct RecipeDetailView: View {
         // and never reverses it).
         if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel(deviceKindName)
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: deviceKindName)
             }
         }
         // Shared 100×48 glass pill (iOS 26+) / bare 61×24 icon stack

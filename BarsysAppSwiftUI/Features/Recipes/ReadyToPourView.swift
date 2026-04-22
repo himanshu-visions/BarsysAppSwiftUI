@@ -305,11 +305,8 @@ struct ReadyToPourView: View {
         // `lblDeviceName.isHidden = true` and never reverses it).
         if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
             ToolbarItem(placement: .principal) {
-                Image(deviceIconName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
-                    .accessibilityLabel(deviceKindName)
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: deviceKindName)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {

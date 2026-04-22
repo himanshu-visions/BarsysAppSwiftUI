@@ -1039,4 +1039,45 @@ struct NavigationLeadingGlassButton: View {
     }
 }
 
+// MARK: - DevicePrincipalIcon
+//
+// Shared top-bar principal device icon shown when a Barsys device is
+// connected (`icon_barsys_360`, `icon_barsys_coaster`,
+// `icon_barsys_shaker`). Rendered in the `ToolbarItem(placement: .principal)`
+// slot across every screen that has a nav bar with the connected-device
+// indicator.
+//
+// Dark-mode content-colour fix (size / position unchanged):
+//   The three device-icon assets are single-tone glyphs whose raw PNG
+//   colour resolves too light against the dark nav-bar surface in
+//   dark mode — the user reported the icon as "very much light".
+//   Light mode keeps the raw PNG (bit-identical pixels). Dark mode
+//   template-renders the image and tints it via `appBlackColor`
+//   (which resolves to the adaptive `#E5E5EA` near-white in dark),
+//   restoring contrast against the dark nav bar without touching the
+//   25×25 frame or toolbar placement.
+struct DevicePrincipalIcon: View {
+    let assetName: String
+    let accessibilityLabel: String
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Group {
+            if colorScheme == .dark {
+                Image(assetName)
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(Color("appBlackColor"))
+            } else {
+                Image(assetName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            }
+        }
+        .frame(width: 25, height: 25)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
 
