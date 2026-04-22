@@ -553,7 +553,15 @@ struct MainTabView: View {
 ///
 /// Additionally we POP every tab's nav stack so the user lands on a
 /// clean tab root after disconnect — UIKit's `showTabBar(...)` rebuilds
-/// every nav controller from scratch, which has the same effect.
+/// every nav controller from scratch, which has the same effect. We
+/// ALSO close the side menu AND the BarBot chat-history overlay
+/// because UIKit's full-tab-bar rebuild implicitly tears down any
+/// presented modal (side menu / history), which the user perceives
+/// as a clean "return to home" after disconnect. Without this close,
+/// the SwiftUI port leaves the side menu mounted on top of the home
+/// tab and the user sees no visible change when OK is tapped on the
+/// disconnect alert — which is the exact symptom the user reported
+/// when tapping Disconnect from the DeviceConnectedPopup.
 @MainActor
 private func handleDisconnect(router: AppRouter) {
     router.barBotPath.removeLast(router.barBotPath.count)
@@ -563,6 +571,8 @@ private func handleDisconnect(router: AppRouter) {
     router.activeCraftingScreen = nil
     router.setupStationsContext = nil
     router.selectedTab = .homeOrControlCenter
+    router.showSideMenu = false
+    router.showBarBotHistory = false
 }
 
 // MARK: - Route resolver

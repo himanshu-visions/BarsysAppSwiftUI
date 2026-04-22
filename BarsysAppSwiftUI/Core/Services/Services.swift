@@ -1097,17 +1097,56 @@ final class BLEService: NSObject, ObservableObject {
     }
     private var _connectContinuation: CheckedContinuation<Void, Never>?
 
+    /// 1:1 port of UIKit
+    /// `DeviceConnectedController.disconnectAction(_:)` +
+    /// `BleManager.sharedManager.disconnect()`
+    /// (BarsysApp/Controllers/DeviceConnected/DeviceConnectedController.swift L80-116 +
+    ///  BarsysApp/Controllers/BleManager/BleManager+Commands.swift disconnect()).
+    ///
+    /// UIKit's manual-disconnect sequence is:
+    ///   1. Tag the disconnect as manual
+    ///      (`BleManager.sharedManager.disconnectedTypeState = .manuallyDisconnected`).
+    ///   2. Call `cancelPeripheralConnection` so CoreBluetooth starts
+    ///      the tear-down handshake.
+    ///   3. Delay 0.4 s then clear the remembered "last connected
+    ///      device" so the background auto-reconnect doesn't race
+    ///      against the user's intent.
+    ///   4. iOS fires `centralManager(_:didDisconnectPeripheral:)`
+    ///      asynchronously — THAT callback is the single source of
+    ///      truth that removes the peripheral from the `connected`
+    ///      array AND fires `onDeviceDisconnected`, which triggers
+    ///      the toast + alert + `handleDisconnect` → home-tab switch
+    ///      in `MainTabView`.
+    ///
+    /// The previous SwiftUI port eagerly ran `connected.removeAll(…)`
+    /// + `connectedPeripheral = nil` here — that emptied the array
+    /// BEFORE the disconnect callback fired, so when the callback
+    /// tried to resolve the device name for the `onDeviceDisconnected`
+    /// invocation the lookup returned "" and the callback silently
+    /// skipped the alert. Result: tapping "Disconnect" on the side-menu
+    /// DeviceConnectedPopup dismissed the popup but never showed the
+    /// alert and never navigated to the home tab.
+    ///
+    /// Fix: set only the intent flags here and let the CoreBluetooth
+    /// callback do the cleanup, mirroring UIKit exactly.
     func disconnect(_ device: BarsysDevice) {
-        // Disconnect from CoreBluetooth
-        if let peripheral = connectedPeripheral {
-            centralManager?.cancelPeripheralConnection(peripheral)
-        }
-        connected.removeAll { $0.id == device.id }
-        connectedPeripheral = nil
-        if connected.isEmpty { state = .disconnected }
         UserDefaultsClass.storeIsManuallyDisconnected(true)
         disconnectedState = .manuallyDisconnected
         reconnectionState = .idle
+        if let peripheral = connectedPeripheral {
+            centralManager?.cancelPeripheralConnection(peripheral)
+        } else {
+            // Defensive fallback — no peripheral ref (shouldn't happen
+            // in practice, but if it does the async callback won't
+            // fire, so we must run the same post-disconnect cleanup +
+            // callback here so the user still lands on the home tab).
+            let previouslyConnected = connected.filter { $0.id == device.id }
+            connected.removeAll { $0.id == device.id }
+            if connected.isEmpty { state = .disconnected }
+            for previous in previouslyConnected {
+                onDeviceDisconnected?(previous.name)
+            }
+        }
     }
 
     func rename(_ device: BarsysDevice, to newName: String) {
@@ -1157,7 +1196,47 @@ extension BLEService: CBCentralManagerDelegate {
             case .poweredOn:
                 self.bluetoothAuthorized = true
             case .poweredOff:
+                // User flipped Bluetooth OFF from iOS Settings or
+                // Control Center. iOS USUALLY also fires
+                // `centralManager(_:didDisconnectPeripheral:)` for every
+                // active peripheral, but that callback is not
+                // guaranteed on every iOS / device combination — there
+                // is a known race where the state change lands before
+                // the disconnect callback, leaving the app with a
+                // stale `connected` array. Mirror the UIKit
+                // `BleManagerDelegate+Disconnect.bleDidDisconnect` flow
+                // here so the user always sees the standard
+                // "{device} is Disconnected." toast + alert, and lands
+                // on the Home (ChooseOptions) tab after OK —
+                // regardless of whether the disconnect callback ever
+                // arrives.
                 self.bluetoothAuthorized = false
+                self.clearCommandQueue()
+                let previouslyConnected = self.connected
+                if !previouslyConnected.isEmpty {
+                    self.connected.removeAll()
+                    self.state = .disconnected
+                    self.connectedPeripheral = nil
+                    self.writeCharacteristic = nil
+                    self.readCharacteristic = nil
+                    // Fire the disconnect analytics event (same
+                    // `deviceId` / `deviceType` property shape UIKit
+                    // uses in `BleManager+Commands.swift` L204/L210)
+                    // and then invoke the MainTabView-installed
+                    // callback so the alert + home-tab navigation
+                    // runs exactly like a normal peripheral
+                    // disconnect.
+                    for device in previouslyConnected {
+                        BrazeService.shared.track(
+                            event: TrackEventName.onDeviceConnectionLost.rawValue,
+                            properties: [
+                                "deviceId": device.name,
+                                "deviceType": device.kind.displayName
+                            ]
+                        )
+                        self.onDeviceDisconnected?(device.name)
+                    }
+                }
             case .unauthorized:
                 self.bluetoothAuthorized = false
             default:
