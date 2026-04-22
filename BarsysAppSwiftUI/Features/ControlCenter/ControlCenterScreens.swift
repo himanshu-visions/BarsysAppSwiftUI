@@ -305,27 +305,44 @@ struct ControlCenterTile: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 0) {
-                // Icon area (top ~74% of card)
+                // Icon area (top ~74% of card).
+                //
+                // `mediumLightGrayColor` — light value is sRGB(0.435,
+                // 0.435, 0.435), bit-identical to the previous
+                // hard-coded `Color(red: 0.435, …)`, so light mode
+                // renders the EXACT same #6F6F6F glyph. Dark mode
+                // picks up the adaptive light-gray (#AEAEAE) so the
+                // icon stays legible against the dark tile surface
+                // instead of sinking into a dark-on-dark blur.
                 Image(item.imageName)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 40, height: 40)
-                    .foregroundStyle(Color(red: 0.435, green: 0.435, blue: 0.435))
+                    .foregroundStyle(Color("mediumLightGrayColor"))
                     .padding(.top, 30)
 
                 Spacer()
 
-                // Label — 12pt, mediumLightGrayColor, center
+                // Label — 12pt, mediumLightGrayColor, center.
+                // Same asset swap as the icon above — bit-identical
+                // #6F6F6F in light, adaptive light-gray in dark.
                 Text(item.name)
                     .font(.system(size: 12))
-                    .foregroundStyle(Color(red: 0.435, green: 0.435, blue: 0.435))
+                    .foregroundStyle(Color("mediumLightGrayColor"))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .padding(.bottom, 17)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 120)
-            .background(Color.white)
+            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
+            // bit-identical to the previous hard-coded `Color.white`,
+            // so each Control Center tile is the EXACT same white
+            // card in light mode. Dark mode picks up the elevated
+            // dark surface (#2C2C2E) so the tile reads as a raised
+            // card on the dark Control Center canvas — visually
+            // consistent with the rest of the app's adapted cards.
+            .background(Theme.Color.surface)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             // Shadow: UIKit lightGray, 0.15, offset(0,3), radius 10
             .shadow(color: Color.gray.opacity(0.15), radius: 10, x: 0, y: 3)
