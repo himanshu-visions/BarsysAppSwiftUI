@@ -1611,6 +1611,15 @@ struct StationsMenuView: View {
     /// unused — user navigates manually.
     @Environment(\.dismiss) private var dismiss
 
+    /// Reactive theme awareness — used ONLY by the brand-orange
+    /// primary action buttons ("Add Ingredient" / "Refill" /
+    /// "Proceed to Fill Stations") to override the dark-appearance
+    /// variant of the `brandGradientTop` / `brandGradientBottom`
+    /// colour assets (which wrongly resolve to dark grey / near-black
+    /// in dark mode) back to the light-mode orange RGB so the
+    /// buttons stay readable in dark mode. Light mode is untouched.
+    @Environment(\.colorScheme) private var colorScheme
+
     // MARK: - Image-detection pipeline state
     //
     // 1:1 port of `StationsMenuViewController+IngredientDetection`:
@@ -1996,7 +2005,13 @@ struct StationsMenuView: View {
             action()
         } label: {
             if color == Theme.Color.brand {
-                Text(title).brandCapsule(height: 45, cornerRadius: 22.5)
+                // Use the dark-mode-aware inlined brand capsule so
+                // "Add Ingredient" (+ the sister brand-orange
+                // buttons on this screen: "Refill" / "Proceed to Fill
+                // Stations") stay the intended peach-tan gradient in
+                // dark mode instead of collapsing into the asset's
+                // dark-appearance variant (near-black).
+                brandOrangeCapsuleLabel(title: title)
             } else {
                 Text(title).cancelCapsule(height: 45,
                                           cornerRadius: 22.5,
@@ -2004,6 +2019,66 @@ struct StationsMenuView: View {
             }
         }
         .buttonStyle(BounceButtonStyle())
+    }
+
+    /// Inlined `brandCapsule(height: 45, cornerRadius: 22.5)` with a
+    /// dark-mode-only gradient override — identical visual recipe to
+    /// the shared helper in light mode (same font, text colour,
+    /// shadow, shape), but in dark mode the gradient's colour stops
+    /// are hard-coded to the LIGHT-mode brand-orange RGB pulled
+    /// straight from `brandGradientTop.colorset` /
+    /// `brandGradientBottom.colorset`. The shared `.brandCapsule`
+    /// resolves those asset references at draw time, and the asset
+    /// catalog's dark-appearance variant is near-black — which made
+    /// the "Add Ingredient" button on StationsMenu render as an
+    /// invisible dark pill in dark mode. UIKit's
+    /// `PrimaryOrangeButton.makeOrangeStyle()` always uses the brand
+    /// orange regardless of appearance, so we mirror that here
+    /// without touching the shared helper or other screens.
+    private func brandOrangeCapsuleLabel(title: String) -> some View {
+        let height: CGFloat = 45
+        let iOS26Available: Bool = {
+            if #available(iOS 26.0, *) { return true } else { return false }
+        }()
+        let gradientColors: [SwiftUI.Color] = colorScheme == .dark
+            ? [
+                // Explicit light-mode values from
+                // brandGradientTop.colorset / brandGradientBottom.colorset.
+                SwiftUI.Color(red: 0.980, green: 0.878, blue: 0.800),
+                SwiftUI.Color(red: 0.949, green: 0.761, blue: 0.631)
+            ]
+            : [
+                // Light mode — unchanged, resolves via the existing
+                // colour assets so light-mode pixels stay bit-
+                // identical to the existing UIKit-parity rendering.
+                SwiftUI.Color("brandGradientTop"),
+                SwiftUI.Color("brandGradientBottom")
+            ]
+        return Text(title)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(SwiftUI.Color.black)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .background(
+                ZStack {
+                    if iOS26Available {
+                        RoundedRectangle(cornerRadius: height / 2,
+                                         style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: gradientColors,
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                    } else {
+                        RoundedRectangle(cornerRadius: 22.5,
+                                         style: .continuous)
+                            .fill(Theme.Color.segmentSelection)
+                    }
+                }
+            )
+            .barsysShadow(.floatingButton)
     }
 
     /// Commit the mapped-setup stations to the server, then pop back
