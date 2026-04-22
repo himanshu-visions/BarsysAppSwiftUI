@@ -1018,12 +1018,18 @@ struct WelcomeOccasionSection: View {
             // UIKit title frame: (16, 5) w=100 h=47 — fixed 47pt height
             // allocation so the description always starts at y≈52 regardless
             // of whether the title wraps to 1 or 2 lines.
+            //
+            // Top inset bumped to 10pt (per design: the title was
+            // sitting too high above the inner card surface — moving
+            // it down by 5pt gives the option label more breathing
+            // space at the top of each tile and lines up better with
+            // the description block underneath).
             Text(opt.title ?? "")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color("charcoalGrayColor"))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, minHeight: 47, alignment: .topLeading)
-                .padding(.top, 5)
+                .padding(.top, 15)
 
             // UIKit description frame: (16, 52) w=122 h=47
             if let prompt = opt.prompt, !prompt.isEmpty {

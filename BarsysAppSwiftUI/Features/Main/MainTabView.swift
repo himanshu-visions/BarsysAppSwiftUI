@@ -35,6 +35,13 @@ struct MainTabView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
 
+    /// SwiftUI color-scheme env — read so the 4th tab's selected-state
+    /// image can swap between `newHomeSelectedTab` (light) and
+    /// `newHomeSelectedTabDark` (dark) at runtime. We re-call
+    /// `setFourthTabToSearchItem` on every change so the UITabBarItem
+    /// picks up the right asset whenever the user toggles appearance.
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         ZStack(alignment: .leading) {
             TabView(selection: $router.selectedTab) {
@@ -141,6 +148,18 @@ struct MainTabView: View {
             // Re-apply selectedImage when user switches tabs — SwiftUI's
             // .tabItem modifier can reset UITabBarItem, losing our selectedImage.
             .onChange(of: router.selectedTab) { _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    setFourthTabToSearchItem()
+                }
+            }
+            // Re-apply selectedImage when the system color scheme flips
+            // so the Home tab's selected-state asset swaps between
+            // `newHomeSelectedTab` (light) and `newHomeSelectedTabDark`
+            // (dark) live, without requiring an app restart or tab
+            // switch. The 0.05s defer mirrors the other re-application
+            // sites — gives SwiftUI's `.tabItem` rebuild a tick to
+            // settle before we overwrite the resolved selectedImage.
+            .onChange(of: colorScheme) { _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     setFourthTabToSearchItem()
                 }
@@ -367,7 +386,17 @@ struct MainTabView: View {
             searchItem.title = "Control Center"
         } else {
             searchItem.image = UIImage(named: "homeIcon")
-            searchItem.selectedImage = UIImage(named: "newHomeSelectedTab")?.withRenderingMode(.alwaysOriginal)
+            // Pick the dark-mode variant of the Home selected-state
+            // asset when the system is in dark mode, otherwise keep
+            // the historical `newHomeSelectedTab` asset for light
+            // (bit-identical light-mode behaviour). Re-evaluated
+            // every time `setFourthTabToSearchItem` runs — including
+            // on the `.onChange(of: colorScheme)` hook below — so
+            // the icon swaps live when the user toggles appearance.
+            let homeSelectedAssetName = colorScheme == .dark
+                ? "newHomeSelectedTabDark"
+                : "newHomeSelectedTab"
+            searchItem.selectedImage = UIImage(named: homeSelectedAssetName)?.withRenderingMode(.alwaysOriginal)
             searchItem.title = "Home"
         }
 
