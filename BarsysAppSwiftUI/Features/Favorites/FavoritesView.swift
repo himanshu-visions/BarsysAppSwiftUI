@@ -913,37 +913,80 @@ struct BarsysRecipeRow: View {
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                // Right half — square image with favourite + more overlays
-                ZStack(alignment: .topTrailing) {
-                    AsyncImage(url: optimizedImageURL) { phase in
-                        switch phase {
-                        case .success(let img):
-                            img.resizable().aspectRatio(contentMode: .fill)
-                        case .empty:
-                            Color("lightBorderGrayColor")
-                        case .failure:
-                            Image("myDrink")
-                                .resizable().aspectRatio(contentMode: .fit)
-                                .padding(16)
-                        @unknown default:
-                            Color("lightBorderGrayColor")
-                        }
+                // Right half — square image with favourite + more overlays.
+                //
+                // 1:1 port of UIKit `BarsysRecipeTableViewCell.xib`
+                // (BarsysApp/Controllers/Favourites/BarsysRecipeTableViewCell.xib):
+                //
+                //   • drinkThumbImage `byK-qQ-ugc` — 50% of card width,
+                //     pinned trailing/top/bottom (constraints `JMo-d6-A5O`,
+                //     `csz-Rp-gF7`, `jzg-xz-a3q`, width = card.width × 0.5
+                //     via `VKZ-2m-DkK`).
+                //   • favouriteButton `aHb-2f-Xkm` — 30×30 at TOP-RIGHT,
+                //     top=5pt (`8Rd-hA-Zko`), trailing=5pt (`BRq-QH-nkH`).
+                //   • moreButton `dZv-df-fwc` — 30×30 at BOTTOM-RIGHT,
+                //     bottom=5pt (`jOe-iK-8I2`), trailing=5pt (`aMH-N5-tLB`).
+                //
+                // The UIKit buttons sit at OPPOSITE CORNERS of the card
+                // (favourite top-right, more bottom-right) — NOT stacked
+                // together. The previous SwiftUI port used a single
+                // `VStack` which placed the more icon DIRECTLY BELOW the
+                // favourite button (only 15pt apart) — visually wrong vs.
+                // UIKit. Now `.overlay(alignment:)` pins each button to
+                // its own corner so the visual matches the storyboard.
+                //
+                // UIKit BarsysRecipeTableViewCell.configure() L63-77:
+                // iOS 26: 40×40 glass buttons, tint black@0.3
+                // Pre-26: 30×30 plain buttons, tint white
+                AsyncImage(url: optimizedImageURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    case .empty:
+                        Color("lightBorderGrayColor")
+                    case .failure:
+                        Image("myDrink")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .padding(16)
+                    @unknown default:
+                        Color("lightBorderGrayColor")
                     }
-                    .frame(width: cellHeight, height: cellHeight)
-                    .background(Color("lightBorderGrayColor"))
-                    .clipped()
-
-                    // Favourite + (My Drinks only) More — stacked vertically
-                    // on the image's right edge, matching xib (top=5,
-                    // trailing=5 for fav; below it for more).
-                    // UIKit BarsysRecipeTableViewCell.configure() L63-77:
-                    // iOS 26: 40×40 glass buttons, tint black@0.3
-                    // Pre-26: 30×30 plain buttons, tint white
-                    VStack(spacing: 15) {
+                }
+                .frame(width: cellHeight, height: cellHeight)
+                .background(Color("lightBorderGrayColor"))
+                .clipped()
+                // Favourite button — TOP-RIGHT corner of the image
+                // (UIKit `aHb-2f-Xkm` constraints: top=5, trailing=5).
+                .overlay(alignment: .topTrailing) {
+                    Button {
+                        onFavourite()
+                    } label: {
+                        Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 22, height: 22)
+                            .frame(width: favButtonSize, height: favButtonSize)
+                            .foregroundStyle(favButtonTint)
+                    }
+                    .glassButtonIfAvailable(size: favButtonSize)
+                    .buttonStyle(BounceButtonStyle())
+                    .accessibilityLabel(isFavourite
+                                        ? "Remove from favourites"
+                                        : "Add to favourites")
+                    .padding(.top, 5)
+                    .padding(.trailing, 5)
+                }
+                // More (info) button — BOTTOM-RIGHT corner of the image,
+                // visible only on the My Drinks tab (UIKit
+                // `dZv-df-fwc` constraints: bottom=5, trailing=5;
+                // visibility gated by `data.isMoreButtonHidden` which is
+                // false only for My Drinks rows).
+                .overlay(alignment: .bottomTrailing) {
+                    if tab == .myDrinks {
                         Button {
-                            onFavourite()
+                            onMore()
                         } label: {
-                            Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                            Image("more")
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 22, height: 22)
@@ -952,34 +995,21 @@ struct BarsysRecipeRow: View {
                         }
                         .glassButtonIfAvailable(size: favButtonSize)
                         .buttonStyle(BounceButtonStyle())
-                        .accessibilityLabel(isFavourite
-                                            ? "Remove from favourites"
-                                            : "Add to favourites")
-
-                        if tab == .myDrinks {
-                            Button {
-                                onMore()
-                            } label: {
-                                Image("more")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 22, height: 22)
-                                    .frame(width: favButtonSize, height: favButtonSize)
-                                    .foregroundStyle(favButtonTint)
-                            }
-                            .glassButtonIfAvailable(size: favButtonSize)
-                            .buttonStyle(BounceButtonStyle())
-                            .accessibilityLabel("More options for \(recipe.displayName)")
-                        }
+                        .accessibilityLabel("More options for \(recipe.displayName)")
+                        .padding(.bottom, 5)
+                        .padding(.trailing, 5)
                     }
-                    .padding(.top, 5)
-                    .padding(.trailing, 5)
-                    .overlay(alignment: .topTrailing) {
-                        if tab == .myDrinks && isMoreMenuOpen {
-                            morePopup
-                                .offset(x: -34, y: 38)
-                                .transition(.opacity)
-                        }
+                }
+                // Edit / Delete popup — UIKit `3gv-w4-LyK` (moreView)
+                // anchored bottom=10pt, trailing=8pt of the card. Now
+                // hangs from the moreButton (which lives at the same
+                // bottom-right corner).
+                .overlay(alignment: .bottomTrailing) {
+                    if tab == .myDrinks && isMoreMenuOpen {
+                        morePopup
+                            .padding(.bottom, 10)
+                            .padding(.trailing, 8)
+                            .transition(.opacity)
                     }
                 }
             }
