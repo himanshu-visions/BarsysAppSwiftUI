@@ -1239,9 +1239,27 @@ struct RecipeDetailView: View {
             } label: {
                 // UIKit makeOrangeStyle(): iOS 26+ → capsule with brand
                 // gradient (#FAE0CC → #F2C2A1). Pre-26 → flat segmentSelectionColor.
+                //
+                // Text colour:
+                //   • Light mode — `appBlackColor` asset (resolves to
+                //     `#4C4D4F`), bit-identical to the existing
+                //     UIKit-parity rendering.
+                //   • Dark mode — force `Color.black`. The Craft
+                //     button's gradient is pinned to the light-mode
+                //     orange RGB in dark mode (see
+                //     `primaryOrangeButtonBackground` above), so the
+                //     pill stays orange in both appearances. If we
+                //     kept `appBlackColor` in dark mode it would
+                //     resolve to the adaptive near-white `#E5E5EA`,
+                //     turning the text into low-contrast white text
+                //     on an orange pill. Hard-coding black only in
+                //     dark mode restores UIKit's readability without
+                //     touching light-mode pixels.
                 Text("Craft")
                     .font(.system(size: 15))
-                    .foregroundStyle(Color("appBlackColor"))
+                    .foregroundStyle(colorScheme == .dark
+                                     ? Color.black
+                                     : Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(primaryOrangeButtonBackground)
