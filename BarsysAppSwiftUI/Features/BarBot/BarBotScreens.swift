@@ -823,7 +823,11 @@ struct GrowingTextView: UIViewRepresentable {
         tv.font = font
         tv.backgroundColor = .clear
         tv.textColor = UIColor(named: "appBlackColor") ?? .black
-        tv.tintColor = .black
+        // `appBlackColor` adapts: #4C4D4F in light (bit-identical to
+        // the historical `.black` cursor for the user's eye), #E5E5EA
+        // in dark — keeps the caret/selection handles clearly visible
+        // on top of the dark `Theme.Color.surface` pill in dark mode.
+        tv.tintColor = UIColor(named: "appBlackColor") ?? .black
         tv.isScrollEnabled = false
         tv.textContainerInset = UIEdgeInsets(top: 12, left: 6, bottom: 12, right: 6)
         tv.textContainer.lineFragmentPadding = 0
@@ -1727,7 +1731,13 @@ struct ChatInputBar: View {
                 }
                 .frame(minHeight: pillMinHeight)
             }
-            .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+            // `Theme.Color.surface` resolves to pure white sRGB(1,1,1)
+            // in light mode (bit-identical to the previous hard-coded
+            // `Color.white`), and to elevated dark surface (#2C2C2E)
+            // in dark mode — so the Ask Anything pill remains a clean
+            // white capsule in light mode and a properly raised dark
+            // surface against `primaryBackgroundColor` in dark mode.
+            .background(Theme.Color.surface, in: RoundedRectangle(cornerRadius: 8))
 
             // RIGHT — 58×58 white square with 8pt corners, black sendImage.
             // (Storyboard `x25-Le-cZI`: white bg, 8pt corners, send button
@@ -1740,9 +1750,15 @@ struct ChatInputBar: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 24, height: 24)
-                    .foregroundStyle(canSend ? Color.black : Color("lightGrayColor"))
+                    // `appBlackColor` is the canonical adaptive
+                    // "primary text/icon" token: #4C4D4F (near-black)
+                    // in light mode, #E5E5EA (near-white) in dark.
+                    // Matches the UIKit reference (black-tinted send
+                    // icon) in light AND keeps the icon clearly
+                    // visible against the dark surface in dark mode.
+                    .foregroundStyle(canSend ? Color("appBlackColor") : Color("lightGrayColor"))
                     .frame(width: 58, height: 58)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                    .background(Theme.Color.surface, in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(BounceButtonStyle())
             .disabled(!canSend)
@@ -1774,7 +1790,13 @@ struct ChatInputBar: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 12, height: 14)
                         .padding(4)
-                        .background(Circle().fill(Color.white))
+                        // `Theme.Color.surface` — pure white in light
+                        // (bit-identical to the previous `Color.white`),
+                        // dark elevated surface in dark, so the small
+                        // remove-image circle on top of the 40×40 thumb
+                        // remains a clean white affordance in light mode
+                        // and an adaptive raised chip in dark mode.
+                        .background(Circle().fill(Theme.Color.surface))
                 }
                 .buttonStyle(BounceButtonStyle())
                 .offset(x: 6, y: -6)
