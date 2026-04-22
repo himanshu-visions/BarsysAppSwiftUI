@@ -990,20 +990,123 @@ final class BLEService: NSObject, ObservableObject {
         lastResponse = response
     }
 
-    // MARK: - Reconnect flow (ports reconnectNowIfPreviouslyConnected)
+    // MARK: - Reconnect flow
+    //
+    // 1:1 port of UIKit's two-phase reconnect:
+    //   Phase 1 — `ChooseOptionsDashboardViewController.reconnectNowIfPreviouslyConnected`
+    //             (aggressive 10s scan when the user lands on the home
+    //             screen after a non-manual disconnect).
+    //   Phase 2 — `BleManager.startPeriodicReconnectScan` (15s-period,
+    //             10s-window scan loop that keeps trying in the
+    //             background until the device advertises again, we get
+    //             the user to the home screen, or the user manually
+    //             disconnects).
+    //
+    // The `didDiscover` delegate method carries the matching logic:
+    // while `reconnectionState == .attempting`, any advertisement whose
+    // name equals the saved last-connected device name triggers an
+    // auto-connect. See `centralManager(_:didDiscover:…)` below.
 
+    /// Initial 10s reconnect scan — called by HomeView.onAppear after
+    /// `reconnectIfPreviouslyConnected` runs through the gate chain
+    /// (not SpeakEasy, has phone, not manually disconnected, BT powered
+    /// on, saved device name present). Ports the body of
+    /// `ChooseOptionsDashboardViewController.reconnectNowIfPreviouslyConnected`
+    /// L155-178.
     func attemptReconnect(toDeviceNamed name: String) {
         guard reconnectionState != .attempting else { return }
+        guard disconnectedState != .manuallyDisconnected else { return }
+        guard let cm = centralManager, cm.state == .poweredOn else { return }
+        guard !name.isEmpty else {
+            reconnectionState = .idle
+            return
+        }
         reconnectionState = .attempting
-        startScan()
-        // Auto-reconnect timeout after 10s
+        reconnectTargetName = name
+        // UIKit scans WITHOUT `allowDuplicates` during reconnect — only
+        // need the first advertisement from the target to trigger the
+        // connect, no need for RSSI updates.
+        cm.scanForPeripherals(withServices: nil, options: nil)
+
+        // UIKit `DelayedAction.afterBleResponse(seconds: 10.0, …)`
+        // L161-178 — if not connected after 10s, stop this scan and
+        // hand off to the periodic scan loop.
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-            guard let self, self.reconnectionState == .attempting else { return }
-            self.reconnectionState = .idle
-            if self.connected.isEmpty {
-                self.state = .disconnected
+            guard let self else { return }
+            if self.connectedPeripheral?.state != .connected {
+                self.centralManager?.stopScan()
+                self.startPeriodicReconnectScan()
             }
         }
+    }
+
+    /// 1:1 port of `BleManager.startPeriodicReconnectScan()`
+    /// (BleManager.swift L238-254). Starts a repeating 15s timer that
+    /// triggers a 10s scan window each cycle. Safe to call multiple
+    /// times — stops any existing timer first. No-op when the user
+    /// manually disconnected, there's no saved device, or BT is off.
+    func startPeriodicReconnectScan() {
+        guard disconnectedState != .manuallyDisconnected else { return }
+        guard let savedName = UserDefaultsClass.getLastConnectedDevice(),
+              !savedName.isEmpty else { return }
+        guard centralManager?.state == .poweredOn else { return }
+
+        stopPeriodicReconnectScan()
+        reconnectTargetName = savedName
+
+        // Fire immediately, then every 15 seconds (UIKit L247-253).
+        performSingleReconnectScanCycle()
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                self?.performSingleReconnectScanCycle()
+            }
+        }
+    }
+
+    /// 1:1 port of `BleManager.performSingleReconnectScanCycle()`
+    /// (BleManager.swift L257-285). One cycle = scan for 10 seconds,
+    /// then stop (unless we connected in the meantime).
+    private func performSingleReconnectScanCycle() {
+        guard !isPeriodicScanWindowActive else { return }
+        guard disconnectedState != .manuallyDisconnected else {
+            stopPeriodicReconnectScan()
+            return
+        }
+        guard let savedName = UserDefaultsClass.getLastConnectedDevice(),
+              !savedName.isEmpty else {
+            stopPeriodicReconnectScan()
+            return
+        }
+        guard centralManager?.state == .poweredOn else { return }
+        guard connectedPeripheral?.state != .connected else {
+            stopPeriodicReconnectScan()
+            return
+        }
+
+        isPeriodicScanWindowActive = true
+        reconnectionState = .attempting
+        reconnectTargetName = savedName
+        centralManager?.scanForPeripherals(withServices: nil, options: nil)
+
+        // 10s scan window — UIKit L278-284.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self else { return }
+            self.isPeriodicScanWindowActive = false
+            if self.connectedPeripheral?.state != .connected {
+                self.centralManager?.stopScan()
+            }
+        }
+    }
+
+    /// 1:1 port of `BleManager.stopPeriodicReconnectScan()`
+    /// (BleManager.swift L288-292). Invalidates the repeating timer
+    /// and clears the scan-window flag. Called on successful connect,
+    /// manual disconnect, Bluetooth power-off, and
+    /// `reconnectTargetName` no longer valid.
+    func stopPeriodicReconnectScan() {
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        isPeriodicScanWindowActive = false
     }
 
     // MARK: - Scanning
@@ -1104,6 +1207,28 @@ final class BLEService: NSObject, ObservableObject {
     /// Reset once the CoreBluetooth callback runs.
     private var suppressNextDisconnectCallback: Bool = false
 
+    // MARK: - Reconnect state (ports BleManager.reconnectTimer +
+    //         isPeriodicScanWindowActive + savedDeviceName matching)
+
+    /// Repeating timer that drives the periodic reconnect scan cycle
+    /// (15s period, 10s scan window). Mirrors UIKit
+    /// `BleManager.reconnectTimer`.
+    private var reconnectTimer: Timer?
+
+    /// `true` while a reconnect scan window is running (between
+    /// `scanForPeripherals` and the 10s auto-stop). Prevents a second
+    /// scan cycle from overlapping with an in-flight one. Mirrors
+    /// UIKit `BleManager.isPeriodicScanWindowActive`.
+    private var isPeriodicScanWindowActive: Bool = false
+
+    /// The device name we're actively trying to reconnect to. Set by
+    /// `attemptReconnect(toDeviceNamed:)` and read in the
+    /// `centralManager(_:didDiscover:…)` reconnect branch so a
+    /// case-insensitive match against the advertised name triggers an
+    /// auto-connect. Mirrors UIKit's `UserDefaultsClass.getLastConnectedDevice()`
+    /// lookup inside `didDiscover`.
+    private var reconnectTargetName: String = ""
+
     /// 1:1 port of UIKit
     /// `DeviceConnectedController.disconnectAction(_:)` +
     /// `BleManager.sharedManager.disconnect()`
@@ -1143,6 +1268,12 @@ final class BLEService: NSObject, ObservableObject {
         UserDefaultsClass.storeIsManuallyDisconnected(true)
         disconnectedState = .manuallyDisconnected
         reconnectionState = .idle
+        // Stop any in-flight reconnect loop — manual disconnect means
+        // the user explicitly wants to drop this peripheral. UIKit
+        // enforces this through `disconnectedTypeState ==
+        // .manuallyDisconnected` guards in every reconnect entry
+        // point; we mirror by tearing down the timer here.
+        stopPeriodicReconnectScan()
 
         // Snapshot name + kind BEFORE we touch the `connected` array
         // so `onDeviceDisconnected(_:)` (the MainTabView handler)
@@ -1243,6 +1374,12 @@ extension BLEService: CBCentralManagerDelegate {
                 // arrives.
                 self.bluetoothAuthorized = false
                 self.clearCommandQueue()
+                // Tear down the reconnect timer — with BT off there's
+                // no point running the 15s cycle. It will be restarted
+                // naturally by the next error-path disconnect or
+                // HomeView appearance once BT comes back on.
+                self.stopPeriodicReconnectScan()
+                self.reconnectionState = .idle
                 let previouslyConnected = self.connected
                 if !previouslyConnected.isEmpty {
                     self.connected.removeAll()
@@ -1295,6 +1432,42 @@ extension BLEService: CBCentralManagerDelegate {
         let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let name = (advName ?? peripheral.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
+
+        // 1:1 port of UIKit `BleManager+Commands.swift` L109-148 — the
+        // reconnect branch runs before the normal discovered-list
+        // dedup. When a reconnect is in progress, any advertisement
+        // whose name matches the saved device name triggers an
+        // immediate connect; the scan is stopped because we've found
+        // the peripheral we wanted.
+        //
+        // UIKit additionally gates this on the top view controller
+        // being `ChooseOptionsDashboardViewController` or
+        // `PairYourDeviceViewController`, mirrored here by
+        // `reconnectionState == .attempting`: that flag is only set by
+        // `attemptReconnect` (HomeView.onAppear) and
+        // `performSingleReconnectScanCycle`, both of which run from
+        // screens equivalent to those two UIKit VCs.
+        if reconnectionState == .attempting {
+            let target = reconnectTargetName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let candidate = name.lowercased()
+            if !target.isEmpty && candidate == target {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    guard self.connectedPeripheral?.state != .connected else {
+                        self.centralManager?.stopScan()
+                        return
+                    }
+                    self.pendingDeviceName = name
+                    self.connectedPeripheral = peripheral
+                    self.centralManager?.stopScan()
+                    self.centralManager?.connect(peripheral, options: nil)
+                }
+                return
+            }
+        }
+
         guard matchesScanFilter(name: name) else { return }
 
         let rawRSSI = RSSI.intValue
@@ -1372,6 +1545,12 @@ extension BLEService: CBCentralManagerDelegate {
 
     /// Ports `centralManager(_:didConnect:)` from BleManager+Commands.swift.
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        // 1:1 port of UIKit `BleManager+Commands.swift` L157-158:
+        //   `stopPeriodicReconnectScan()` — we're connected, stop the
+        //   background reconnect loop.
+        DispatchQueue.main.async { [weak self] in
+            self?.stopPeriodicReconnectScan()
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
 
@@ -1511,6 +1690,15 @@ extension BLEService: CBCentralManagerDelegate {
             if !disconnectedName.isEmpty {
                 self.onDeviceDisconnected?(disconnectedName)
             }
+
+            // 1:1 port of UIKit `BleManager+Commands.swift` L260-262:
+            //   `startPeriodicReconnectScan()` at the end of
+            //   `didDisconnectPeripheral`. The method internally
+            //   guards against manual disconnects, so it only
+            //   actually scans when the link dropped unexpectedly
+            //   (peripheral out of range, firmware reboot, RF
+            //   interference, etc.).
+            self.startPeriodicReconnectScan()
         }
     }
 
