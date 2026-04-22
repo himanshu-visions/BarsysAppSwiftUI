@@ -439,7 +439,20 @@ struct FavoritesView: View {
                 Spacer()
                 Text(Constants.noResultsToDisplayForFavourates)
                     .font(.system(size: 17))
-                    .foregroundStyle(Color.primary)
+                    // Trait-resolved at draw time so the light value
+                    // is the EXACT historical `Color.primary` (pure
+                    // black on iOS, bit-identical to the previous
+                    // pixels), and the dark variant is the same
+                    // softer near-white tone (#E5E5EA) that the rest
+                    // of the app's body text (`appBlackColor`) uses
+                    // in dark mode — keeps the "no favourites yet"
+                    // copy visually consistent with every other label
+                    // on the screen instead of stark pure white.
+                    .foregroundStyle(Color(UIColor { trait in
+                        trait.userInterfaceStyle == .dark
+                            ? UIColor(red: 0.898, green: 0.898, blue: 0.918, alpha: 1.0) // #E5E5EA
+                            : UIColor.label // EXACT historical `Color.primary` (pure black in light)
+                    }))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 30)
                 Spacer()
