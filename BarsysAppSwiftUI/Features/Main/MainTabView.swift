@@ -381,7 +381,17 @@ struct MainTabView: View {
         }
 
         if isConnected {
-            searchItem.selectedImage = UIImage(named: "newControlCenterSelectedTab")?.withRenderingMode(.alwaysOriginal)
+            // Pick the dark-mode variant of the Control Center
+            // selected-state asset when the system is in dark mode,
+            // otherwise keep the historical `newControlCenterSelectedTab`
+            // asset for light (bit-identical light-mode behaviour).
+            // Re-evaluated every time `setFourthTabToSearchItem` runs —
+            // including on the `.onChange(of: colorScheme)` hook below —
+            // so the icon swaps live when the user toggles appearance.
+            let controlCenterSelectedAssetName = colorScheme == .dark
+                ? "newControlCenterSelectedTabDark"
+                : "newControlCenterSelectedTab"
+            searchItem.selectedImage = UIImage(named: controlCenterSelectedAssetName)?.withRenderingMode(.alwaysOriginal)
             searchItem.image = UIImage(named: "controlCentreIcon")
             searchItem.title = "Control Center"
         } else {
