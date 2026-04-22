@@ -262,6 +262,13 @@ struct ExploreRecipesView: View {
         .task {
             await catalog.refreshIfStale()
         }
+        .onAppear {
+            // 1:1 with UIKit `ExploreRecipesViewController` L62 —
+            //   TrackEventsClass().addBrazeCustomEventWithEventName(
+            //       eventName: TrackEventName.viewRecipesListing.rawValue)
+            // Fires every time the All Recipes tab becomes visible.
+            env.analytics.track(TrackEventName.viewRecipesListing.rawValue)
+        }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
         .toolbar {

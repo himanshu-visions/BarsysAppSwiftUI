@@ -65,6 +65,13 @@ struct PairDeviceView: View {
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        .onAppear {
+            // 1:1 with UIKit `ChooseOptionsDashboardViewController`
+            // `deviceAvailableListViewed` analytics call — fires each
+            // time the Pair Your Device listing screen becomes
+            // visible so Braze can track "started pairing" sessions.
+            env.analytics.track(TrackEventName.deviceAvailableListViewed.rawValue)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {

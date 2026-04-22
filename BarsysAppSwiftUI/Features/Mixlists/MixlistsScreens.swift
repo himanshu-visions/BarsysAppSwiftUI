@@ -136,6 +136,15 @@ struct MixlistListView: View {
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            // 1:1 with UIKit `MixlistViewController` L73 —
+            //   TrackEventsClass().addBrazeCustomEventWithEventName(
+            //       eventName: TrackEventName.viewMixlistsListing.rawValue)
+            // Fires every time the Cocktail Kits / Mixlists tab
+            // becomes visible so Braze can track content-discovery
+            // sessions and trigger IAMs accordingly.
+            env.analytics.track(TrackEventName.viewMixlistsListing.rawValue)
+        }
         .toolbar {
             // Center: device ICON ONLY (only when connected).
             //
@@ -368,6 +377,37 @@ struct MixlistDetailView: View {
         .background(Theme.Color.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
+        .onAppear {
+            // 1:1 with UIKit `MixlistDetailViewModel` L219 Braze call
+            // — fires every time the Mixlist detail lands. Property
+            // dictionary mirrors UIKit L219-226:
+            //   source, mixlist_id, mixlist_name, mixlist_image,
+            //   recipes, deviceType, deviceId
+            // The SwiftUI port passes the same keys so Braze segments
+            // / IAM triggers set up against the UIKit events keep
+            // working untouched.
+            guard let mixlist else { return }
+            let recipesList: [[String: Any]] = recipes.map { r in
+                [
+                    "id": r.id.value,
+                    "name": r.displayName,
+                    "image": r.image?.url ?? ""
+                ]
+            }
+            var props: [String: Any] = [
+                "source": "barsys",
+                "mixlist_id": mixlist.id.value,
+                "mixlist_name": mixlist.displayName,
+                "mixlist_image": mixlist.image?.url ?? "",
+                "recipes": recipesList
+            ]
+            if let connected = ble.connected.first {
+                props["deviceId"] = connected.name
+                props["deviceType"] = connected.kind.displayName
+            }
+            env.analytics.track(TrackEventName.viewMixlist.rawValue,
+                                properties: props)
+        }
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill (`NavigationRightGlassButtons`) renders on the same
         // canvas HomeView (ChooseOptions) uses — matching look / feel

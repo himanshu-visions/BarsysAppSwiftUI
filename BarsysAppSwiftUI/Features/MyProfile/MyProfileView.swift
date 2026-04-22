@@ -664,6 +664,19 @@ struct MyProfileView: View {
             if !viewModel.isProfileChanged {
                 Task { await viewModel.fetchProfile() }
             }
+            // 1:1 with UIKit `MyProfileViewController` L130 —
+            //   TrackEventsClass().addBrazeCustomEventWithEventName(
+            //       eventName: TrackEventName.viewProfile.rawValue)
+            // When a BLE device is connected, UIKit also forwards
+            // `deviceId` in the properties dict (L130-133). We
+            // mirror that here so Braze sees the same event with
+            // the same optional deviceId for connected users.
+            var props: [String: Any] = [:]
+            if let connected = env.ble.connected.first {
+                props["deviceId"] = connected.name
+            }
+            env.analytics.track(TrackEventName.viewProfile.rawValue,
+                                properties: props)
         }
         // Re-sync whenever the shared profile store publishes new
         // values (login, side-menu edit, other screens). This runs on

@@ -65,6 +65,14 @@ struct PreferencesView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 100)
+                .onChange(of: preferences.measurementUnit) { _ in
+                    // 1:1 with UIKit `UnitPreferencesViewController`
+                    // L112 — fires when the user flips the ml/oz
+                    // segmented control:
+                    //   TrackEventsClass().addBrazeCustomEventWithEventName(
+                    //       eventName: TrackEventName.changePrefrencesEvent.rawValue)
+                    env.analytics.track(TrackEventName.changePrefrencesEvent.rawValue)
+                }
                 .onAppear {
                     // Match UIKit selectedSegmentTintColor = brandTanColor
                     UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(named: "brandTanColor")

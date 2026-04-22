@@ -932,6 +932,27 @@ private struct AlertPopupButtonStyle: ViewModifier {
     /// BORDERED variant (left-side continue/neutral button).
     let fill: Color?
 
+    /// 1:1 port of UIKit `alertPopUpButtonBackgroundStyle` shape rule
+    /// (UIViewClass+GradientStyles.swift L24-90):
+    ///   • iOS 26+ → `addGlassEffect(cornerRadius: bounds.height/2)` —
+    ///     OVERRIDES the storyboard's `BarsysCornerRadius.small = 8pt`
+    ///     with a CAPSULE shape. At 45pt button height this resolves
+    ///     to a 22.5pt corner radius (a proper pill).
+    ///   • Pre-26  → 8pt rounded rect (storyboard `roundCorners = 8`
+    ///     is respected because `addGlassEffect` is iOS 26 gated).
+    ///
+    /// The previous SwiftUI port used a flat 8pt corner radius on
+    /// every iOS version, so the "Your drink has been saved" / popup
+    /// OK button appeared as a small-rounded rect instead of the
+    /// UIKit capsule on iOS 26. Now both match UIKit exactly.
+    private var buttonShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
     func body(content: Content) -> some View {
         content
             .font(.system(size: 12))                          // .caption1 = 12pt
@@ -940,7 +961,7 @@ private struct AlertPopupButtonStyle: ViewModifier {
             .frame(height: 45)                                // storyboard constraint
             .background(buttonBackground)
             .overlay(buttonBorder)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(buttonShape)
     }
 
     @ViewBuilder
@@ -953,10 +974,9 @@ private struct AlertPopupButtonStyle: ViewModifier {
             // reads as a wet-glass pill rather than a flat fill. The
             // glassHighlight overlay gives us that sheen cleanly.
             ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(fill)
+                buttonShape.fill(fill)
                 if #available(iOS 26.0, *) {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    buttonShape
                         .fill(Theme.Gradient.glassHighlight)
                         .opacity(0.35)
                         .blendMode(.plusLighter)
@@ -968,17 +988,17 @@ private struct AlertPopupButtonStyle: ViewModifier {
             // applies a glass effect with `cancelButtonGray` tint. We
             // approximate with `.regularMaterial` + a subtle white tint
             // so the button reads as a frosted pill on the popup card.
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            buttonShape
                 .fill(.regularMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Theme.Color.cancelButtonGray.opacity(0.15))
+                    buttonShape.fill(Theme.Color.cancelButtonGray.opacity(0.15))
                 )
         } else {
             // Pre-26 BORDERED variant — UIKit
-            // `makeBorder(1, .craftButtonBorderColor)` + clear bg.
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white)
+            // `makeBorder(1, .craftButtonBorderColor)` + white bg.
+            // `Theme.Color.surface` preserves the historical white
+            // fill in light mode bit-identically and adapts in dark.
+            buttonShape.fill(Theme.Color.surface)
         }
     }
 
@@ -992,7 +1012,7 @@ private struct AlertPopupButtonStyle: ViewModifier {
             // alternating white / cancelBorderGray sheen UIKit applies
             // via `applyCancelCapsuleGradientBorderStyle(borderColors:)`
             // (UIViewClass+GradientStyles.swift L92-110).
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            buttonShape
                 .stroke(
                     LinearGradient(
                         stops: [
@@ -1010,8 +1030,7 @@ private struct AlertPopupButtonStyle: ViewModifier {
                 )
         } else {
             // Pre-26 — plain 1pt craftButtonBorderColor stroke.
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Theme.Color.craftButtonBorder, lineWidth: 1)
+            buttonShape.stroke(Theme.Color.craftButtonBorder, lineWidth: 1)
         }
     }
 }
