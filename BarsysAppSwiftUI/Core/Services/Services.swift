@@ -1097,56 +1097,87 @@ final class BLEService: NSObject, ObservableObject {
     }
     private var _connectContinuation: CheckedContinuation<Void, Never>?
 
+    /// Set to `true` by `disconnect(_:)` when a manual disconnect
+    /// pre-emptively fires `onDeviceDisconnected` synchronously so
+    /// `centralManager(_:didDisconnectPeripheral:)` skips re-firing
+    /// the same callback (preventing double toasts / double alerts).
+    /// Reset once the CoreBluetooth callback runs.
+    private var suppressNextDisconnectCallback: Bool = false
+
     /// 1:1 port of UIKit
     /// `DeviceConnectedController.disconnectAction(_:)` +
     /// `BleManager.sharedManager.disconnect()`
     /// (BarsysApp/Controllers/DeviceConnected/DeviceConnectedController.swift L80-116 +
     ///  BarsysApp/Controllers/BleManager/BleManager+Commands.swift disconnect()).
     ///
-    /// UIKit's manual-disconnect sequence is:
-    ///   1. Tag the disconnect as manual
-    ///      (`BleManager.sharedManager.disconnectedTypeState = .manuallyDisconnected`).
-    ///   2. Call `cancelPeripheralConnection` so CoreBluetooth starts
-    ///      the tear-down handshake.
-    ///   3. Delay 0.4 s then clear the remembered "last connected
-    ///      device" so the background auto-reconnect doesn't race
-    ///      against the user's intent.
-    ///   4. iOS fires `centralManager(_:didDisconnectPeripheral:)`
-    ///      asynchronously — THAT callback is the single source of
-    ///      truth that removes the peripheral from the `connected`
-    ///      array AND fires `onDeviceDisconnected`, which triggers
-    ///      the toast + alert + `handleDisconnect` → home-tab switch
-    ///      in `MainTabView`.
+    /// UIKit's manual-disconnect sequence:
+    ///   1. `disconnectedTypeState = .manuallyDisconnected`
+    ///   2. `cancelPeripheralConnection` starts the CoreBluetooth
+    ///      tear-down.
+    ///   3. CoreBluetooth fires `didDisconnectPeripheral` which then
+    ///      calls `bleDidDisconnect(peripheral)` on the active VC →
+    ///      that VC shows the alert → OK tap → `handleDisconnect()`
+    ///      rebuilds the tab bar with ChooseOptions at the home tab.
     ///
-    /// The previous SwiftUI port eagerly ran `connected.removeAll(…)`
-    /// + `connectedPeripheral = nil` here — that emptied the array
-    /// BEFORE the disconnect callback fired, so when the callback
-    /// tried to resolve the device name for the `onDeviceDisconnected`
-    /// invocation the lookup returned "" and the callback silently
-    /// skipped the alert. Result: tapping "Disconnect" on the side-menu
-    /// DeviceConnectedPopup dismissed the popup but never showed the
-    /// alert and never navigated to the home tab.
+    /// The previous SwiftUI port relied on the async
+    /// `didDisconnectPeripheral` callback to fire
+    /// `onDeviceDisconnected` — but that has two failure modes:
+    ///   (a) the callback's `connected.first { … }` lookup returns
+    ///       nil when the `connected` array was eagerly cleared,
+    ///   (b) iOS occasionally delays or drops the callback when the
+    ///       disconnect is initiated mid-way through discovery /
+    ///       when the app is transitioning between modals (user
+    ///       report: tapping Disconnect on the side-menu popup
+    ///       dismissed the popup but no alert ever appeared).
     ///
-    /// Fix: set only the intent flags here and let the CoreBluetooth
-    /// callback do the cleanup, mirroring UIKit exactly.
+    /// Fix: fire the disconnect flow SYNCHRONOUSLY here for manual
+    /// disconnects — snapshot the name/kind, tell CoreBluetooth to
+    /// cancel, set `suppressNextDisconnectCallback` so the async
+    /// callback skips re-firing, then clean up `connected` /
+    /// `connectedPeripheral` / characteristics locally and invoke
+    /// `onDeviceDisconnected` right away. This guarantees the
+    /// MainTabView toast + alert + `handleDisconnect` → home-tab
+    /// switch fires every time, matching UIKit's user-visible
+    /// behaviour exactly.
     func disconnect(_ device: BarsysDevice) {
         UserDefaultsClass.storeIsManuallyDisconnected(true)
         disconnectedState = .manuallyDisconnected
         reconnectionState = .idle
+
+        // Snapshot name + kind BEFORE we touch the `connected` array
+        // so `onDeviceDisconnected(_:)` (the MainTabView handler)
+        // gets the real device name — not an empty string.
+        let snapshot = connected.first { $0.id == device.id } ?? device
+
+        // Kick CoreBluetooth tear-down. The async callback will
+        // still fire but `suppressNextDisconnectCallback` makes it a
+        // no-op for the user-facing callback (it still cleans up
+        // characteristics — see didDisconnectPeripheral below).
+        suppressNextDisconnectCallback = true
         if let peripheral = connectedPeripheral {
             centralManager?.cancelPeripheralConnection(peripheral)
-        } else {
-            // Defensive fallback — no peripheral ref (shouldn't happen
-            // in practice, but if it does the async callback won't
-            // fire, so we must run the same post-disconnect cleanup +
-            // callback here so the user still lands on the home tab).
-            let previouslyConnected = connected.filter { $0.id == device.id }
-            connected.removeAll { $0.id == device.id }
-            if connected.isEmpty { state = .disconnected }
-            for previous in previouslyConnected {
-                onDeviceDisconnected?(previous.name)
-            }
         }
+
+        // Local cleanup matching UIKit's post-disconnect state: clear
+        // queued BLE writes, remove the device from `connected`,
+        // drop the peripheral + characteristic refs.
+        clearCommandQueue()
+        connected.removeAll { $0.id == device.id }
+        if connected.isEmpty { state = .disconnected }
+        connectedPeripheral = nil
+        writeCharacteristic = nil
+        readCharacteristic = nil
+
+        // Fire the onDeviceDisconnected callback synchronously so
+        // MainTabView's handler queues the disconnect toast + alert
+        // immediately — same UX the UIKit user sees when
+        // `bleDidDisconnect(peripheral)` runs.
+        BrazeService.shared.track(
+            event: TrackEventName.onDeviceDisconnect.rawValue,
+            properties: ["deviceId": snapshot.name,
+                         "deviceType": snapshot.kind.displayName]
+        )
+        onDeviceDisconnected?(snapshot.name)
     }
 
     func rename(_ device: BarsysDevice, to newName: String) {
@@ -1423,6 +1454,21 @@ extension BLEService: CBCentralManagerDelegate {
                         error: Error?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+
+            // If `disconnect(_:)` already fired the user-facing
+            // callback synchronously (manual disconnect path), skip
+            // the re-fire here to avoid duplicate toasts / alerts.
+            // Still clear the suppression flag + run CoreBluetooth
+            // post-cleanup for characteristics.
+            let shouldSuppress = self.suppressNextDisconnectCallback
+            self.suppressNextDisconnectCallback = false
+            if shouldSuppress {
+                self.clearCommandQueue()
+                self.writeCharacteristic = nil
+                self.readCharacteristic = nil
+                return
+            }
+
             // Drop any pending writes — UIKit L195: `clearCommandQueue()`
             self.clearCommandQueue()
 
