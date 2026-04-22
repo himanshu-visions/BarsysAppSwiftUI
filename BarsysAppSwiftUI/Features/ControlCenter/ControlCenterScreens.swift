@@ -302,24 +302,47 @@ struct ControlCenterTile: View {
     let item: ControlCenterItem
     let action: () -> Void
 
+    /// Reactive theme awareness — used ONLY to re-tint the tile icon
+    /// in dark mode. The Control Center tile icons (`stationClean`,
+    /// `disconnectBluetooth`, `systemReset`, `book`, `stationMenu`,
+    /// `manualShaker`) are raw dark-grey PNGs. Light mode renders
+    /// them directly against the white `Theme.Color.surface` tile;
+    /// that works fine. Dark mode uses the elevated dark surface
+    /// (`#2C2C2E`), and without `.renderingMode(.template)` the
+    /// `.foregroundStyle` modifier is a no-op, so the dark PNG sinks
+    /// into the dark tile background and the user can't tell what
+    /// icon is inside (reported as "very blur in dark mode, unable
+    /// to see the icons"). Template-rendering in dark mode lets the
+    /// `mediumLightGrayColor` asset resolve to `#AEAEAE` and makes
+    /// each glyph legible against the dark surface.
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Button(action: action) {
             VStack(spacing: 0) {
                 // Icon area (top ~74% of card).
                 //
-                // `mediumLightGrayColor` — light value is sRGB(0.435,
-                // 0.435, 0.435), bit-identical to the previous
-                // hard-coded `Color(red: 0.435, …)`, so light mode
-                // renders the EXACT same #6F6F6F glyph. Dark mode
-                // picks up the adaptive light-gray (#AEAEAE) so the
-                // icon stays legible against the dark tile surface
-                // instead of sinking into a dark-on-dark blur.
-                Image(item.imageName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 40, height: 40)
-                    .foregroundStyle(Color("mediumLightGrayColor"))
-                    .padding(.top, 30)
+                // Light mode keeps the raw PNG so pixels stay bit-
+                // identical to the existing UIKit-parity rendering.
+                // Dark mode template-tints with `mediumLightGrayColor`
+                // (which resolves to the adaptive `#AEAEAE` dark value)
+                // so the glyph reads as a clear light-grey icon on
+                // the dark tile instead of sinking into the surface.
+                Group {
+                    if colorScheme == .dark {
+                        Image(item.imageName)
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .foregroundStyle(Color("mediumLightGrayColor"))
+                    } else {
+                        Image(item.imageName)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .padding(.top, 30)
 
                 Spacer()
 
