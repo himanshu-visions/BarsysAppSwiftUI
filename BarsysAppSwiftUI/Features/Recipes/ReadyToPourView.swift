@@ -129,13 +129,21 @@ struct ReadyToPourView: View {
         // 1:1 with UIKit `ReadyToPourListViewController+Search.swift`
         // `getMixlists` (L67-85). When the Mixlists tab loads an empty
         // list, surface the "No mixlists available — Tap Explore"
-        // alert; Continue routes to the Explore Mixlists screen,
-        // Dismiss closes silently.
+        // alert; the "Explore" action pushes MixlistViewController
+        // (the "Cocktail Kits" mixlists list), NOT the explore-
+        // recipes screen.
         .barsysPopup($noMixlistsPopup, onPrimary: {
-            // Primary (RIGHT, "Explore") — push MixlistView under the
-            // current tab, matching UIKit's `navigationController?.push
-            // (MixlistViewController)`.
-            router.push(.exploreRecipes)
+            // Primary (RIGHT, "Explore") — 1:1 port of UIKit L76-78:
+            //   `UIStoryboard(name: .mixlist).instantiateViewController(
+            //    withIdentifier: .mixlist) as? MixlistViewController`
+            //   `navigationController?.pushViewController(mixlistVc,…)`
+            // The SwiftUI equivalent is `.mixlistList` (see
+            // AppRouter.swift L75: `mixlistList  // "Cocktail Kits" —
+            // ports MixlistViewController`). Previously this pushed
+            // `.exploreRecipes` — the recipes-list screen — which
+            // diverged from UIKit: the user tapped "Explore mixlists"
+            // and landed on recipes instead of the Cocktail Kits list.
+            router.push(.mixlistList)
         }, onSecondary: {
             // Secondary (LEFT, "Dismiss") — no-op.
         })
