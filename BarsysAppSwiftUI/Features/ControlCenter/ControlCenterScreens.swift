@@ -2176,8 +2176,28 @@ struct StationSelectorCard: View {
 //   • stationLabel:   x=24 y=18.67 w=80 h=14, caption1 (12pt)
 //   • ingredientLabel: x=109 y=5 w=146 h=41, caption1 multiline
 //   • quantityLabel:  x=260 y=18.67 w=91 h=14, caption1 right-aligned
-//   • Selected → bg sideMenuSelectionColor + semibold text
-//   • Perishable → text colour perishableColor
+//
+// Selection / colour rules — 1:1 port of
+// `StationCleaningFlowViewController+TableView.swift` cellForRowAt
+// (L43-70). The cell ONLY communicates state through text colour +
+// font weight:
+//   • selected  → `.charcoalGrayColor` + semibold caption1
+//   • normal    → `.lightGrayColor`   + regular caption1
+//   • perishable → `.perishableColor` + regular caption1
+// The UIKit cell sets `selectedBackgroundView?.backgroundColor =
+// .sideMenuSelectionColor` AND `setSelected` overrides `selectionStyle
+// = .none`, which suppresses the tinted highlight entirely — so the
+// row NEVER gets a persistent background tint. Mirror that here by
+// keeping the background identical regardless of `isSelected`.
+//
+// Glass / gradient rules — 1:1 port of the #available branch:
+//   • iOS 26+   → `addGlassEffect(cornerRadius: xlarge=20, alpha:1.0)`
+//                 which is a UIGlassEffect(.regular) visual effect view
+//                 at 20pt corners, no border.
+//   • iOS < 26  → roundCorners = pill=24, 1pt #F2F2F2 border, +
+//                 `addGradientLayer(colors: [.black@0.1, .white@0.1])`
+//                 (default startPoint (0,0) → endPoint (1,1), diagonal
+//                 top-leading → bottom-trailing).
 struct StationCleaningFlowTableRow: View {
     let slot: StationSlot
     let isSelected: Bool
@@ -2191,9 +2211,22 @@ struct StationCleaningFlowTableRow: View {
         }
     }
 
+    /// 1:1 port of UIKit `cellColorState(for:)` → `switch` at L46-55
+    /// in `StationCleaningFlowViewController+TableView.swift`.
+    /// Perishable always wins; otherwise selected drives charcoal,
+    /// unselected drives light grey.
     private var textColor: Color {
         if slot.isPerishable { return Color("perishableColor") }
         return isSelected ? Color("charcoalGrayColor") : Color("lightGrayColor")
+    }
+
+    /// 1:1 port of UIKit L44: selected → semibold caption1, otherwise
+    /// regular caption1. Perishable stations use the regular weight
+    /// (the UIKit code applies weight based on selection only).
+    private var rowFont: Font {
+        isSelected
+            ? Theme.Font.of(.caption1, .semibold)
+            : Theme.Font.of(.caption1)
     }
 
     var body: some View {
@@ -2202,14 +2235,14 @@ struct StationCleaningFlowTableRow: View {
             // UIKit: x=24 w=80 — but row now has 24pt horizontal padding
             // from the parent, so inner leading is relative to the cell edge.
             Text("Station \(slot.station.rawValue)")
-                .font(isSelected ? Theme.Font.of(.caption1, .semibold) : Theme.Font.of(.caption1))
+                .font(rowFont)
                 .foregroundStyle(textColor)
                 .frame(width: 80, alignment: .leading)
                 .padding(.leading, 16)
 
             // Ingredient name (multi-line, caption1)
             Text(slot.isEmpty ? "—" : slot.ingredientName)
-                .font(isSelected ? Theme.Font.of(.caption1, .semibold) : Theme.Font.of(.caption1))
+                .font(rowFont)
                 .foregroundStyle(textColor)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2217,39 +2250,74 @@ struct StationCleaningFlowTableRow: View {
 
             // Quantity (right-aligned)
             Text(displayQuantity)
-                .font(isSelected ? Theme.Font.of(.caption1, .semibold) : Theme.Font.of(.caption1))
+                .font(rowFont)
                 .foregroundStyle(textColor)
                 .frame(width: 91, alignment: .trailing)
                 .padding(.trailing, 16)
         }
         .frame(height: 51)
-        .background(
-            // UIKit `viewGlass`: systemBackgroundColor (white) base with
-            // gradient border (pre-iOS 26) or glass effect (iOS 26+).
-            // cornerRadius = BarsysCornerRadius.xlarge = 20pt.
-            // Selected state adds `sideMenuSelectionColor` background.
-            RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
-                .fill(isSelected
-                      ? Color("sideMenuSelectionColor").opacity(0.18)
-                      : Color.white)
-                // Pre-iOS 26 gradient border: black 0.1 → white 0.1
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
-                        .stroke(
-                            LinearGradient(
-                                colors: [Color.black.opacity(0.1), Color.white.opacity(0.1)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
-                            lineWidth: 1
-                        )
-                )
-        )
+        .background(StationCleaningRowBackground())
         .padding(.vertical, 6)
         .padding(.horizontal, 24)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Station \(slot.station.rawValue), \(slot.isEmpty ? "empty" : slot.ingredientName), \(displayQuantity)")
+    }
+}
+
+/// 1:1 port of the version-gated glass / gradient block in
+/// `StationCleaningFlowViewController+TableView.swift` L63-70:
+///
+/// ```
+/// if #available(iOS 26.0, *) {
+///     cell.viewGlass.addGlassEffect(cornerRadius: BarsysCornerRadius.xlarge, alpha: 1.0)
+/// } else {
+///     cell.viewGlass.roundCorners = BarsysCornerRadius.pill
+///     cell.viewGlass.layer.borderWidth = 1.0
+///     cell.viewGlass.addGradientLayer(colors: [UIColor.black.withAlphaComponent(0.1),
+///                                              UIColor.white.withAlphaComponent(0.1)])
+///     cell.viewGlass.layer.borderColor = UIColor.init(hex: "#F2F2F2").cgColor
+/// }
+/// ```
+///
+/// Selection does NOT change the background — UIKit sets
+/// `selectionStyle = .none` in `setSelected(_:animated:)` which
+/// suppresses `selectedBackgroundView`.  Text colour + font weight
+/// are the sole selection affordance.
+private struct StationCleaningRowBackground: View {
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            // `addGlassEffect(cornerRadius: xlarge=20, alpha: 1.0)` —
+            // UIGlassEffect(.regular). No border (isBorderEnabled
+            // defaults to false and the UIKit call site relies on the
+            // default). `.regularMaterial` is the documented SwiftUI
+            // bridge.
+            RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
+                .fill(.regularMaterial)
+        } else {
+            // Pre-iOS 26: 24pt corner, 1pt solid #F2F2F2 border, and a
+            // diagonal (top-leading → bottom-trailing) gradient layer
+            // from black@10% to white@10%. UIKit's
+            // `addGradientLayer` defaults to startPoint (0,0) and
+            // endPoint (1,1) — matched by `.topLeading` / `.bottomTrailing`.
+            RoundedRectangle(cornerRadius: Theme.Radius.pill, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.1),
+                                 Color.white.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.pill, style: .continuous)
+                        // #F2F2F2 = 242,242,242 sRGB.
+                        .stroke(Color(red: 242.0 / 255.0,
+                                      green: 242.0 / 255.0,
+                                      blue: 242.0 / 255.0),
+                                lineWidth: 1)
+                )
+        }
     }
 }
 
