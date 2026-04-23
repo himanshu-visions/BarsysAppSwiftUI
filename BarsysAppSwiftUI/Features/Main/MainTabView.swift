@@ -888,6 +888,21 @@ private func handleDisconnect(router: AppRouter) {
 /// intermediate view.
 struct EditRecipeCoverContent<Content: View>: View {
     @State private var path = NavigationPath()
+    // Defensive re-injection of the app-level environment objects.
+    // `.fullScreenCover` is supposed to inherit environment objects
+    // from the presenting view on iOS 16+, but under certain conditions
+    // (particularly when a Route is pushed from inside the cover onto
+    // our local NavigationPath and `RouteView` constructs a destination
+    // that uses `@EnvironmentObject`) the chain breaks — the destination
+    // crashes with "No ObservableObject of type AppEnvironment found"
+    // (stack trace lands on `RecipeDetailView.recipe.getter` /
+    // `env.storage.recipe(by:)`). Capturing the objects from the
+    // PRESENTING view here and re-injecting them on the cover's
+    // NavigationStack guarantees every pushed destination inside the
+    // cover sees the same environment as the rest of the app.
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var router: AppRouter
+    @EnvironmentObject private var ble: BLEService
     private let onClose: () -> Void
     private let content: () -> Content
 
@@ -902,6 +917,10 @@ struct EditRecipeCoverContent<Content: View>: View {
             content()
                 .navigationDestination(for: Route.self) { RouteView(route: $0) }
         }
+        // Re-inject the environment objects — see comment above.
+        .environmentObject(env)
+        .environmentObject(router)
+        .environmentObject(ble)
         .environment(\.editCoverPath, $path)
         // Direct close action — `EditRecipeView` reads this via
         // `@Environment(\.editCoverClose)` and invokes it for the

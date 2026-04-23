@@ -80,6 +80,71 @@ struct UIGlassEffectBackground: UIViewRepresentable {
 // translucent-white sublayer would over-frost the panel and hide the
 // underlying content the reference keeps visible. Callers can
 // override if a specific surface needs an extra whitening pass.
+/// Installs a custom `UIAction` on the hosting view controller's
+/// `navigationItem.backAction` (iOS 16+) so the default system back
+/// button's tap can be INTERCEPTED without replacing the button.
+///
+/// The system-provided chevron / circular-glass back button keeps its
+/// exact visual appearance (iOS 26 circular glass capsule, pre-26
+/// chevron + previous-title) — only the tap handler is overridden.
+///
+/// The `handler` closure receives a `popIfAllowed` callback the caller
+/// invokes WHEN it wants the pop to actually happen. If the caller
+/// never invokes it (e.g. because an "unsaved changes" alert is being
+/// shown first), the pop is silently suppressed — the caller takes
+/// responsibility for popping later (typically in the alert's Discard
+/// handler via `@Environment(\.dismiss)`).
+struct NavigationBackActionInterceptor: UIViewRepresentable {
+    /// Invoked when the user taps the nav-bar back button. Receives a
+    /// closure that, when called, pops the view controller — the same
+    /// pop that would have happened natively.
+    let handler: (_ popIfAllowed: @escaping () -> Void) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = InterceptorView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.handler = handler
+        // Install on next runloop once the view is in the hierarchy and
+        // has a hosting view controller we can reach through the
+        // responder chain.
+        DispatchQueue.main.async { [weak view] in view?.installBackAction() }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard let view = uiView as? InterceptorView else { return }
+        view.handler = handler
+        // Re-install on each SwiftUI update so the captured closure
+        // always reflects the latest state of the hosting view.
+        DispatchQueue.main.async { [weak view] in view?.installBackAction() }
+    }
+
+    final class InterceptorView: UIView {
+        var handler: ((_ popIfAllowed: @escaping () -> Void) -> Void)?
+
+        func installBackAction() {
+            guard let vc = findHostViewController() else { return }
+            let navItem = vc.navigationItem
+            navItem.backAction = UIAction { [weak self, weak vc] _ in
+                guard let self else { return }
+                self.handler? {
+                    vc?.navigationController?.popViewController(animated: true)
+                }
+            }
+        }
+
+        private func findHostViewController() -> UIViewController? {
+            var responder: UIResponder? = self
+            while let r = responder {
+                if let vc = r as? UIViewController { return vc }
+                responder = r.next
+            }
+            return nil
+        }
+    }
+}
+
 struct BarsysGlassPanelBackground: UIViewRepresentable {
     /// Optional translucent white overlay on top of the blur.
     /// Default 0.0 keeps the panel as pure glass to match the UIKit
@@ -504,6 +569,11 @@ struct RecipeDetailView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    /// Pops the view off its enclosing NavigationStack. Used by the
+    /// custom leading back button to close the recipe page (and by the
+    /// unsaved-changes Discard handler to complete the back action
+    /// once the user has confirmed the discard).
+    @Environment(\.dismiss) private var dismiss
     /// Reactive theme awareness — used ONLY by the primary-orange
     /// Craft-button background (`primaryOrangeButtonBackground`) to
     /// override the dark-appearance variant of the
@@ -525,7 +595,7 @@ struct RecipeDetailView: View {
     ///     to the Favorites screen (UIKit `navigateToFavourites()`).
     /// Recording which action triggered the alert lets the shared
     /// `onPrimary` closure route correctly when Discard is tapped.
-    enum PendingUnsavedAction { case craft, navigateToFavorites }
+    enum PendingUnsavedAction { case craft, navigateToFavorites, back }
     @State private var pendingUnsavedAction: PendingUnsavedAction = .craft
     /// UIKit `RecipePageViewController.didPressAddToFavoriteButton` in
     /// the "Save to My Drinks" branch adds `editVc` as a CHILD view
@@ -621,6 +691,31 @@ struct RecipeDetailView: View {
                 .background(Theme.Color.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbarContent(for: recipe) }
+                // Intercept the DEFAULT system back button's tap via
+                // UIKit's `UINavigationItem.backAction` (iOS 16+) so we
+                // can run the UIKit-parity unsaved-changes guard
+                // (`RecipePageViewController.showUnsavedChangesAlertForBack`)
+                // WITHOUT replacing the back button's appearance. The
+                // default chevron / glass-circle / "Back"-title system
+                // button keeps rendering exactly as before.
+                .background(
+                    NavigationBackActionInterceptor { popIfAllowed in
+                        if hasUnsavedChanges {
+                            pendingUnsavedAction = .back
+                            unsavedPopup = .confirm(
+                                title: Constants.unsavedChangesForRecipe,
+                                message: nil,
+                                primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                                secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                                isDestructive: false,
+                                isCloseHidden: true
+                            )
+                            // Don't pop — user must confirm via Discard.
+                        } else {
+                            popIfAllowed()
+                        }
+                    }
+                )
                 // Publish the local `hasUnsavedChanges` flag to the
                 // router so the tab-bar Binding in `MainTabView` can
                 // show the UIKit-parity "unsaved changes" confirmation
@@ -722,6 +817,13 @@ struct RecipeDetailView: View {
                         // Craft button handles its own post-discard
                         // flow in the craft closure — nothing to do here.
                         break
+                    case .back:
+                        // UIKit `showUnsavedChangesAlertForBack` flow —
+                        // once the user confirms Discard, pop the
+                        // RecipeDetail screen off the nav stack so they
+                        // return to wherever they came from (Explore,
+                        // Favorites, BarBot etc.).
+                        dismiss()
                     }
                     pendingUnsavedAction = .craft // reset to default
                 })
