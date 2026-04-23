@@ -934,6 +934,12 @@ struct CraftingView: View {
     @EnvironmentObject private var ble: BLEService
     @ObservedObject private var appState = AppStateManager.shared
     @Environment(\.dismiss) private var dismiss
+    /// Reactive colour scheme — drives the Cancel button's dark-mode
+    /// override so its visual matches the recipe-page "Add to
+    /// Favorites" capsule (white-glass fill + etched gradient
+    /// stroke). Light mode keeps the original `cancelCapsule`
+    /// material-based recipe.
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var viewModel = CraftingViewModel()
     @State private var showCancelConfirm = false
     /// Glass-card popup for "Cancel Drink" — replaces native .alert
@@ -1417,12 +1423,54 @@ struct CraftingView: View {
                         primaryFillColor: "segmentSelectionColor"
                     )
                 } label: {
-                    Text(ConstantButtonsTitle.cancelButtonTitle)
-                        .cancelCapsule(height: 40, cornerRadius: 20,
-                                       textColor: .black,
-                                       showsBorder: false)
-                        .font(.system(size: 14))
-                        .frame(width: 168)
+                    if colorScheme == .dark {
+                        // Dark-mode only — mirror the recipe page's
+                        // "Add to Favorites" capsule EXACTLY so both
+                        // cancel-style buttons in the app share the
+                        // same visual family in dark mode:
+                        //   • Capsule fill = Color.white.opacity(0.85)
+                        //     (same as `cancelCapsuleBackground` on
+                        //     RecipesScreens.swift).
+                        //   • 3-stop white→light-grey gradient stroke
+                        //     at 1.5pt (same as `cancelCapsuleBorder`).
+                        // Light mode is UNCHANGED — it still routes
+                        // through the shared `cancelCapsule` helper
+                        // with `showsBorder: false`, so every other
+                        // caller of that helper stays bit-identical.
+                        Text(ConstantButtonsTitle.cancelButtonTitle)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.black)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 40)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.85))
+                            )
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(
+                                        LinearGradient(
+                                            colors: [
+                                                Color.white.opacity(0.95),
+                                                Color(white: 0.85).opacity(0.9),
+                                                Color.white.opacity(0.95)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        ),
+                                        lineWidth: 1.5
+                                    )
+                            )
+                            .clipShape(Capsule(style: .continuous))
+                            .frame(width: 168)
+                    } else {
+                        Text(ConstantButtonsTitle.cancelButtonTitle)
+                            .cancelCapsule(height: 40, cornerRadius: 20,
+                                           textColor: .black,
+                                           showsBorder: false)
+                            .font(.system(size: 14))
+                            .frame(width: 168)
+                    }
                 }
                 .buttonStyle(BounceButtonStyle())
                 .accessibilityLabel("Cancel drink")
