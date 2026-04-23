@@ -993,11 +993,14 @@ private struct BarsysPopupCard: View {
     let onSecondary: () -> Void
     let onPickIngredient: (String) -> Void
 
-    // 1:1 with UIKit `AlertPopUpHorizontalStackController` storyboard
-    // (AlertPopUp.storyboard). Card width = 277pt (49pt L/R margin on a
-    // 375pt canvas). Previously 320pt — that was 43pt wider than UIKit
-    // and broke centre alignment on all popups.
-    private let cardWidth: CGFloat = 277
+    // Storyboard was 277pt but that pinned the two-button row to
+    // 109.5pt per button — "No, stay in the app" touched the pill edges
+    // with no breathing room. Widened by 30pt so each button gains
+    // +15pt and the secondary label has ≥10pt leading/trailing inside
+    // the pill (matched by `.padding(.horizontal, 10)` on the button
+    // label text itself — see `alertBorderedButton` /
+    // `alertPrimaryFilledButton`).
+    private let cardWidth: CGFloat = 307
 
     var body: some View {
         // 1:1 port of UIKit `AlertPopUpHorizontalStackController` storyboard
@@ -1241,6 +1244,9 @@ private struct BarsysPopupCard: View {
             Text(title)
                 .font(.system(size: 12))
                 .foregroundStyle(SwiftUI.Color.black)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 10)
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
                 .background(alertFilledButtonBackground(fillColor))
@@ -1330,6 +1336,9 @@ private struct BarsysPopupCard: View {
             Text(title)
                 .font(.system(size: 12))
                 .foregroundStyle(SwiftUI.Color.black)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 10)
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
                 .background(alertSecondaryButtonBackground)

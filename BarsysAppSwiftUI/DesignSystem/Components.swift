@@ -738,12 +738,12 @@ struct BarsysAlertOverlay: View {
             //   • Glass background via alertPopUpBackgroundStyle
             .padding(.horizontal, 24)        // UIKit `mnn-57-zFZ` 24pt margin
             .padding(.vertical, 24)
-            // Storyboard width was 277pt, but at that size "No, stay in
-            // the app" (the widest secondary-button title in the app)
-            // touches the button's leading/trailing edges with no visible
-            // breathing room. Widened to 315pt so two-button alerts have
-            // ~12pt of padding between the label text and the pill edges.
-            .frame(width: 315)
+            // Storyboard width was 277pt, but "No, stay in the app" (the
+            // widest secondary title in the app) was hitting the button's
+            // edges. Each button now gets an extra 15pt of width (30pt
+            // total across the two-button row) so labels sit with ≥10pt
+            // of leading/trailing breathing room inside the pill.
+            .frame(width: 345)
             .background(alertCardBackground)
             .overlay(
                 // 1:1 UIKit `BarsysGlassBackground` border gradient
@@ -973,9 +973,9 @@ private struct AlertPopupButtonStyle: ViewModifier {
             .minimumScaleFactor(0.85)                          // gracefully shrink
                                                                // if a longer title
                                                                // still overflows
-            .padding(.horizontal, 8)                           // breathing room
-                                                               // between label text
-                                                               // and pill edges
+            .padding(.horizontal, 10)                          // ≥10pt between
+                                                               // label text and
+                                                               // pill edges
             .frame(maxWidth: .infinity)
             .frame(height: 45)                                // storyboard constraint
             .background(buttonBackground)
