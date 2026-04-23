@@ -1915,6 +1915,7 @@ struct EditRecipeView: View {
     @EnvironmentObject private var ble: BLEService    // hide-add row depends on Barsys 360 connection
     @EnvironmentObject private var router: AppRouter
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var name: String = ""
     @State private var ingredients: [Ingredient] = []
@@ -1942,7 +1943,6 @@ struct EditRecipeView: View {
     /// correct `UIImagePickerController.sourceType` is used.
     @State private var addImagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showPhotoPicker = false
-    @State private var showAddIngredientSheet = false
     @State private var nameHasError = false
     @State private var errorMessage: String?
     @State private var isSaving = false
@@ -1962,9 +1962,6 @@ struct EditRecipeView: View {
     //      one of the four UIKit error messages
     //      (Constants.ingredientUnableToAddError, ingredientCannotBeUsedHere,
     //      moreThanOneIngredientIdentified, hasSameIngredientInDrink).
-    //   4. Manual fallback → "Enter Manually" Action-Sheet button opens
-    //      `AddIngredientSheet` so the user can still add an ingredient
-    //      when the camera is unavailable / the AI fails.
     @State private var showAddIngredientActionSheet = false
     @State private var showAddIngredientPicker = false
     @State private var addIngredientPickerSource: UIImagePickerController.SourceType = .photoLibrary
@@ -2176,26 +2173,14 @@ struct EditRecipeView: View {
             BarBotImagePicker(image: $selectedImage, source: addImagePickerSource)
                 .ignoresSafeArea()
         }
-        .sheet(isPresented: $showAddIngredientSheet) {
-            // Manual entry fallback — used when the user picks "Enter
-            // Manually" from the action sheet OR when the AI scan fails.
-            // Equivalent to UIKit's `addIngredient` call once it has a
-            // validated `Ingredient`.
-            AddIngredientSheet(
-                unit: env.preferences.measurementUnit,
-                existingNames: ingredients.map { $0.name.lowercased() },
-                onAdd: { ingredient in
-                    ingredients.append(ingredient)
-                }
-            )
-        }
         // 1:1 port of UIKit `showActionSheetForImagePicker(isImageCroppingDisabled: true)`
-        // (ImagePickerViewController.swift L45-89). UIKit shows three
-        // actions: Camera / Photos / Cancel. SwiftUI uses
-        // `confirmationDialog` which renders the same iOS action sheet
-        // on every iOS version. We add an "Enter Manually" option so the
-        // user has a path forward when the camera/photos are unavailable.
-        .confirmationDialog("Add Ingredient", isPresented: $showAddIngredientActionSheet, titleVisibility: .hidden) {
+        // (ImagePickerViewController.swift L45-89). UIKit shows exactly
+        // three actions: Camera / Photos / Cancel — no manual-entry path.
+        .confirmationDialog(
+            Constants.pleaseSelectAnOption,
+            isPresented: $showAddIngredientActionSheet,
+            titleVisibility: .visible
+        ) {
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Camera") {
                     addIngredientPickerSource = .camera
@@ -2206,10 +2191,7 @@ struct EditRecipeView: View {
                 addIngredientPickerSource = .photoLibrary
                 showAddIngredientPicker = true
             }
-            Button("Enter Manually") {
-                showAddIngredientSheet = true
-            }
-            Button("Cancel", role: .cancel) { }
+            Button(ConstantButtonsTitle.cancelButtonTitle, role: .cancel) { }
         }
         // Image picker for the AI ingredient detection flow. UIKit pipes
         // the chosen image through `uploadIngredientImage(...)` —
@@ -2818,7 +2800,9 @@ struct EditRecipeView: View {
             } label: {
                 Text("Craft")
                     .font(.system(size: 14))
-                    .foregroundStyle(Color("appBlackColor"))
+                    .foregroundStyle(colorScheme == .dark
+                                     ? Color.black
+                                     : Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(editOrangeButtonBackground)
@@ -3240,7 +3224,15 @@ struct EditRecipeView: View {
             Capsule(style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        colors: colorScheme == .dark
+                            ? [
+                                Color(red: 0.980, green: 0.878, blue: 0.800),
+                                Color(red: 0.949, green: 0.761, blue: 0.631)
+                            ]
+                            : [
+                                Color("brandGradientTop"),
+                                Color("brandGradientBottom")
+                            ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
