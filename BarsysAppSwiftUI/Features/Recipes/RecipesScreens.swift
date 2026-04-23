@@ -94,11 +94,21 @@ struct UIGlassEffectBackground: UIViewRepresentable {
 /// shown first), the pop is silently suppressed — the caller takes
 /// responsibility for popping later (typically in the alert's Discard
 /// handler via `@Environment(\.dismiss)`).
+/// Type alias for the "try to pop" callback the host view invokes
+/// once it has decided the pop should proceed (typically after the
+/// user dismisses the unsaved-changes popup with Discard).
+typealias NavigationBackPopAction = () -> Void
+
+/// Type alias for the back-button tap handler. `@escaping` cannot
+/// appear inside a type expression in Swift, so we carry the
+/// "escape-ness" through this named type instead.
+typealias NavigationBackHandler = (NavigationBackPopAction) -> Void
+
 struct NavigationBackActionInterceptor: UIViewRepresentable {
     /// Invoked when the user taps the nav-bar back button. Receives a
     /// closure that, when called, pops the view controller — the same
     /// pop that would have happened natively.
-    let handler: (_ popIfAllowed: @escaping () -> Void) -> Void
+    let handler: NavigationBackHandler
 
     func makeUIView(context: Context) -> UIView {
         let view = InterceptorView()
@@ -121,7 +131,7 @@ struct NavigationBackActionInterceptor: UIViewRepresentable {
     }
 
     final class InterceptorView: UIView {
-        var handler: ((_ popIfAllowed: @escaping () -> Void) -> Void)?
+        var handler: NavigationBackHandler?
 
         func installBackAction() {
             guard let vc = findHostViewController() else { return }
