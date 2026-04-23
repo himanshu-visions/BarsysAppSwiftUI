@@ -1060,10 +1060,13 @@ struct CraftingView: View {
         }
         .navigationTitle("Crafting")
         .navigationBarTitleDisplayMode(.inline)
-        // Keep the tab bar visible on the Crafting screen — UIKit's
-        // `CraftingViewController` doesn't set `hidesBottomBarWhenPushed`
-        // so the tab bar stays on-screen throughout the craft flow.
-        .toolbar(.visible, for: .tabBar)
+        // Hide the tab bar on the Crafting screen — the user is in a
+        // focused craft flow with the only escape hatch being the
+        // Cancel capsule at the bottom, so exposing tab-bar items
+        // here would let them accidentally exit mid-pour and leave
+        // the device in a half-dispensed state. The tab bar returns
+        // automatically when Crafting pops off the stack.
+        .toolbar(.hidden, for: .tabBar)
         // 1:1 UIKit parity — `CraftingViewController` sets
         // `navigationItem.hidesBackButton = true` (StationProcessViewController
         // L127) so the system back button + swipe-back gesture are
