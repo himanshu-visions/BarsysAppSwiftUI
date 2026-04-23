@@ -870,12 +870,23 @@ struct DateOfBirthPickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(ConstantButtonsTitle.cancelButtonTitle) { dismiss() }
+                    Button { dismiss() } label: {
+                        if #available(iOS 26.0, *) {
+                            Image(systemName: "xmark")
+                        } else {
+                            Text(ConstantButtonsTitle.cancelButtonTitle)
+                        }
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { onConfirm(picked) }
-                        .foregroundStyle(Color("appBlackColor"))
-                        .fontWeight(.semibold)
+                    Button { onConfirm(picked) } label: {
+                        if #available(iOS 26.0, *) {
+                            Image(systemName: "checkmark")
+                        } else {
+                            Text("Done").fontWeight(.semibold)
+                        }
+                    }
+                    .foregroundStyle(Color("appBlackColor"))
                 }
             }
         }

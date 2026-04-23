@@ -1320,11 +1320,22 @@ private struct DatePickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismissSheet() }
+                    Button { dismissSheet() } label: {
+                        if #available(iOS 26.0, *) {
+                            Image(systemName: "xmark")
+                        } else {
+                            Text("Cancel")
+                        }
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { onDone(local); dismissSheet() }
-                        .fontWeight(.semibold)
+                    Button { onDone(local); dismissSheet() } label: {
+                        if #available(iOS 26.0, *) {
+                            Image(systemName: "checkmark")
+                        } else {
+                            Text("Done").fontWeight(.semibold)
+                        }
+                    }
                 }
             }
         }
@@ -1371,7 +1382,13 @@ private struct CountryPickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") { dismiss() }
+                    Button { dismiss() } label: {
+                        if #available(iOS 26.0, *) {
+                            Image(systemName: "xmark")
+                        } else {
+                            Text("Cancel")
+                        }
+                    }
                 }
             }
         }

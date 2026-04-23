@@ -1097,10 +1097,10 @@ struct GrowingTextView: UIViewRepresentable {
         // Done / Cancel toolbar (ports addDoneCancelToolbar).
         let bar = UIToolbar()
         bar.sizeToFit()
-        let cancel = UIBarButtonItem(title: "Cancel", style: .plain, target: context.coordinator,
+        let cancel = UIBarButtonItem(barButtonSystemItem: .cancel, target: context.coordinator,
                                      action: #selector(Coordinator.cancel))
         let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        let done = UIBarButtonItem(title: "Done", style: .done, target: context.coordinator,
+        let done = UIBarButtonItem(barButtonSystemItem: .done, target: context.coordinator,
                                    action: #selector(Coordinator.done))
         bar.items = [cancel, flex, done]
         tv.inputAccessoryView = bar

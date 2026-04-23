@@ -3637,9 +3637,15 @@ struct AddIngredientSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") {
+                    Button {
                         HapticService.light()
                         dismiss()
+                    } label: {
+                        if #available(iOS 26.0, *) {
+                            Image(systemName: "xmark")
+                        } else {
+                            Text("Cancel")
+                        }
                     }
                     .foregroundStyle(Color("appBlackColor"))
                 }
