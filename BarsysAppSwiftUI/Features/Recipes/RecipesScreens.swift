@@ -3647,7 +3647,7 @@ struct AddIngredientSheet: View {
                             Text("Cancel")
                         }
                     }
-                    .foregroundStyle(Color("appBlackColor"))
+                    .tint(Color("appBlackColor"))
                 }
             }
         }
