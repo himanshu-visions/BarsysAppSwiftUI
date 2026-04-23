@@ -707,7 +707,13 @@ struct RecipeDetailView: View {
                 // navigation stack (prevents the BarBot/My Drinks tab
                 // jump the previous port was causing).
                 .fullScreenCover(isPresented: $showEditRecipe) {
-                    NavigationStack {
+                    // `EditRecipeCoverContent` owns a local NavigationPath
+                    // and publishes it via `\.editCoverPath` so the Craft
+                    // button inside EditRecipeView pushes onto this path
+                    // (Crafting layers on top of Edit) instead of onto the
+                    // parent tab's stack (which would render Crafting
+                    // beneath the cover, invisibly).
+                    EditRecipeCoverContent {
                         // isCustomizing: true — creating NEW My Drink from
                         // existing Barsys recipe (UIKit: isCustomizingRecipe = true).
                         // Pass the FULL recipe so EditRecipeView can carry
@@ -1930,6 +1936,15 @@ struct EditRecipeView: View {
     @EnvironmentObject private var router: AppRouter
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    /// When EditRecipeView is hosted by an `EditRecipeCoverContent`
+    /// fullScreenCover, this binding points at the cover's local
+    /// `NavigationPath`. `craft()` appends there so Crafting pushes
+    /// INSIDE the cover (on top of Edit) instead of onto the parent
+    /// tab's stack (where it would render underneath the cover,
+    /// invisibly). Nil when Edit was pushed directly onto a tab stack
+    /// via `Route.editRecipe` — in that case we fall back to
+    /// `router.push`.
+    @Environment(\.editCoverPath) private var editCoverPath
 
     @State private var name: String = ""
     @State private var ingredients: [Ingredient] = []
@@ -3196,9 +3211,22 @@ struct EditRecipeView: View {
     /// or `craft360RecipeForUpdatedQuantity`. The SwiftUI `CraftingView`
     /// route handles the device-specific dispatch internally.
     private func proceedToCraft() {
+        // 1:1 UIKit parity — `EditViewController.craftActionInEditScreen`
+        // pushes CraftingVC on top of the nav stack WITHOUT popping itself
+        // (RecipeCraftingClass.swift L28 does
+        // `fromController?.navigationController?.pushViewController(…)`).
+        //
+        // When Edit is hosted in the `EditRecipeCoverContent`
+        // fullScreenCover, push onto THAT cover's local NavigationPath
+        // so Crafting layers on top of Edit inside the cover. Pushing
+        // onto `router` (a tab path) would place Crafting below the
+        // cover and it would render invisibly behind Edit. When Edit
+        // was pushed directly via `Route.editRecipe`, fall back to the
+        // router path (the test for that is `editCoverPath == nil`).
         let id = recipeID ?? RecipeID()
-        dismiss()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        if let localPath = editCoverPath {
+            localPath.wrappedValue.append(Route.crafting(id))
+        } else {
             router.push(.crafting(id))
         }
     }

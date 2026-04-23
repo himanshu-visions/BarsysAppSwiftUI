@@ -283,7 +283,11 @@ struct FavoritesView: View {
         // currently visible. On dismiss the state clears and user
         // returns to the My Drinks list exactly where they left off.
         .fullScreenCover(item: $recipeToEdit) { recipe in
-            NavigationStack {
+            // `EditRecipeCoverContent` owns a local NavigationPath and
+            // publishes it via `\.editCoverPath` so Craft pushes inside
+            // this cover rather than onto the parent tab's stack (which
+            // would render Crafting under the cover, invisibly).
+            EditRecipeCoverContent {
                 // isCustomizing: false — editing an EXISTING My Drink
                 // (UIKit: isCustomizingRecipe = false → PATCH /my/recipes/{id})
                 //

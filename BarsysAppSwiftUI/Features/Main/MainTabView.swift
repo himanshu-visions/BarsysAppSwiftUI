@@ -737,6 +737,33 @@ private func handleDisconnect(router: AppRouter) {
 
 // MARK: - Route resolver
 
+/// Wrapper used by the two EditRecipeView fullScreenCover call sites
+/// (`RecipeDetailView` + `FavoritesView`). Owns a local
+/// `NavigationPath` so Craft / other pushes from inside Edit layer on
+/// top of Edit inside the cover, instead of into the parent tab's
+/// NavigationStack (which sits below the cover and would render the
+/// pushed screen invisibly).
+///
+/// Publishes the path as `\.editCoverPath` so `EditRecipeView.craft()`
+/// can append to it without plumbing the binding through every
+/// intermediate view.
+struct EditRecipeCoverContent<Content: View>: View {
+    @State private var path = NavigationPath()
+    private let content: () -> Content
+
+    init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            content()
+                .navigationDestination(for: Route.self) { RouteView(route: $0) }
+        }
+        .environment(\.editCoverPath, $path)
+    }
+}
+
 struct RouteView: View {
     let route: Route
     /// `RouteView` needs the router so it can forward the transient

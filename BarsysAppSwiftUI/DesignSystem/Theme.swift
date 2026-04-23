@@ -993,6 +993,13 @@ private struct BarsysPopupCard: View {
     let onSecondary: () -> Void
     let onPickIngredient: (String) -> Void
 
+    /// Reactive colour scheme — lets the filled primary button (e.g.
+    /// the "Start Pouring" pill on the Crafting ready-to-pour popup)
+    /// switch to a pure `PrimaryOrangeButton.makeOrangeStyle()` finish
+    /// in dark mode. Light mode keeps the UIKit 3-layer tinted-glass
+    /// recipe for pixel parity.
+    @Environment(\.colorScheme) private var colorScheme
+
     // Storyboard was 277pt but that pinned the two-button row to
     // 109.5pt per button — "No, stay in the app" touched the pill edges
     // with no breathing room. Widened by 30pt so each button gains
@@ -1284,26 +1291,51 @@ private struct BarsysPopupCard: View {
     @ViewBuilder
     private func alertFilledButtonBackground(_ colorName: String) -> some View {
         if #available(iOS 26.0, *) {
-            ZStack {
-                // Layer 1 — vertical brand gradient capsule
-                //   (UIKit `applyCapsuleGradientStyle()` L63-90).
+            if colorScheme == .dark {
+                // DARK MODE — user asked for the "Start Pouring"
+                // confirmation button to render as a pure
+                // `PrimaryOrangeButton` / `makeOrangeStyle()` pill: just
+                // the vertical brand gradient on a capsule, without the
+                // 20% fillColor tint + clear-glass overlay that made the
+                // pill read muddy against the dark crafting canvas.
+                // Mirrors the Recipe page's `primaryOrangeButtonBackground`
+                // (RecipesScreens.swift L1320-1348) in dark mode.
                 Capsule(style: .continuous).fill(
                     LinearGradient(
                         colors: [
-                            SwiftUI.Color("brandGradientTop"),
-                            SwiftUI.Color("brandGradientBottom")
+                            Color(red: 0.980, green: 0.878, blue: 0.800), // #FAE0CC
+                            Color(red: 0.949, green: 0.761, blue: 0.631)  // #F2C2A1
                         ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
-                // Layer 2 — fillColor at 20% alpha over the gradient.
-                Capsule(style: .continuous)
-                    .fill(SwiftUI.Color(colorName).opacity(0.2))
-                // Layer 3 — `addGlassEffect(effect: "clear")` ≈ SwiftUI
-                // `ultraThinMaterial` for the clear-glass sheen.
-                Capsule(style: .continuous)
-                    .fill(.ultraThinMaterial)
+            } else {
+                // LIGHT MODE — unchanged 3-layer UIKit recipe
+                // (`applyCapsuleGradientStyle` + 20% fillColor tint +
+                // clear-glass) so light-mode popups stay pixel-identical
+                // to the previous release.
+                ZStack {
+                    // Layer 1 — vertical brand gradient capsule
+                    //   (UIKit `applyCapsuleGradientStyle()` L63-90).
+                    Capsule(style: .continuous).fill(
+                        LinearGradient(
+                            colors: [
+                                SwiftUI.Color("brandGradientTop"),
+                                SwiftUI.Color("brandGradientBottom")
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    // Layer 2 — fillColor at 20% alpha over the gradient.
+                    Capsule(style: .continuous)
+                        .fill(SwiftUI.Color(colorName).opacity(0.2))
+                    // Layer 3 — `addGlassEffect(effect: "clear")` ≈ SwiftUI
+                    // `ultraThinMaterial` for the clear-glass sheen.
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
             }
         } else {
             RoundedRectangle(cornerRadius: 8, style: .continuous)

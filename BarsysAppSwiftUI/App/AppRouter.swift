@@ -61,6 +61,28 @@ enum AppTab: Int, Hashable, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Edit-cover navigation path
+
+/// Environment value that carries the `NavigationPath` binding of the
+/// fullScreenCover hosting `EditRecipeView`. When non-nil, any push
+/// originating inside the Edit cover (Craft, etc.) should append to
+/// THIS path instead of the tab's stack — that keeps the pushed screen
+/// layered on top of Edit inside the same cover hierarchy.
+///
+/// Mirrors UIKit `EditViewController.navigationController` which was
+/// always the same nav host that Edit itself was pushed into — so
+/// `pushViewController` from Edit layered on top of Edit.
+private struct EditCoverPathKey: EnvironmentKey {
+    static let defaultValue: Binding<NavigationPath>? = nil
+}
+
+extension EnvironmentValues {
+    var editCoverPath: Binding<NavigationPath>? {
+        get { self[EditCoverPathKey.self] }
+        set { self[EditCoverPathKey.self] = newValue }
+    }
+}
+
 // MARK: - Route enum
 
 /// Every navigable destination in the app. Added to NavigationStack paths.
