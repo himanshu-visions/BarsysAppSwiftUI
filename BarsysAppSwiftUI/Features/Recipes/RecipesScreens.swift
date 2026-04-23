@@ -1842,6 +1842,13 @@ struct MakeMyOwnView: View {
         .navigationTitle("Make my own")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.light, for: .navigationBar)
+        // Keyboard accessory — ports UIKit
+        // `MakeMyOwnViewController+TableView.swift` L36/L44:
+        // `cell.ingredientQuantityTextField.addDoneToolbar()`. The
+        // drink-name field is default keyboard (has Return), but the
+        // ingredient-quantity fields (numberPad/decimalPad) inside
+        // the picker sheet need this accessory to dismiss.
+        .keyboardDoneToolbar()
         .sheet(isPresented: $viewModel.showPicker) {
             IngredientPicker { viewModel.addIngredient($0); viewModel.showPicker = false }
         }
