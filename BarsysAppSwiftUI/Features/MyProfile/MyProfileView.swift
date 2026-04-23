@@ -1071,6 +1071,20 @@ struct MyProfileView: View {
             .autocapitalization(keyboard == .emailAddress ? .none : .words)
             .focused($focusedField, equals: field)
             .onChange(of: text.wrappedValue) { _ in
+                // HYDRATION GATE — 1:1 parity with UIKit
+                // `ProfileVC.isEditingEnable` semantics, which only
+                // flips on an explicit user-driven edit. On SwiftUI
+                // first-render, `viewModel.loadFromDefaults()` writes
+                // the persisted `fullName` / `email` into the view
+                // model; those writes propagate through the text
+                // binding and trip this `.onChange` EVEN THOUGH the
+                // user hasn't typed anything. Without the guard,
+                // the Update button renders as enabled on initial
+                // appearance — mismatching UIKit which shows
+                // `btnUpdate.alpha = 0.5` + `isUserInteractionEnabled
+                // = false` until the user genuinely edits. Same gate
+                // the `selectedCountry` observer already uses.
+                guard !viewModel.isHydrating else { return }
                 viewModel.isEdit = true
                 if field == .name  { viewModel.errorFullName = nil }
                 if field == .email { viewModel.errorEmail    = nil }
@@ -1215,15 +1229,35 @@ struct MyProfileView: View {
                 Task { _ = await viewModel.save(env: env) }
             } label: {
                 // Ports PrimaryOrangeButton.makeOrangeStyle():
-                // iOS 26+: brand gradient capsule, pre-26: flat segmentSelectionColor
+                // iOS 26+: brand gradient capsule, pre-26: flat segmentSelectionColor.
+                //
+                // In dark mode the capsule is forced to the light-mode
+                // peach→tan gradient (see `profileOrangeButtonBackground`).
+                // Pin the label to `.black` in dark mode so it reads
+                // against that light gradient — `appBlackColor`
+                // resolves to near-white in dark mode and would
+                // disappear. Matches the recipe-detail Craft button
+                // label (`RecipesScreens.swift` — Craft Text).
                 Text("Update")
                     .font(.system(size: 14))
-                    .foregroundStyle(Color("appBlackColor"))
+                    .foregroundStyle(colorScheme == .dark
+                                     ? Color.black
+                                     : Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(profileOrangeButtonBackground)
             }
             .buttonStyle(BounceButtonStyle())
+            // State wiring unchanged — 1:1 with UIKit `isEdit`:
+            //   • Initial appearance: disabled + 50% opacity (no edits yet).
+            //   • Enables once ANY input fires `viewModel.isEdit = true`:
+            //     - Text-field keyboard edit (name / mobile / email).
+            //     - Gallery image pick (sets `isEdit` in image onChange).
+            //     - Country picker selection (sets `isEdit` in country
+            //       binding).
+            //   • Disables again while `viewModel.isWorking` (API in flight).
+            // The `isUpdateEnabled` computed getter ANDs those two flags
+            // so the visible state always reflects the real condition.
             .disabled(!isUpdateEnabled)
             .opacity(isUpdateEnabled ? 1.0 : 0.5)
             .accessibilityLabel("Update profile")
@@ -1231,13 +1265,47 @@ struct MyProfileView: View {
     }
 
     /// Ports PrimaryOrangeButton.makeOrangeStyle() for profile update button.
+    ///
+    /// Dark-mode colour diverges from the direct asset lookup because
+    /// `brandGradientTop` / `brandGradientBottom` resolve to DARK
+    /// variants in dark mode (near-grey / near-black), which made the
+    /// Update button read as an invisible dark pill against the dark
+    /// profile form. This branches exactly like the recipe-detail
+    /// Craft button (`primaryOrangeButtonBackground` at
+    /// RecipesScreens.swift) so the two buttons look identical:
+    ///
+    ///   • iOS 26 + dark  → explicit light-mode brand RGB
+    ///                      (#FAE0CC → #F2C2A1) on a Capsule.
+    ///   • iOS 26 + light → Color("brandGradientTop/Bottom") on a
+    ///                      Capsule — BIT-IDENTICAL to the previous
+    ///                      pixels.
+    ///   • Pre-iOS 26     → flat `segmentSelectionColor` on an 8pt
+    ///                      rounded rect — BIT-IDENTICAL (height/2 =
+    ///                      22.5 previously, rounding on a 45pt pill).
     @ViewBuilder
     private var profileOrangeButtonBackground: some View {
         if #available(iOS 26.0, *) {
             Capsule(style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                        colors: colorScheme == .dark
+                            ? [
+                                // Explicit LIGHT-mode brand-orange RGB so
+                                // dark mode still shows the intended
+                                // peach → tan gradient instead of the
+                                // asset's dark-appearance dark-grey
+                                // variant. Matches the recipe-detail
+                                // Craft button's dark-mode override.
+                                Color(red: 0.980, green: 0.878, blue: 0.800),
+                                Color(red: 0.949, green: 0.761, blue: 0.631)
+                            ]
+                            : [
+                                // Light mode — unchanged asset lookup so
+                                // the pixels stay bit-identical to the
+                                // existing rendering.
+                                Color("brandGradientTop"),
+                                Color("brandGradientBottom")
+                            ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
