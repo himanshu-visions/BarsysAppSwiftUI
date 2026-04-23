@@ -157,6 +157,14 @@ struct ExploreRecipesView: View {
 
     private var isConnected: Bool { ble.isAnyDeviceConnected }
 
+    /// Bottom breathing room above the tab bar on the Explore Recipes
+    /// screen. iOS 26+ glass tab bar → 20pt (bit-identical to before);
+    /// pre-iOS 26 opaque tab bar → 37pt so the last list row doesn't
+    /// graze the hairline. Mirrors `MyBarView.bottomBarBottomInset`.
+    private var exploreRecipesBottomInset: CGFloat {
+        if #available(iOS 26.0, *) { 20 } else { 37 }
+    }
+
     /// Filtered recipes — ports cacheRecipesSearchResults().
     /// UIKit uses `words.contains` (ANY word matches), not allSatisfy.
     /// Searches recipe name and ingredientNames string.
@@ -249,7 +257,13 @@ struct ExploreRecipesView: View {
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 15)
-                    .padding(.bottom, 20)
+                    // iOS 26+ glass tab bar blurs over the last recipe
+                    // row — 20pt is fine and bit-identical to before.
+                    // Pre-iOS 26 the tab bar is opaque with a hairline
+                    // and 20pt let the last row graze it; bump to 37pt
+                    // (same scale used by `MyBarView.bottomBarBottomInset`)
+                    // so the row sits visibly above the tab bar.
+                    .padding(.bottom, exploreRecipesBottomInset)
                 }
                 .refreshable {
                     await catalog.refresh()
@@ -713,7 +727,11 @@ struct RecipeDetailView: View {
                     // (Crafting layers on top of Edit) instead of onto the
                     // parent tab's stack (which would render Crafting
                     // beneath the cover, invisibly).
-                    EditRecipeCoverContent {
+                    //
+                    // `onClose` is the DIRECT close action the cross
+                    // button uses — it sets `showEditRecipe = false`
+                    // so the cover dismisses reliably on iPad too.
+                    EditRecipeCoverContent(onClose: { showEditRecipe = false }) {
                         // isCustomizing: true — creating NEW My Drink from
                         // existing Barsys recipe (UIKit: isCustomizingRecipe = true).
                         // Pass the FULL recipe so EditRecipeView can carry

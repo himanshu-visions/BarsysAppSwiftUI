@@ -105,6 +105,18 @@ struct SideMenuOverlay: View {
     /// This makes the gesture feel **gradual** (not jumpy).
     private var gestureWidth: CGFloat { UIScreen.main.bounds.width }
 
+    /// Returns `true` on every iPad, regardless of iOS version.
+    /// Used to swap the full-screen `ScreenEdgePanGesture` representable
+    /// for a narrow edge-only strip — the full-screen variant produces
+    /// a hit-test collision on iPad (both pre-iOS-26 and iOS 26+) that
+    /// swallows every tap in the content below (tab bar, back, card
+    /// buttons). iPhone (any version) always returns `false` so the
+    /// full-screen representable stays in place there — behaviour on
+    /// iPhone is preserved bit-for-bit.
+    static var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
     // MARK: - Critically-damped spring (matches UIKit SideMenuSwift)
     //
     // UIKit uses `usingSpringWithDamping: 1.0, initialSpringVelocity: V`
@@ -211,29 +223,80 @@ struct SideMenuOverlay: View {
             // ---- Edge-pan to open ----
             // UIKit `SideMenuManager.addScreenEdgePanGesturesToPresent(forMenu: .right)`
             // Uses `gestureWidth` (screen width) so sensitivity matches UIKit exactly.
-            ScreenEdgePanGesture(
-                mode: .openFromRightEdge,
-                onProgress: { progress in
-                    if !pendingOpen && !router.showSideMenu {
-                        pendingOpen = true
-                        HapticService.light()
+            //
+            // On iPad + iOS 26, the SwiftUI/UIKit bridge captures the
+            // first-touch event on a `.zIndex(2)` top-level
+            // `UIViewRepresentable` that has `maxWidth: .infinity` —
+            // even though `PassthroughView.hitTest` returns `nil`
+            // outside the 40pt right-edge zone. That swallowed every
+            // tap in the content below (tab bar, back button, toolbar
+            // buttons, card buttons) while swipes still fired.
+            //
+            // Fix: on iPad + iOS 26 we confine the representable to a
+            // narrow 60pt strip pinned to the right edge via an HStack
+            // (Spacer on the left is marked non-interactive so it
+            // can't eat taps). The `UIScreenEdgePanGestureRecognizer`
+            // is already filtered to the rightmost 40pt by UIKit, so
+            // a 60pt representable gives the gesture everything it
+            // needs without sitting over the rest of the screen. On
+            // iPhone (any version) and iPad pre-iOS-26 we keep the
+            // original full-screen representable — behaviour there
+            // is untouched and known-good.
+            Group {
+                if Self.isIPad {
+                    HStack(spacing: 0) {
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                        ScreenEdgePanGesture(
+                            mode: .openFromRightEdge,
+                            onProgress: { progress in
+                                if !pendingOpen && !router.showSideMenu {
+                                    pendingOpen = true
+                                    HapticService.light()
+                                }
+                                liveDragOffset = panelWidth * (1 - progress)
+                            },
+                            onEnded: { committed, velocity in
+                                guard pendingOpen else { return }
+                                if committed {
+                                    completeOpen(velocity: velocity)
+                                } else {
+                                    cancelOpen(velocity: velocity)
+                                }
+                            },
+                            totalWidth: gestureWidth
+                        )
+                        .frame(width: 60)
+                        .frame(maxHeight: .infinity)
                     }
-                    // progress ∈ [0, 1] normalized by screen width.
-                    // Map to panel offset: 0 = fully offscreen, 1 = fully visible.
-                    liveDragOffset = panelWidth * (1 - progress)
-                },
-                onEnded: { committed, velocity in
-                    guard pendingOpen else { return }
-                    if committed {
-                        completeOpen(velocity: velocity)
-                    } else {
-                        cancelOpen(velocity: velocity)
-                    }
-                },
-                totalWidth: gestureWidth
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea()
+                    .ignoresSafeArea()
+                } else {
+                    ScreenEdgePanGesture(
+                        mode: .openFromRightEdge,
+                        onProgress: { progress in
+                            if !pendingOpen && !router.showSideMenu {
+                                pendingOpen = true
+                                HapticService.light()
+                            }
+                            // progress ∈ [0, 1] normalized by screen width.
+                            // Map to panel offset: 0 = fully offscreen, 1 = fully visible.
+                            liveDragOffset = panelWidth * (1 - progress)
+                        },
+                        onEnded: { committed, velocity in
+                            guard pendingOpen else { return }
+                            if committed {
+                                completeOpen(velocity: velocity)
+                            } else {
+                                cancelOpen(velocity: velocity)
+                            }
+                        },
+                        totalWidth: gestureWidth
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+                }
+            }
             // Right-edge swipe is BLOCKED while:
             //   • the right side menu is already open, OR
             //   • the BarBot history (left menu) is open.
@@ -1157,6 +1220,14 @@ struct DeviceConnectedPopup: View {
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .transition(.opacity)
+                // iPad + iOS 26 only hit-test bypass — defensive fix for
+                // the same hit-test collision documented on
+                // `SideMenuOverlay.isIPad`. iPhone (any
+                // version) and iPad pre-iOS-26 keep the absorber active
+                // exactly as before, so the pre-existing behaviour is
+                // preserved bit-for-bit on every platform the bug
+                // doesn't affect.
+                .allowsHitTesting(!SideMenuOverlay.isIPad)
 
             // ---- Glass card (layered `ELw-dL-uZx` + `ASv-0m-OLs`) ------
             ZStack(alignment: .topTrailing) {

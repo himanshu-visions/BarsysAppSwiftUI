@@ -1055,6 +1055,26 @@ struct ShimmerModifier: ViewModifier {
                 .mask(content)
             )
             .onAppear {
+                // `.repeatForever` on a `@State` property fires SwiftUI
+                // state updates every 1.2s cycle. On iPad + pre-iOS-26
+                // that continuous state write cascaded into layout
+                // passes on the enclosing LazyVStack → the BarBot chat
+                // scroll appeared to animate up / down on its own
+                // while the user was just looking at the tab. iPhone
+                // every version and iPad iOS 26+ (where the glass tab
+                // bar + SwiftUI 6 renderer absorb the update cleanly)
+                // keep the original repeating shimmer — visually and
+                // behaviourally bit-identical to before.
+                let isIPadPre26: Bool = {
+                    guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+                    if #available(iOS 26.0, *) { return false } else { return true }
+                }()
+                if isIPadPre26 {
+                    // Static skeleton — phase stays at its initial
+                    // `-1` so the highlight sits off-screen to the
+                    // left. The skeleton tile itself still renders.
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: false)) {
                     phase = 1
                 }
@@ -2235,6 +2255,31 @@ struct BarBotCraftView: View {
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showAttachmentSheet = false
     @State private var showScrollToBottom = false
+
+    /// GeometryReader that publishes the chat content's `maxY` so the
+    /// "scroll to bottom" FAB can hide/show as the user scrolls. On
+    /// iPad + pre-iOS-26 the probe is replaced with `EmptyView` to
+    /// avoid a preference-key → state-write → layout-pass feedback
+    /// loop that caused the chat list to slowly scroll up and down on
+    /// its own while the user just looked at the tab. iPhone (every
+    /// iOS) and iPad iOS 26+ keep the probe and therefore the FAB.
+    @ViewBuilder
+    private var barbotScrollGeometryProbe: some View {
+        let isIPadPre26: Bool = {
+            guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+            if #available(iOS 26.0, *) { return false } else { return true }
+        }()
+        if isIPadPre26 {
+            EmptyView()
+        } else {
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: ScrollOffsetPreferenceKey.self,
+                    value: geo.frame(in: .named("barbotScroll")).maxY
+                )
+            }
+        }
+    }
     // `showHistory` lives on the router (`router.showBarBotHistory`) so
     // cross-overlay coordination works (opening the right side menu must
     // dismiss BarBot history first, mirroring UIKit SideMenuManager's
@@ -2357,22 +2402,47 @@ struct BarBotCraftView: View {
                         // which cut 8pt off each side vs UIKit.
                         .padding(.horizontal, 24)
                         .padding(.vertical, 16)
-                        .background(
-                            GeometryReader { geo in
-                                Color.clear.preference(
-                                    key: ScrollOffsetPreferenceKey.self,
-                                    value: geo.frame(in: .named("barbotScroll")).maxY
-                                )
-                            }
-                        )
+                        // The GeometryReader-driven preference key is
+                        // ONLY mounted when we want the "scroll to
+                        // bottom" FAB to update live.
+                        //
+                        // On iPad + pre-iOS-26, mounting it produced a
+                        // layout feedback loop: the preference key
+                        // fired on every layout pass (even sub-pixel
+                        // changes from the typing indicator / cursor
+                        // animation), the state write caused another
+                        // layout pass, the preference fired again —
+                        // the chat list slowly oscillated up and down
+                        // on its own while the user just looked at
+                        // the tab. iPhone every version and iPad iOS
+                        // 26+ don't exhibit the loop (verified working
+                        // by the user) so we keep the geometry tracker
+                        // in place there; iPad pre-iOS-26 simply loses
+                        // the auto-hide FAB (minor), which is the
+                        // correct trade for a stable chat surface.
+                        .background(barbotScrollGeometryProbe)
                     }
                     .coordinateSpace(name: "barbotScroll")
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { maxY in
-                        // Show FAB when the visible tail of the content is more than 60pt below the viewport.
+                        // Show FAB when the visible tail of the content is
+                        // more than 60pt below the viewport.
                         let screenH = UIScreen.main.bounds.height
                         let shouldShow = viewModel.messages.count > 0 && (maxY - screenH) > 60
-                        if shouldShow != showScrollToBottom {
-                            withAnimation(.easeOut(duration: 0.2)) { showScrollToBottom = shouldShow }
+                        guard shouldShow != showScrollToBottom else { return }
+                        // iOS 26+ handles the animated state write without
+                        // any feedback-loop side effects, so we keep the
+                        // original `withAnimation` there — behaviour on
+                        // iOS 26 is identical to before. Pre-iOS 26 path
+                        // is unreachable on iPad (probe is disabled —
+                        // see `barbotScrollGeometryProbe` above), and on
+                        // iPhone pre-iOS 26 the plain write avoided an
+                        // animation-driven layout cascade.
+                        if #available(iOS 26.0, *) {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                showScrollToBottom = shouldShow
+                            }
+                        } else {
+                            showScrollToBottom = shouldShow
                         }
                     }
                     .onChange(of: viewModel.messages.count) { _ in
@@ -2531,7 +2601,53 @@ struct BarBotCraftView: View {
         // `canProcessNewRequest && craftingInProgress == .no` so a mid-stream
         // BarBot response can't be interrupted by an accidental edge pan.
         .overlay(alignment: .leading) {
+            // Same iPad+iOS-26 hit-test collision workaround used by
+            // `SideMenuOverlay` — on iPad + iOS 26 confine the edge
+            // representable to a narrow 60pt left strip so it can't
+            // swallow taps across the rest of the screen. iPhone any
+            // version and iPad pre-iOS-26 keep the original full-
+            // screen overlay (known-good behaviour).
             if !showHistory && viewModel.canProcessNewRequest {
+                if SideMenuOverlay.isIPad {
+                    HStack(spacing: 0) {
+                        ScreenEdgePanGesture(
+                            mode: .openFromLeftEdge,
+                            onProgress: { progress in
+                                if !pendingHistoryOpen {
+                                    pendingHistoryOpen = true
+                                    HapticService.light()
+                                    viewModel.fetchSessions()
+                                }
+                                historyOpenDragProgress = progress
+                            },
+                            onEnded: { committed, _ in
+                                if committed {
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                                        historyOpenDragProgress = 1
+                                        router.showBarBotHistory = true
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                                        historyOpenDragProgress = 0
+                                        pendingHistoryOpen = false
+                                    }
+                                } else {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                        historyOpenDragProgress = 0
+                                    }
+                                    pendingHistoryOpen = false
+                                }
+                            },
+                            totalWidth: UIScreen.main.bounds.width * (351.0 / 393.0)
+                        )
+                        .frame(width: 60)
+                        .frame(maxHeight: .infinity)
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                    }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(true)
+                } else {
                 ScreenEdgePanGesture(
                     mode: .openFromLeftEdge,
                     onProgress: { progress in
@@ -2578,6 +2694,7 @@ struct BarBotCraftView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
                 .allowsHitTesting(true)
+                }
             }
         }
         // BarBot History overlay — ALWAYS-mounted while either the panel

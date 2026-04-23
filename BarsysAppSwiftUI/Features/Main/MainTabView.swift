@@ -326,7 +326,37 @@ struct MainTabView: View {
         // parent `primaryBackgroundColor` show through.
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor.white.withAlphaComponent(0.01)
+        // Background colour — diverges by OS version:
+        //
+        //   • iOS 26+        → nearly-transparent white (alpha 0.01).
+        //                      Combined with `backgroundEffect = nil`
+        //                      below this lets the native iOS 26 glass
+        //                      tab bar render the `UIGlassEffect` over
+        //                      the app's `primaryBackgroundColor` —
+        //                      bit-identical to the previous behaviour
+        //                      that the user said is working fine.
+        //
+        //   • Pre-iOS 26     → solid `primaryBackgroundColor`. The
+        //                      tab bar on pre-26 is a flat opaque
+        //                      rectangle, and previously the 0.01
+        //                      white let scrollable content bleed
+        //                      through from behind — the user
+        //                      observed this as "table overlapping
+        //                      with tab bar" on Explore Recipes,
+        //                      Cocktail Kits, Device Paired, etc.
+        //                      Making the tab bar opaque in the
+        //                      SAME colour as the page background
+        //                      hides the bleed-through entirely
+        //                      without needing per-screen bottom
+        //                      insets — the visual effect is the
+        //                      scrollable list is cleanly clipped
+        //                      at the tab bar's top edge.
+        if #available(iOS 26.0, *) {
+            appearance.backgroundColor = UIColor.white.withAlphaComponent(0.01)
+        } else {
+            appearance.backgroundColor = UIColor(named: "primaryBackgroundColor")
+                ?? UIColor.systemBackground
+        }
         appearance.backgroundEffect = nil
 
         // Dynamic UIColor providers — light variants are bit-identical
@@ -372,10 +402,18 @@ struct MainTabView: View {
                     ? UIColor.white.withAlphaComponent(0.4)
                     : UIColor.black.withAlphaComponent(0.4) // EXACT historical value
             }
-        } else {
+        } else if UIDevice.current.userInterfaceIdiom != .pad {
             // UIKit L133-139 pre-26 branch: lift the titles 12pt closer
             // to their icons (the stacked layout otherwise puts them too
             // far down with the asset icon + no title).
+            //
+            // IMPORTANT — scoped to iPhone ONLY. On iPad pre-iOS 26 the
+            // tab bar uses the *inline* layout (icon and title side-by-
+            // side), so a vertical `-12pt` adjustment shoves the title
+            // up out of alignment with the icon, producing the broken
+            // tab-bar look on iPad. iPhone's stacked layout is
+            // unchanged — it still gets the lift exactly as before.
+            // iPhone iOS 26+ also stays untouched (different branch).
             item.normal.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: -12)
             item.selected.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: -12)
         }
@@ -406,6 +444,21 @@ struct MainTabView: View {
     /// The icon is immediately overridden with the correct image
     /// (homeIcon or controlCentreIcon depending on connection state).
     private func setFourthTabToSearchItem() {
+        // UIKit parity — `UITabBarItem(tabBarSystemItem: .search, …)`
+        // is an iOS-26-ONLY hook (UIKit
+        // `TabBarViewController.updateTabImageAccordingToConnection`
+        // wraps the call in `if #available(iOS 26.0, *)` precisely
+        // because the floating-search treatment only exists on iOS 26+).
+        //
+        // On pre-iOS-26 (and on iPad where this override was visibly
+        // breaking the 4th-tab icon — it briefly showed the system
+        // magnifying-glass default before our `.image =` landed, and
+        // on iPad that mid-state was what the user observed), we let
+        // SwiftUI's `.tabItem { Label { … } icon: { Image("homeIcon") } }`
+        // drive the 4th tab natively. That path reactively swaps
+        // between `homeIcon` and `controlCentreIcon` on BLE
+        // connection state changes with NO UIKit override needed.
+        guard #available(iOS 26.0, *) else { return }
         guard let windowScene = UIApplication.shared.connectedScenes
                 .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
               let window = windowScene.windows.first(where: { $0.isKeyWindow }) else { return }
@@ -749,9 +802,12 @@ private func handleDisconnect(router: AppRouter) {
 /// intermediate view.
 struct EditRecipeCoverContent<Content: View>: View {
     @State private var path = NavigationPath()
+    private let onClose: () -> Void
     private let content: () -> Content
 
-    init(@ViewBuilder content: @escaping () -> Content) {
+    init(onClose: @escaping () -> Void,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.onClose = onClose
         self.content = content
     }
 
@@ -761,6 +817,12 @@ struct EditRecipeCoverContent<Content: View>: View {
                 .navigationDestination(for: Route.self) { RouteView(route: $0) }
         }
         .environment(\.editCoverPath, $path)
+        // Direct close action — `EditRecipeView` reads this via
+        // `@Environment(\.editCoverClose)` and invokes it for the
+        // cross button + save-success flow. Works reliably on iPad
+        // where `@Environment(\.dismiss)` inside this nav-stack root
+        // did not propagate to the enclosing fullScreenCover.
+        .environment(\.editCoverClose, onClose)
     }
 }
 

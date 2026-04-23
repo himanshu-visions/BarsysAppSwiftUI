@@ -83,6 +83,27 @@ extension EnvironmentValues {
     }
 }
 
+/// Direct-close callback plumbed from the `.fullScreenCover(isPresented:)`
+/// (or `.fullScreenCover(item:)`) call site down into `EditRecipeView`.
+/// Invoking it sets the presenting binding to `false` / `nil`, which
+/// dismisses the cover on every platform.
+///
+/// Needed because `@Environment(\.dismiss)` inside the root of a
+/// `NavigationStack(path:)` that itself sits inside a fullScreenCover
+/// does not reliably propagate up to the cover on iPad — the cross
+/// button in EditRecipeView silently did nothing there. Routing
+/// close actions through an explicit closure sidesteps that quirk.
+private struct EditCoverCloseKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var editCoverClose: (() -> Void)? {
+        get { self[EditCoverCloseKey.self] }
+        set { self[EditCoverCloseKey.self] = newValue }
+    }
+}
+
 // MARK: - Route enum
 
 /// Every navigable destination in the app. Added to NavigationStack paths.

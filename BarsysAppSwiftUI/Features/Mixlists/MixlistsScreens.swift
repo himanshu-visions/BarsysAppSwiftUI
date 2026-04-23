@@ -29,6 +29,14 @@ struct MixlistListView: View {
 
     private var isConnected: Bool { ble.isAnyDeviceConnected }
 
+    /// Bottom breathing room above the tab bar on Cocktail Kits / Mixlists.
+    /// iOS 26+ glass tab bar → 20pt (bit-identical to before);
+    /// pre-iOS 26 opaque tab bar → 37pt so the last kit row doesn't
+    /// graze the hairline. Mirrors `MyBarView.bottomBarBottomInset`.
+    private var mixlistListBottomInset: CGFloat {
+        if #available(iOS 26.0, *) { 20 } else { 37 }
+    }
+
     /// Filtered mixlists — ports mixlistSearchResults().
     /// For Barsys 360: only 360-compatible mixlists (ports retrieveMixlistBarsys360).
     /// Search matches mixlist name, ingredient names, and recipe names.
@@ -127,7 +135,12 @@ struct MixlistListView: View {
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 15)
-                    .padding(.bottom, 20)
+                    // iOS 26+ glass tab bar blurs over the last row —
+                    // 20pt is fine and bit-identical to before. Pre-
+                    // iOS 26's opaque tab bar + hairline was grazing
+                    // the last mixlist row; bump to 37pt only on pre-26
+                    // (same scale as `MyBarView.bottomBarBottomInset`).
+                    .padding(.bottom, mixlistListBottomInset)
                 }
                 .refreshable {
                     await catalog.refresh()

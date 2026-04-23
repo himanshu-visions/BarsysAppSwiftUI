@@ -673,7 +673,14 @@ struct MyProfileView: View {
                             .padding(.leading, 20)
                             .padding(.trailing, 20)
                             .padding(.top, 30)
-                            .padding(.bottom, 40)
+                            // Pre-iOS 26 tab bar is opaque + has a
+                            // hairline — the last row was colliding
+                            // with it. Branch so iOS 26+ keeps the
+                            // tight 12pt (glass blurs over the row)
+                            // while pre-26 gets a roomier 40pt, same
+                            // pattern as `MyBarView.bottomBarBottomInset`
+                            // and `HomeView.speakeasyCardBottomInset`.
+                            .padding(.bottom, profileBottomInset)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -785,6 +792,14 @@ struct MyProfileView: View {
             viewModel.isEdit = true
             UserDefaultsClass.storeCountryName(newCountry.name)
         }
+    }
+
+    /// Bottom breathing room above the tab bar on the profile screen.
+    /// iOS 26+ glass tab bar → 12pt; pre-iOS 26 opaque tab bar → 40pt.
+    /// Same pattern as `MyBarView.bottomBarBottomInset` and
+    /// `HomeView.speakeasyCardBottomInset`.
+    private var profileBottomInset: CGFloat {
+        if #available(iOS 26.0, *) { 12 } else { 40 }
     }
 
     // MARK: - Toolbar (ports top bar Bbr-0Z-CP5)

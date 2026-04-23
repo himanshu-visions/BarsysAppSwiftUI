@@ -308,7 +308,11 @@ struct FavoritesView: View {
             // publishes it via `\.editCoverPath` so Craft pushes inside
             // this cover rather than onto the parent tab's stack (which
             // would render Crafting under the cover, invisibly).
-            EditRecipeCoverContent {
+            //
+            // `onClose` is the direct close action the cross button
+            // uses — it sets `recipeToEdit = nil` so the cover
+            // dismisses reliably on iPad too.
+            EditRecipeCoverContent(onClose: { recipeToEdit = nil }) {
                 // isCustomizing: false — editing an EXISTING My Drink
                 // (UIKit: isCustomizingRecipe = false → PATCH /my/recipes/{id})
                 //
@@ -580,11 +584,28 @@ struct FavoritesView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 15)
-                .padding(.bottom, 20)
+                // Pre-iOS 26 has a solid tab bar + hairline that sits
+                // on top of the scrollable content — the previous flat
+                // 20pt bottom meant the last recipe row was visually
+                // grazing the tab bar. iOS 26+ glass tab bar blurs over
+                // content so a smaller 12pt inset is enough. Mirrors
+                // the `bottomBarBottomInset` pattern used by MyBar /
+                // HomeView so all tab-root screens have consistent
+                // breathing room above the tab bar.
+                .padding(.bottom, favouritesBottomInset)
             }
             .refreshable { await refresh() }
             .accessibilityLabel("Favourites list")
         }
+    }
+
+    /// Bottom breathing room above the tab bar. iOS 26+ has a glass
+    /// tab bar that blurs over content (12pt is enough); pre-iOS 26's
+    /// opaque tab bar needs ~37pt so the last list row doesn't sit on
+    /// the hairline. Mirrors `MyBarView.bottomBarBottomInset` so every
+    /// tab-root screen uses the same scale.
+    private var favouritesBottomInset: CGFloat {
+        if #available(iOS 26.0, *) { 12 } else { 37 }
     }
 
     // MARK: - Toolbar

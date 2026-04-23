@@ -30,6 +30,15 @@ struct PairDeviceView: View {
         (.coaster,   "Coaster 2.0",   "barsys_coaster"),
     ]
 
+    /// Bottom breathing room above the tab bar on the Pair Your Device
+    /// screen. iOS 26+ glass tab bar → 0pt (blurs over content cleanly);
+    /// pre-iOS 26 opaque tab bar → 20pt so the third device card
+    /// doesn't sit flush against the tab bar's top hairline. Same
+    /// dynamic-branching pattern as `MyBarView.bottomBarBottomInset`.
+    private var pairDeviceBottomInset: CGFloat {
+        if #available(iOS 26.0, *) { 0 } else { 20 }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
@@ -61,6 +70,12 @@ struct PairDeviceView: View {
                     }
                 }
             }
+            // Pre-iOS 26 the tab bar is opaque + hairline — without
+            // this padding the third device card butts right up
+            // against the tab bar top edge. iOS 26+ glass tab bar
+            // blurs over content so no extra space needed. Same
+            // branching pattern as every other tab-root screen.
+            .padding(.bottom, pairDeviceBottomInset)
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -251,6 +266,11 @@ struct DeviceListPopup: View {
                 // touch so it doesn't leak to views below without
                 // triggering a dismiss.
                 .onTapGesture { /* inert — matches UIKit dAT-Cp-YmL */ }
+                // iPad + iOS 26 only bypass (same rationale as the
+                // `DeviceConnectedPopup` fix + `SideMenuOverlay.isIPad`).
+                // iPhone any version and iPad pre-iOS-26 keep the
+                // absorber behaviour identical to before.
+                .allowsHitTesting(!SideMenuOverlay.isIPad)
 
             // ---- Layer 2+3: Glass card (`xJB-3B-j9G` + `CCd-kw-jXK`) --------
             // UIKit layers two views at the EXACT same frame:

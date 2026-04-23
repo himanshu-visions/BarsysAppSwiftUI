@@ -395,6 +395,26 @@ struct DevicePairedView: View {
     @State private var showDevicePopup = false
     @State private var favourites: Set<Int> = []
 
+    /// Bottom breathing room above the tab bar. iOS 26+ glass blurs
+    /// over content (30pt is enough and was the pre-existing value);
+    /// pre-iOS 26's opaque tab bar + hairline needs ~50pt so the
+    /// social-media row at the end of the ScrollView doesn't graze
+    /// the tab bar. Matches `MyBarView.bottomBarBottomInset` pattern.
+    private var devicePairedBottomInset: CGFloat {
+        if #available(iOS 26.0, *) { 30 } else { 50 }
+    }
+
+    /// `true` only on iPad + pre-iOS-26 — the combination where the
+    /// responsive `cardW = (geo.size.width - 24 - 32) / 2.15` formula
+    /// produces ≈450pt card widths that overflow the Partnerships /
+    /// Social Media section frames and overlap each other. On iPhone
+    /// (every iOS) and iPad iOS 26+ we stay on the responsive formula
+    /// so the layout is bit-identical to before.
+    private var shouldClampCatalogCard: Bool {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        if #available(iOS 26.0, *) { return false } else { return true }
+    }
+
     // MARK: - Tutorial-card session state
     //
     // 1:1 port of UIKit `DevicePairedViewController` Tutorial flow:
@@ -840,7 +860,20 @@ struct DevicePairedView: View {
                     .padding(.top, 24)
 
                 GeometryReader { geo in
-                    let cardW = (geo.size.width - 24 - 32) / 2.15
+                    // Clamp card width on iPad + pre-iOS-26 only. The
+                    // responsive formula `(geo.size.width - 24 - 32) / 2.15`
+                    // yields ≈157pt on an iPhone 14 (correct, fits in the
+                    // 210pt section frame) but ≈450pt on a 1024pt-wide
+                    // iPad — the square image (`cardW × cardW`) overflows
+                    // the section frame by ~240pt and visibly bleeds into
+                    // the "Connect with Barsys online" section below.
+                    // iPad iOS 26+ was reported as fine, so we leave it
+                    // on the original formula; iPad pre-iOS 26 caps at
+                    // 180pt (same visual scale as a large iPhone card).
+                    // iPhone (every iOS) is bit-identical to before
+                    // because the formula is never > 180 on iPhone widths.
+                    let rawCardW = (geo.size.width - 24 - 32) / 2.15
+                    let cardW = shouldClampCatalogCard ? min(180, rawCardW) : rawCardW
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(Array(partnerships.enumerated()), id: \.offset) { _, p in
@@ -872,7 +905,13 @@ struct DevicePairedView: View {
                     .padding(.top, 16)
 
                 GeometryReader { geo in
-                    let cardW = (geo.size.width - 24 - 32) / 2.15
+                    // Same clamp rationale as the Partnerships section
+                    // above — keeps the social-media cards at a sensible
+                    // size on iPad pre-iOS 26 so their visual footprint
+                    // matches Partnerships and the layout stays
+                    // consistent across both sections on iPad.
+                    let rawCardW = (geo.size.width - 24 - 32) / 2.15
+                    let cardW = shouldClampCatalogCard ? min(180, rawCardW) : rawCardW
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(Array(socialMedia.enumerated()), id: \.offset) { _, img in
@@ -888,7 +927,14 @@ struct DevicePairedView: View {
                 }
                 .frame(height: 285)
                 .padding(.top, 12)
-                .padding(.bottom, 30)
+                // Pre-iOS 26 the tab bar is opaque + has a hairline,
+                // so 30pt left the social-media row grazing it. Branch
+                // so pre-iOS 26 gets 50pt of breathing room while iOS
+                // 26+ keeps the tighter 30pt that matched the glass
+                // tab bar it blurs over. Same pattern as
+                // `MyBarView.bottomBarBottomInset` /
+                // `HomeView.speakeasyCardBottomInset`.
+                .padding(.bottom, devicePairedBottomInset)
             }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
