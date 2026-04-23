@@ -163,11 +163,23 @@ struct MyBarView: View {
     /// "Add ingredient" button — Camera / Photos / Cancel action sheet.
     @State private var showAddPhotoDialog = false
 
-    /// Drives the UIImagePickerController sheet.
-    @State private var showPicker = false
+    /// Drives the UIImagePickerController sheet. Wrapped in an Identifiable
+    /// so we can use `.sheet(item:)` — presenting and configuring the sheet
+    /// in a SINGLE atomic state change. A prior two-`@State` setup
+    /// (`showPicker: Bool` + `pickerSource`) had a first-tap race where
+    /// SwiftUI coalesced the two mutations and the sheet captured the
+    /// stale default `.photoLibrary` source, opening Photos instead of
+    /// the camera on first "Take a Photo" tap.
+    @State private var pickerPresentation: PickerPresentation?
 
-    /// Which source the picker opens with (camera vs photo library).
-    @State private var pickerSource: UIImagePickerController.SourceType = .photoLibrary
+    /// Identifiable wrapper around `UIImagePickerController.SourceType` so
+    /// it can drive `.sheet(item:)`. The `id` changes whenever a new
+    /// picker is requested — forces SwiftUI to rebuild the sheet body
+    /// with the fresh `source` every time.
+    fileprivate struct PickerPresentation: Identifiable, Equatable {
+        let id = UUID()
+        let source: UIImagePickerController.SourceType
+    }
 
     /// The picked image — observed to kick off the upload pipeline once
     /// the picker has dismissed (UIKit parity: `didSelectImagesFromPhotos`).
@@ -264,8 +276,8 @@ struct MyBarView: View {
         // UIImagePickerController — 1:1 with UIKit `presentPhotoLibrary` /
         // `presentCamera` branches of `checkAuthorizationAndShowPhotos` /
         // `checkAuthorizationAndShowCamera` in ImagePickerViewController.
-        .sheet(isPresented: $showPicker) {
-            BarBotImagePicker(image: $pickedImage, source: pickerSource)
+        .sheet(item: $pickerPresentation) { presentation in
+            BarBotImagePicker(image: $pickedImage, source: presentation.source)
                 .ignoresSafeArea()
         }
         // 1:1 with UIKit `didSelectImagesFromPhotos` — runs upload once
@@ -808,8 +820,9 @@ struct MyBarView: View {
         } else {
             resolved = source
         }
-        pickerSource = resolved
-        showPicker = true
+        // Single atomic state mutation — replaces the old two-step
+        // `pickerSource = …; showPicker = true` that raced on first tap.
+        pickerPresentation = PickerPresentation(source: resolved)
     }
 
     /// 1:1 with UIKit `didSelectImagesFromPhotos` (MyBarViewController
