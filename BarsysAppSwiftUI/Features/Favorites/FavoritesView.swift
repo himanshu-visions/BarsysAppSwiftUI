@@ -995,9 +995,43 @@ struct BarsysRecipeRow: View {
         }
     }
 
+    /// On iPad + pre-iOS-26, SwiftUI's hit-test routing swallows nested
+    /// `Button` taps inside an outer `Button` — the row's own `onTap`
+    /// absorbed every press on the overlay Favourite / More icon. The
+    /// outer Button is replaced by a `.contentShape + .onTapGesture`
+    /// wrapper ONLY on that platform combination, which lets the inner
+    /// Buttons receive their taps directly. iPhone (any iOS) and iPad
+    /// iOS 26+ keep the original outer Button layout bit-identical.
+    private var isIPadPre26: Bool {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        if #available(iOS 26.0, *) { return false } else { return true }
+    }
+
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 0) {
+        if isIPadPre26 {
+            rowContent
+                .contentShape(Rectangle())
+                .onTapGesture { onTap() }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "\(recipe.displayName), \(isFavourite ? "favourited" : "not favourited")"
+                )
+                .accessibilityHint("Double tap to view recipe details")
+        } else {
+            Button(action: onTap) { rowContent }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "\(recipe.displayName), \(isFavourite ? "favourited" : "not favourited")"
+                )
+                .accessibilityHint("Double tap to view recipe details")
+        }
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        HStack(spacing: 0) {
                 // Left half — title + ingredients
                 VStack(alignment: .leading, spacing: 12) {
                     Text(recipe.displayName)
@@ -1134,13 +1168,6 @@ struct BarsysRecipeRow: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .padding(.bottom, 12)
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "\(recipe.displayName), \(isFavourite ? "favourited" : "not favourited")"
-        )
-        .accessibilityHint("Double tap to view recipe details")
     }
 
     // 92×76 popup with Edit (92×38) + Delete (92×38), 12pt system font,

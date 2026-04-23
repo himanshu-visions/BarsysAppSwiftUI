@@ -56,9 +56,49 @@ struct MainTabView: View {
     /// comes back to foreground.
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Intercepts tab-bar taps so EVERY user tap on the tab bar pops
+    /// the target tab's NavigationStack back to its root — matching
+    /// the requested behaviour: "tap Explore from any other tab and
+    /// land on Device Paired (the root of Explore), not on whatever
+    /// push the user left mid-visit."
+    ///
+    /// Scope of the reset:
+    ///   • ONLY the tab the user is tapping is popped to root. The
+    ///     other three tabs keep their stacks intact, so switching
+    ///     back to THEM later still lands on their root too (each tab
+    ///     is reset only when the user taps it via the tab bar).
+    ///   • Side menu / BarBot history panels close if open, mirroring
+    ///     UIKit's native behaviour where a tab tap collapses any
+    ///     presented overlay.
+    ///
+    /// Programmatic writes to `router.selectedTab` (e.g. the post-
+    /// connect `.explore` switch in `wireBLECallbacks`, the logout
+    /// reset, etc.) go STRAIGHT to the `@Published` property and do
+    /// NOT run through this binding's setter — those call sites
+    /// retain their pre-existing behaviour exactly. The pop-to-root
+    /// only engages when the user physically taps a tab bar item.
+    private var tabSelection: Binding<AppTab> {
+        Binding(
+            get: { router.selectedTab },
+            set: { newTab in
+                // Always pop the tab the user is tapping back to root.
+                // `AppRouter.popToRoot(in:)` resigns the keyboard and
+                // clears the specific tab's NavigationPath; it's a no-op
+                // if the stack was already empty.
+                router.popToRoot(in: newTab)
+                // Collapse any presented overlay so re-entry is clean.
+                if router.showSideMenu { router.showSideMenu = false }
+                if router.showBarBotHistory { router.showBarBotHistory = false }
+                // Finally commit the tab switch (a no-op when the user
+                // taps the already-selected tab; just a reset in place).
+                router.selectedTab = newTab
+            }
+        )
+    }
+
     var body: some View {
         ZStack(alignment: .leading) {
-            TabView(selection: $router.selectedTab) {
+            TabView(selection: tabSelection) {
 
                 // 0 — BarBot
                 NavigationStack(path: $router.barBotPath) {
