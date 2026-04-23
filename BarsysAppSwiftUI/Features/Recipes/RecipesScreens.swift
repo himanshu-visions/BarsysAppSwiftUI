@@ -1196,9 +1196,15 @@ struct RecipeDetailView: View {
                 // UIKit: applyCancelCapsuleGradientBorderStyle() — capsule
                 // glass with 1.5pt gradient border (white@95% highlights).
                 // Pre-26 fallback: craftButtonBorderColor 1pt stroke.
+                //
+                // Text is pinned to `.black` (not `appBlackColor`) because
+                // the capsule background is forced white-glass in BOTH
+                // color schemes for UIKit parity. `appBlackColor` would
+                // resolve to near-white in dark mode and the label would
+                // disappear against the white fill.
                 Text(favouriteButtonTitle(for: recipe))
                     .font(.system(size: 15))
-                    .foregroundStyle(Color("appBlackColor"))
+                    .foregroundStyle(Color.black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(cancelCapsuleBackground)
@@ -1366,8 +1372,18 @@ struct RecipeDetailView: View {
     @ViewBuilder
     private var cancelCapsuleBackground: some View {
         if #available(iOS 26.0, *) {
+            // Force the light-mode white-glass pill in BOTH color
+            // schemes. Using `.ultraThinMaterial` here flipped the
+            // button to a dark adaptive material in dark mode — the
+            // cancel-capsule gradient border lost its contrast and
+            // the "Save to My Drinks" / "Add to Favourites" label
+            // read as dim black text on a dark blob. Explicit white
+            // tint matches the Save button in EditRecipeView
+            // (RecipesScreens.swift:3319) and the popup secondary
+            // button at Theme.swift:1396 — same white-glass capsule
+            // in every color scheme.
             Capsule(style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(SwiftUI.Color.white.opacity(0.85))
         } else {
             // `Theme.Color.surface` light = pure white sRGB(1, 1, 1) —
             // bit-identical to the previous hard-coded `Color.white`,
@@ -2817,9 +2833,13 @@ struct EditRecipeView: View {
                 HapticService.light()
                 save()
             } label: {
+                // Label pinned to `.black` (not `appBlackColor`) because
+                // the capsule background is forced white-glass in BOTH
+                // color schemes — `appBlackColor` resolves to near-white
+                // in dark mode and the "Save" text would disappear.
                 Text(ConstantButtonsTitle.saveButtonTitle)
                     .font(.system(size: 14))
-                    .foregroundStyle(Color("appBlackColor"))
+                    .foregroundStyle(Color.black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(editCancelCapsuleBackground)
@@ -3319,13 +3339,17 @@ struct EditRecipeView: View {
     @ViewBuilder
     private var editCancelCapsuleBackground: some View {
         if #available(iOS 26.0, *) {
-            // 1:1 with UIKit `applyCancelCapsuleGradientBorderStyle()` →
-            // `addGlassEffect(tintColor: .cancelButtonGray, cornerRadius: h/2)`.
-            // `.regularMaterial` is the SwiftUI bridge for `UIGlassEffect(.regular)`,
-            // and the cancelButtonGray @ 12% tint reproduces the warm-grey
-            // wash UIKit applies to the glass.
+            // Force the light-mode wet-glass look in BOTH color schemes.
+            // `.regularMaterial` flipped to a dark pill in dark mode which
+            // swallowed the cancel-border gradient overlay — the button
+            // read as a dark blob with a faint rim instead of the crisp
+            // white-glass capsule UIKit shows. Explicit white tint +
+            // cancelButtonGray wash preserves the light-mode pixels and
+            // gives dark mode the same white-glass "Save" pill the user
+            // sees in light mode (matches the popup secondary-button fix
+            // at Theme.swift:1396).
             Capsule(style: .continuous)
-                .fill(.regularMaterial)
+                .fill(SwiftUI.Color.white.opacity(0.85))
                 .overlay(
                     Capsule(style: .continuous)
                         .fill(Theme.Color.cancelButtonGray.opacity(0.12))
