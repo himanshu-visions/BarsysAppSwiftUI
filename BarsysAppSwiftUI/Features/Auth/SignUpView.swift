@@ -412,23 +412,11 @@ struct SignUpView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
-        // Keyboard accessory toolbar (ports SignUpViewController+TextFieldDelegate.setupToolbar)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Button(ConstantButtonsTitle.cancelButtonTitle) {
-                    hideKeyboard()
-                }
-                .foregroundStyle(Color("appBlackColor"))
-
-                Spacer()
-
-                Button("Done") {
-                    hideKeyboard()
-                }
-                .foregroundStyle(Color("appBlackColor"))
-                .fontWeight(.semibold)
-            }
-        }
+        // Keyboard accessory toolbar — ports SignUpViewController+TextFieldDelegate.setupToolbar
+        // (Cancel + flexibleSpace + Done over phone / name / email /
+        // OTP fields). Shared modifier swaps text labels for
+        // `xmark` / `checkmark` icons on iOS 26 glass.
+        .keyboardDoneCancelToolbar()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {

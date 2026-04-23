@@ -307,25 +307,16 @@ struct LoginView: View {
             CountryPickerView(selected: $viewModel.selectedCountry)
         }
         // Keyboard accessory toolbar (ports BarsysApp/Controllers/Login/
-        // LoginViewController+Toolbar.setupToolbar).
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Button(ConstantButtonsTitle.cancelButtonTitle) {
-                    hideKeyboard()
-                    focusedField = nil
-                }
-                .foregroundStyle(Color("appBlackColor"))
-
-                Spacer()
-
-                Button("Done") {
-                    hideKeyboard()
-                    focusedField = nil
-                }
-                .foregroundStyle(Color("appBlackColor"))
-                .fontWeight(.semibold)
-            }
-        }
+        // LoginViewController+Toolbar.setupToolbar). Uses the shared
+        // `keyboardDoneCancelToolbar` modifier so the styling stays in
+        // sync with every other Cancel+Done accessory in the app —
+        // notably the iOS 26 glass variant swaps the text labels for
+        // `xmark` / `checkmark` icons.
+        .keyboardDoneCancelToolbar(onDone: {
+            focusedField = nil
+        }, onCancel: {
+            focusedField = nil
+        })
     }
 
     /// Standalone background image layer. Wrapped in its OWN ZStack with

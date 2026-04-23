@@ -77,12 +77,60 @@ struct BarBotRecipeElement: Codable, Identifiable, Hashable {
             return copy
         }
     }
+
+    /// 1:1 port of UIKit `IngredientNameHelper.getIngredientNamesForBarBotRecipe`
+    /// (IngredientNameHelper.swift L39-51). Filters to BASE/MIXER
+    /// ingredients only (primary != "garnish" && primary != "additional"),
+    /// dedupes by lowercased name, sorts case-insensitively, joins with
+    /// ", ". Ingredients with no category are EXCLUDED (mirrors the
+    /// UIKit `guard let primaryCategory = $0.category?.primary?.lowercased()
+    /// else { return false }`).
+    ///
+    /// This replaces the previous `compactMap(\.name).joined(", ")`
+    /// on the recipe card — which had no filtering and (pre-mapper
+    /// fix) was always empty anyway because the flat `ingredient_N`
+    /// keys never got turned into an `ingredients` array.
+    var baseAndMixerIngredientNamesJoined: String {
+        let baseAndMixer = (ingredients ?? []).filter { ing in
+            guard let primary = ing.category?.primary?.lowercased() else { return false }
+            return primary != "garnish" && primary != "additional"
+        }
+        var seen = Set<String>()
+        let uniqueNames = baseAndMixer.compactMap { ing -> String? in
+            guard let name = ing.name, !name.isEmpty else { return nil }
+            let key = name.lowercased()
+            return seen.insert(key).inserted ? name : nil
+        }
+        return uniqueNames
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .joined(separator: ", ")
+    }
+}
+
+/// 1:1 with UIKit `Ingredient.category`
+/// (BarBotAIModelResponse.swift → Ingredient → Category). The AI
+/// response `category.primary` drives the base/mixer vs garnish vs
+/// additional filtering in both the recipe card's ingredient-name
+/// helper and the Craft flow. Missing this field was the root cause
+/// of the empty-ingredients bug the user reported.
+struct BarBotIngredientCategory: Codable, Hashable {
+    var primary: String?
+    var secondary: String?
 }
 
 struct BarBotIngredient: Codable, Hashable {
     var name: String?
     var quantity: Double?
     var unit: String?
+    /// Filled in after the flat `ingredient_N` / `quantity_N` /
+    /// `ingredient_type_N` / `secondary_category_N` / `perishable_N`
+    /// keys are mapped into a proper ingredients array — see
+    /// `BarBotResponseMapper` below, which ports the UIKit
+    /// `MyBarDataMappingClass.getUpdatedMappedRecipe` pre-decode
+    /// transformation.
+    var category: BarBotIngredientCategory?
+    var perishable: Bool?
+    var ingredientOptional: Bool?
 }
 
 struct BarBotImageModel: Codable, Hashable {
@@ -317,7 +365,17 @@ actor BarBotAPIService {
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
-        return try JSONDecoder().decode(BarBotAIResponse.self, from: data)
+        // 1:1 with UIKit `BarBotApiService+ChatPost.swift` L131-147:
+        // run the raw JSON through `MyBarDataMappingClass` equivalent
+        // before decoding so each recipe's flat `ingredient_N` /
+        // `quantity_N` / `ingredient_type_N` / `secondary_category_N`
+        // / `perishable_N` keys become a proper `ingredients` array
+        // with `category.primary` etc. Without this step the decoded
+        // `BarBotRecipeElement.ingredients` is nil / empty, which is
+        // why recipe cards showed no ingredients and Craft fired with
+        // an empty array.
+        let mapped = BarBotResponseMapper.transform(data)
+        return try JSONDecoder().decode(BarBotAIResponse.self, from: mapped)
     }
 
     /// GET /analytics/user/{userId}/sessions
@@ -331,7 +389,14 @@ actor BarBotAPIService {
     func fetchSessionMessages(sessionId: String) async throws -> [ChatMessage] {
         guard let req = makeRequest(path: "analytics/session/\(sessionId)/messages") else { return [] }
         let (data, _) = try await URLSession.shared.data(for: req)
-        guard let envelope = try? JSONDecoder().decode(SessionMessagesResponse.self, from: data) else {
+        // Same pre-decode transform UIKit applies via
+        // `MyBarDataMappingClass.getUpdatedMappedRecipeFromHistory`
+        // — expands every message's flat ingredient keys inside
+        // `ai_generated_recipe` / `barsys_recipe` / nested action
+        // cards. Without this, replayed history messages would show
+        // recipe cards with no ingredient text and empty Craft.
+        let mapped = BarBotResponseMapper.transform(data)
+        guard let envelope = try? JSONDecoder().decode(SessionMessagesResponse.self, from: mapped) else {
             return []
         }
         return (envelope.messages ?? []).map { msg in
@@ -395,6 +460,181 @@ enum BarBotRecipeMerger {
             let key = "\(r.name ?? "")_\(r.ingredients?.count ?? 0)"
             return seen.insert(key).inserted
         }
+    }
+}
+
+// MARK: - BarBot Response Mapper (ports MyBarDataMappingClass)
+//
+// The BarBot chat / history API returns each recipe's ingredients as
+// FLAT per-index keys on the recipe dictionary — not as an
+// `ingredients` array. Concretely:
+//
+//   {
+//     "name": "Mojito",
+//     "no_ingredients": 4,
+//     "ingredient_0": "White Rum",    "quantity_0": "50 ml",
+//     "ingredient_type_0": "base",    "secondary_category_0": "rum",
+//     "perishable_0": false,
+//     "ingredient_1": "Lime Juice",   "quantity_1": "25 ml",
+//     "ingredient_type_1": "mixer",   "secondary_category_1": "juice",
+//     "perishable_1": true,
+//     ... up to `no_ingredients - 1`
+//   }
+//
+// UIKit transforms this into a proper `ingredients: [Ingredient]`
+// array via `MyBarDataMappingClass.getUpdatedMappedRecipe`
+// (BarBotApiService.swift L232-335) BEFORE JSON-decoding it into the
+// typed model. SwiftUI previously skipped that step and decoded the
+// flat payload directly — which left every recipe's `ingredients`
+// array empty (no `ingredients` key in the JSON → decoded as nil /
+// []). That's why:
+//
+//   • Recipe cards showed no ingredient names in the description row.
+//   • Craft fired with an empty ingredients array, triggering the
+//     `.noIngredients` branch in `CraftingViewModel.start` /
+//     `ingredientDoesNotExistInStation` alert.
+//
+// This mapper runs BEFORE `JSONDecoder().decode(...)` so the decoded
+// `BarBotAIResponse` and its children have the same shape the UIKit
+// code works with — an ingredients array with full `category.primary`
+// / `category.secondary` / `perishable` fields.
+//
+// Runs on:
+//   • top-level `recipes` (live chat response)
+//   • `barsys.recipes` (curated catalog recipes in live chat)
+//   • `action_cards[*].data.recipe` (craft-action cards)
+//   • history-endpoint: each message's `ai_generated_recipe` +
+//     `barsys_recipe` arrays, and their nested action cards.
+enum BarBotResponseMapper {
+    /// Ounce → ml conversion factor matching UIKit `ounceValue`.
+    private static let ounceValue: Double = 0.033814
+
+    /// Runs the full transform on the raw JSON data returned by
+    /// `chat` / history endpoints. Returns the re-serialized Data
+    /// that `JSONDecoder` can then decode into the typed models.
+    /// If parsing fails at any step the original data is returned so
+    /// the decoder still has a chance (it just won't see ingredients
+    /// — the same failure mode as the pre-fix behaviour).
+    static func transform(_ data: Data) -> Data {
+        guard var root = (try? JSONSerialization.jsonObject(with: data))
+                as? [String: Any] else { return data }
+
+        // Top-level `recipes` (live-chat path)
+        if let recipes = root["recipes"] as? [[String: Any]] {
+            root["recipes"] = recipes.map { mapRecipe($0) }
+        }
+
+        // Nested `barsys.recipes` + `barsys.mixlists[*].recipes`
+        if var barsys = root["barsys"] as? [String: Any] {
+            if let recipes = barsys["recipes"] as? [[String: Any]] {
+                barsys["recipes"] = recipes.map { mapRecipe($0) }
+            }
+            if let mixlists = barsys["mixlists"] as? [[String: Any]] {
+                barsys["mixlists"] = mixlists.map { mapMixlist($0) }
+            }
+            root["barsys"] = barsys
+        }
+
+        // action_cards[*].data.recipe
+        if let cards = root["action_cards"] as? [[String: Any]] {
+            root["action_cards"] = cards.map { mapActionCard($0) }
+        }
+
+        // history endpoint: messages[*].ai_generated_recipe + barsys_recipe
+        if let messages = root["messages"] as? [[String: Any]] {
+            root["messages"] = messages.map { msg in
+                var m = msg
+                if let ai = msg["ai_generated_recipe"] as? [[String: Any]] {
+                    m["ai_generated_recipe"] = ai.map { mapRecipe($0) }
+                }
+                if let bs = msg["barsys_recipe"] as? [[String: Any]] {
+                    m["barsys_recipe"] = bs.map { mapRecipe($0) }
+                }
+                if let mx = msg["barsys_mixlist"] as? [[String: Any]] {
+                    m["barsys_mixlist"] = mx.map { mapMixlist($0) }
+                }
+                if let cards = msg["action_cards"] as? [[String: Any]] {
+                    m["action_cards"] = cards.map { mapActionCard($0) }
+                }
+                return m
+            }
+        }
+
+        return (try? JSONSerialization.data(withJSONObject: root)) ?? data
+    }
+
+    /// Ports `MyBarDataMappingClass.mapRecipe`. Expands the flat
+    /// `ingredient_N` / `quantity_N` / `ingredient_type_N` /
+    /// `secondary_category_N` / `perishable_N` keys into an
+    /// `ingredients` array shaped like `BarBotIngredient`. Keeps the
+    /// original keys (non-destructive) so any other decoder paths
+    /// still see them.
+    private static func mapRecipe(_ recipe: [String: Any]) -> [String: Any] {
+        var out = recipe
+        // If the recipe already has a proper `ingredients` array (e.g.
+        // barsys-catalog recipes from the curated endpoint), don't
+        // re-generate — just pass through, the decoder will handle it.
+        if let existing = recipe["ingredients"] as? [[String: Any]],
+           !existing.isEmpty {
+            return out
+        }
+        let count = (recipe["no_ingredients"] as? Int)
+            ?? (recipe["no_ingredients"] as? Double).map { Int($0) }
+            ?? 0
+        guard count > 0 else { return out }
+        var ingredients: [[String: Any]] = []
+        ingredients.reserveCapacity(count)
+        for i in 0..<count {
+            let name = recipe["ingredient_\(i)"] as? String ?? ""
+            let isPerishable = recipe["perishable_\(i)"] as? Bool ?? false
+            let primary = recipe["ingredient_type_\(i)"] as? String ?? ""
+            let secondary = recipe["secondary_category_\(i)"] as? String ?? ""
+            var rawQty = recipe["quantity_\(i)"] as? String ?? ""
+            // Normalize "NNN oz" / "NNN ml" → ml double. UIKit does
+            // the same in `MyBarDataMappingClass.mapIngredients`.
+            if rawQty.lowercased().contains("oz") {
+                rawQty = rawQty.replacingOccurrences(of: " oz", with: "")
+                let d = Double(rawQty) ?? 0
+                rawQty = "\(d / ounceValue)"
+            } else if rawQty.lowercased().contains("ml") {
+                rawQty = rawQty
+                    .replacingOccurrences(of: " ml", with: "")
+                    .replacingOccurrences(of: "ml", with: "")
+            }
+            var qtyDouble = Double(rawQty) ?? 0
+            if qtyDouble < 5.0 { qtyDouble = 5.0 }
+            ingredients.append([
+                "name":      name,
+                "unit":      "ml",
+                "quantity":  qtyDouble,
+                "perishable": isPerishable,
+                "category":  ["primary": primary, "secondary": secondary]
+            ])
+        }
+        out["ingredients"] = ingredients
+        return out
+    }
+
+    /// Recursively expands a mixlist's nested recipes.
+    private static func mapMixlist(_ mixlist: [String: Any]) -> [String: Any] {
+        var out = mixlist
+        if let recipes = mixlist["recipes"] as? [[String: Any]] {
+            out["recipes"] = recipes.map { mapRecipe($0) }
+        }
+        return out
+    }
+
+    /// Expands `data.recipe` inside an action card so `craft` cards
+    /// carry a fully-shaped recipe too.
+    private static func mapActionCard(_ card: [String: Any]) -> [String: Any] {
+        var out = card
+        if var data = card["data"] as? [String: Any] {
+            if let recipe = data["recipe"] as? [String: Any] {
+                data["recipe"] = mapRecipe(recipe)
+            }
+            out["data"] = data
+        }
+        return out
     }
 }
 
@@ -1130,7 +1370,13 @@ struct BarBotRecipeCardView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 15) // 215-200
             // Description — x=16 y=~223 w=168, caption1 regular (12pt), ironGray.
-            Text(recipe.ingredients?.compactMap(\.name).joined(separator: ", ") ?? "")
+            // 1:1 port of UIKit `MainBarBotCell+CollectionView.swift` L43:
+            //   cell.lblDescription.text = getIngredientNamesForBarBotRecipe(recipe:)
+            // Filters to base/mixer only via `category.primary`, dedupes,
+            // and sorts case-insensitively. The `ingredients` array is
+            // now populated by `BarBotResponseMapper.transform` which
+            // ports UIKit's `MyBarDataMappingClass` pre-decode step.
+            Text(recipe.baseAndMixerIngredientNamesJoined)
                 .font(Theme.Font.of(.caption1))
                 .foregroundStyle(Color("ironGrayColor"))
                 .lineLimit(2)
@@ -2085,6 +2331,13 @@ struct BarBotCraftView: View {
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
+        // Keyboard accessory — ports UIKit `BarBotViewController
+        // .configureTextView` L205-213 which calls
+        // `askAnythingTextView.addDoneCancelToolbar(onDone:onCancel:)`.
+        // Cancel hides the keyboard without sending; Done hides the
+        // keyboard (user can then tap send). iOS 26 renders xmark /
+        // checkmark icons via the shared modifier.
+        .keyboardDoneCancelToolbar()
         // Force the system nav bar to render on `primaryBackgroundColor`
         // so `NavigationRightGlassButtons` renders against the SAME
         // flat canvas HomeView (ChooseOptions) uses — making the glass
@@ -3534,14 +3787,39 @@ struct BarBotCraftingView: View {
     //   • name contains "garnish"         → garnish
     //   • everything else                 → main pour
 
+    // MARK: - Ingredient classification (1:1 with UIKit)
+    //
+    // UIKit `MainBarBotCell+Actions.swift` craftAction L18-23 splits
+    // ingredients by `category.primary`:
+    //
+    //   baseAndMixer = primary != "garnish" && primary != "additional"
+    //   garnish      = primary == "garnish" && ingredientOptional != true
+    //   additional   = primary == "garnish" && ingredientOptional == true
+    //
+    // Previously the SwiftUI port used a heuristic on `unit` and
+    // `name` because the ingredient model was missing `category`.
+    // Now that `BarBotResponseMapper.transform` populates `category`
+    // from the flat `ingredient_type_N` / `secondary_category_N` API
+    // keys, we can match UIKit's exact filter. This is what makes
+    // `mainIngredients` non-empty for AI recipes on craft.
+
     /// Main pour ingredients — quantities drive the `200,…` command.
+    /// Base/mixer only (primary != "garnish" && primary != "additional").
     private var mainIngredients: [BarBotIngredient] {
-        recipe.normalizedIngredients.filter { !Self.isGarnishIngredient($0) }
+        recipe.normalizedIngredients.filter { ing in
+            let primary = (ing.category?.primary ?? "").lowercased()
+            return primary != "garnish" && primary != "additional"
+        }
     }
 
     /// Garnish ingredients — shown in the post-completion garnish block.
+    /// Non-optional garnishes (primary == "garnish" && !ingredientOptional).
     private var garnishIngredients: [BarBotIngredient] {
-        recipe.normalizedIngredients.filter { Self.isGarnishIngredient($0) }
+        recipe.normalizedIngredients.filter { ing in
+            let primary = (ing.category?.primary ?? "").lowercased()
+            let isOptional = ing.ingredientOptional == true
+            return primary == "garnish" && !isOptional
+        }
     }
 
     private var garnishDisplayText: String {
@@ -3551,16 +3829,12 @@ struct BarBotCraftingView: View {
             .joined(separator: ", ")
     }
 
-    private static func isGarnishIngredient(_ ing: BarBotIngredient) -> Bool {
-        let unit = (ing.unit ?? "").lowercased()
-        if unit == "pc" || unit == "piece" || unit == "each" { return true }
-        let name = (ing.name ?? "").lowercased()
-        return name.contains("garnish")
-    }
-
     /// Convert BarBot ingredients into the storage `Recipe` format so
     /// `CraftingViewModel.start(recipe:ble:)` can drive the same command
-    /// builder used by the main CraftingView.
+    /// builder used by the main CraftingView. Preserves category,
+    /// perishable, and ingredientOptional so downstream filters
+    /// (garnish vs base/mixer, perishable-station prompts) work the
+    /// same way they do for catalog recipes.
     private var workingRecipe: Recipe {
         let ingredients: [Ingredient] = mainIngredients.map { ing in
             Ingredient(
@@ -3568,11 +3842,14 @@ struct BarBotCraftingView: View {
                 name: ing.name ?? "",
                 unit: ing.unit ?? "ml",
                 notes: nil,
-                category: nil,
+                category: IngredientCategory(
+                    primary: ing.category?.primary,
+                    secondary: ing.category?.secondary
+                ),
                 quantity: ing.quantity ?? 0,
-                perishable: nil,
+                perishable: ing.perishable,
                 substitutes: nil,
-                ingredientOptional: nil
+                ingredientOptional: ing.ingredientOptional
             )
         }
         return Recipe(

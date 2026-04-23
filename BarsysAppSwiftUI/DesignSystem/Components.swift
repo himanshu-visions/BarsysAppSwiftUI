@@ -1041,3 +1041,142 @@ private struct AlertPopupButtonStyle: ViewModifier {
         }
     }
 }
+
+// MARK: - Keyboard input accessory toolbars
+//
+// 1:1 port of UIKit `UITextField+addDoneToolbar` /
+// `addDoneCancelToolbar` helpers (UITextField.swift L11-40, L85-117):
+//
+//   • addDoneToolbar()       → [flexibleSpace, Done]
+//   • addDoneCancelToolbar() → [Cancel, flexibleSpace, Done]
+//     (tintColor = appBlackColor, barStyle = .default)
+//
+// Applied across the UIKit app wherever a keyboard has no built-in
+// "Done" / "Return" affordance — notably:
+//
+//   • Login / SignUp: phone + OTP (numberPad / phonePad)
+//   • BarBot "Ask Anything" (UITextView)
+//   • Recipe / Edit-recipe / Make-My-Own ingredient quantities
+//     (numberPad / decimalPad)
+//   • SelectQuantity picker fields
+//   • Date-of-birth picker
+//
+// iOS 26 glass design (user ask): use icon buttons — `xmark` for
+// Cancel and `checkmark` for Done — inside the toolbar so the chrome
+// matches the system's liquid-glass accessory bar. Pre-26 keeps the
+// classic "Cancel" / "Done" text labels for bit-identical parity
+// with the UIKit system items.
+//
+// SwiftUI implementation uses `.toolbar { ToolbarItemGroup(placement:
+// .keyboard) { ... } }` which renders as the native input accessory.
+// The caller passes close closures; the modifier also hides the
+// keyboard via `dismissKeyboard()` so the Done/Cancel behavior
+// matches `resignFirstResponder()` in UIKit.
+
+/// Hides the currently-focused keyboard.
+///
+/// Mirrors UIKit `self.view.endEditing(true)` / `resignFirstResponder()`.
+private func dismissKeyboard() {
+    UIApplication.shared.sendAction(
+        #selector(UIResponder.resignFirstResponder),
+        to: nil, from: nil, for: nil
+    )
+}
+
+/// Ports `addDoneToolbar()` — single trailing-aligned Done button.
+/// Callers that only need dismissal can omit `onDone`; the default
+/// just hides the keyboard (same as UIKit's default target action).
+struct KeyboardDoneToolbar: ViewModifier {
+    var onDone: (() -> Void)? = nil
+
+    func body(content: Content) -> some View {
+        content.toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer() // flexibleSpace — right-aligns the Done button
+                Button {
+                    HapticService.light()
+                    dismissKeyboard()
+                    onDone?()
+                } label: {
+                    if #available(iOS 26.0, *) {
+                        // iOS 26 glass → tick icon (matches the user's
+                        // "cross / tick" ask for the glass toolbar).
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 16, weight: .semibold))
+                    } else {
+                        Text("Done")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                }
+                .tint(Color("appBlackColor"))
+                .accessibilityLabel("Done")
+            }
+        }
+    }
+}
+
+/// Ports `addDoneCancelToolbar(onDone:onCancel:)` — Cancel on the
+/// leading edge, Done on the trailing edge, flexible space between.
+/// Cancel uses `xmark` and Done uses `checkmark` on iOS 26 for the
+/// glass look; pre-26 keeps "Cancel" / "Done" text.
+struct KeyboardDoneCancelToolbar: ViewModifier {
+    var onDone: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
+
+    func body(content: Content) -> some View {
+        content.toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Button {
+                    HapticService.light()
+                    dismissKeyboard()
+                    onCancel?()
+                } label: {
+                    if #available(iOS 26.0, *) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                    } else {
+                        Text("Cancel")
+                            .font(.system(size: 16, weight: .regular))
+                    }
+                }
+                .tint(Color("appBlackColor"))
+                .accessibilityLabel("Cancel")
+
+                Spacer() // flexibleSpace
+
+                Button {
+                    HapticService.light()
+                    dismissKeyboard()
+                    onDone?()
+                } label: {
+                    if #available(iOS 26.0, *) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 16, weight: .semibold))
+                    } else {
+                        Text("Done")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                }
+                .tint(Color("appBlackColor"))
+                .accessibilityLabel("Done")
+            }
+        }
+    }
+}
+
+extension View {
+    /// Attaches the `[flexibleSpace, Done]` keyboard accessory bar
+    /// used on recipe-quantity, edit-recipe-quantity, and
+    /// make-my-own fields (UIKit `addDoneToolbar()`).
+    func keyboardDoneToolbar(onDone: (() -> Void)? = nil) -> some View {
+        modifier(KeyboardDoneToolbar(onDone: onDone))
+    }
+
+    /// Attaches the `[Cancel, flexibleSpace, Done]` keyboard accessory
+    /// bar used on login / signup / BarBot / select-quantity fields
+    /// (UIKit `addDoneCancelToolbar(onDone:onCancel:)`).
+    func keyboardDoneCancelToolbar(onDone: (() -> Void)? = nil,
+                                   onCancel: (() -> Void)? = nil) -> some View {
+        modifier(KeyboardDoneCancelToolbar(onDone: onDone, onCancel: onCancel))
+    }
+}
