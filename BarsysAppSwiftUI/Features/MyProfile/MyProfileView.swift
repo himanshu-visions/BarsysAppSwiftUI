@@ -156,6 +156,16 @@ final class MyProfileViewModel: ObservableObject {
     @Published var isEdit: Bool = false
     @Published var isProfileChanged: Bool = false
     @Published var isWorking: Bool = false
+    /// Flips to `false` after the initial `loadFromDefaults()` +
+    /// `fetchProfile()` cycle finishes so subsequent `selectedCountry`
+    /// / field mutations legitimately flip `isEdit = true`. On first
+    /// render the setters in `loadFromDefaults` mutate
+    /// `selectedCountry` from `.unitedStates` to the persisted
+    /// country, which otherwise tripped the `.onChange` handler and
+    /// enabled the Update button on initial load — mismatching UIKit
+    /// (`btnUpdate.alpha = 0.5 + isUserInteractionEnabled = false`
+    /// until the user actually edits).
+    var isHydrating: Bool = true
 
     /// Canonical list used by the country picker — matches UIKit
     /// `allCountries = getAllCountries()`.
@@ -224,6 +234,17 @@ final class MyProfileViewModel: ObservableObject {
         // DoB — accept multiple formats like UIKit.
         if let raw = UserDefaultsClass.getDoB(), !raw.isEmpty {
             dob = Self.parseDate(raw)
+        }
+
+        // Hydration finished — from here on, any `selectedCountry` /
+        // field mutation is a real user edit. Defer one run-loop so
+        // the `.onChange(of:)` handler observing this assignment
+        // (which triggers `isEdit = true`) has landed before we flip
+        // the flag, otherwise the handler fires AFTER we clear
+        // `isHydrating` and still re-enables the button.
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.isHydrating = false
         }
     }
 
@@ -382,7 +403,19 @@ final class MyProfileViewModel: ObservableObject {
     func save(env: AppEnvironment) async -> Bool {
         guard validate() else { return false }
         isWorking = true
-        defer { isWorking = false }
+        // 1:1 with UIKit `MyProfileViewModel.updateProfile` L133:
+        //   controller.showGlassLoader(message: "Updating Profile")
+        // The `env.loading` overlay is the SwiftUI port of
+        // `UIViewController+GlassLoader` — full-screen black @ 0.30
+        // scrim + glass card + animated BarsysLoader GIF + message.
+        // `defer` guarantees we hide the loader on every exit path
+        // (success, HTTP failure, decoding error, thrown error) so
+        // the UI never gets stuck behind a visible spinner.
+        env.loading.show("Updating Profile")
+        defer {
+            isWorking = false
+            env.loading.hide()
+        }
 
         // DoB → yyyy-MM-dd (matches `DateFormatConstants.yearMonthDay`).
         let df = DateFormatter()
@@ -742,7 +775,13 @@ struct MyProfileView: View {
         // even before the user taps Update. Mirrors the UIKit signup
         // flow where `storeCountryName(...)` runs alongside any phone
         // change.
+        //
+        // Gated by `isHydrating` so the `selectedCountry` mutation
+        // done by `loadFromDefaults()` on initial load does NOT
+        // flip `isEdit` — that was why the Update button appeared
+        // enabled on first render in the previous port.
         .onChange(of: viewModel.selectedCountry) { newCountry in
+            guard !viewModel.isHydrating else { return }
             viewModel.isEdit = true
             UserDefaultsClass.storeCountryName(newCountry.name)
         }
@@ -1103,17 +1142,36 @@ struct MyProfileView: View {
         HStack(spacing: 20) {
             // OK — pops back. Matches UIKit `actionOk(_:)` →
             // `navigationController?.popViewController(animated: true)`.
-            // OK — ports applyCancelCapsuleGradientBorderStyle():
-            // iOS 26+: glass capsule + gradient border
-            // Pre-26: white fill + craftButtonBorderColor 1pt stroke
+            //
+            // Border / fill — 1:1 with UIKit
+            // `MyProfileViewController.swift` L232-235:
+            //   btnOk.setTitleColor(.black, for: .normal)
+            //   btnOk.backgroundColor = .clear                          ← clear fill
+            //   btnOk.makeBorder(width: 1, color: .craftButtonBorderColor)
+            //
+            // And L289-292 for iOS 26+:
+            //   btnOk.applyCancelCapsuleGradientBorderStyle()
+            //   → addGlassEffect(tintColor: .cancelButtonGray,
+            //                    cornerRadius: height / 2)
+            //
+            // The previous port used the shared `cancelCapsule`
+            // modifier, which pre-26 fills with `Theme.Color.surface`
+            // (white) — mismatching UIKit's CLEAR background the user
+            // flagged. We build the pill inline here so both the
+            // clear-fill pre-26 branch AND the iOS 26 glass branch
+            // render bit-identical to UIKit.
             Button {
                 HapticService.light()
                 dismiss()
             } label: {
                 Text("Ok")
-                    .cancelCapsule(height: 45, cornerRadius: 22.5,
-                                   textColor: Color("appBlackColor"))
                     .font(.system(size: 14))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 45)
+                    .background(profileOkButtonBackground)
+                    .overlay(profileOkButtonBorder)
+                    .clipShape(profileOkButtonShape)
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("OK")
@@ -1156,6 +1214,57 @@ struct MyProfileView: View {
         } else {
             RoundedRectangle(cornerRadius: 22.5, style: .continuous)
                 .fill(Color("segmentSelectionColor"))
+        }
+    }
+
+    /// OK button shape — capsule on iOS 26 glass (UIKit
+    /// `applyCancelCapsuleGradientBorderStyle` uses `height/2`
+    /// corner), 8pt rounded rect pre-26 (UIKit storyboard default).
+    private var profileOkButtonShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    /// OK button fill — 1:1 with UIKit `btnOk.backgroundColor =
+    /// .clear` on pre-26 (transparent over `primaryBackgroundColor`)
+    /// and the UIKit `addGlassEffect(tintColor: cancelButtonGray)`
+    /// glass + subtle tint on iOS 26+.
+    @ViewBuilder
+    private var profileOkButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            // UIKit L289-292 → applyCancelCapsuleGradientBorderStyle
+            // → addGlassEffect(tintColor: .cancelButtonGray). The
+            // SwiftUI analogue is `.regularMaterial` (closest bridge
+            // to UIGlassEffect) plus a very subtle cancelButtonGray
+            // tint to match the warm-grey wash UIKit applies.
+            ZStack {
+                Capsule(style: .continuous).fill(.regularMaterial)
+                Capsule(style: .continuous)
+                    .fill(Color("cancelButtonGray").opacity(0.12))
+            }
+        } else {
+            // UIKit L232-235 → `btnOk.backgroundColor = .clear`.
+            // `Color.clear` is bit-identical to UIKit's clear fill.
+            Color.clear
+        }
+    }
+
+    /// OK button border — 1:1 with UIKit
+    /// `makeBorder(width: 1, color: .craftButtonBorderColor)` pre-26.
+    /// iOS 26's `applyCancelCapsuleGradientBorderStyle` declares a
+    /// 1.5pt border in its signature but the implementation only
+    /// installs the glass effect (no stroke), so we omit the stroke
+    /// on iOS 26 to stay bit-identical.
+    @ViewBuilder
+    private var profileOkButtonBorder: some View {
+        if #available(iOS 26.0, *) {
+            EmptyView()
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
         }
     }
 
