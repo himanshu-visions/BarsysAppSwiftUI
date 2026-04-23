@@ -1097,6 +1097,7 @@ struct GrowingTextView: UIViewRepresentable {
         // Done / Cancel toolbar (ports addDoneCancelToolbar).
         let bar = UIToolbar()
         bar.sizeToFit()
+        bar.tintColor = UIColor(named: "appBlackColor")
         let cancel = UIBarButtonItem(barButtonSystemItem: .cancel, target: context.coordinator,
                                      action: #selector(Coordinator.cancel))
         let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
@@ -1137,6 +1138,12 @@ struct GrowingTextView: UIViewRepresentable {
             parent.onSend()
         }
         @objc func cancel() {
+            // Mirror the UIKit behaviour: if the draft is whitespace/newline
+            // only, clear it so the placeholder reappears after dismissal.
+            let trimmed = parent.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty && !parent.text.isEmpty {
+                parent.text = ""
+            }
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                             to: nil, from: nil, for: nil)
         }

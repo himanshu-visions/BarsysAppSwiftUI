@@ -1327,6 +1327,7 @@ private struct DatePickerSheet: View {
                             Text("Cancel")
                         }
                     }
+                    .tint(Color("appBlackColor"))
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { onDone(local); dismissSheet() } label: {
@@ -1336,6 +1337,7 @@ private struct DatePickerSheet: View {
                             Text("Done").fontWeight(.semibold)
                         }
                     }
+                    .tint(Color("appBlackColor"))
                 }
             }
         }
@@ -1389,6 +1391,7 @@ private struct CountryPickerSheet: View {
                             Text("Cancel")
                         }
                     }
+                    .tint(Color("appBlackColor"))
                 }
             }
         }

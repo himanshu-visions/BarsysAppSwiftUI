@@ -877,6 +877,7 @@ struct DateOfBirthPickerSheet: View {
                             Text(ConstantButtonsTitle.cancelButtonTitle)
                         }
                     }
+                    .tint(Color("appBlackColor"))
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { onConfirm(picked) } label: {
@@ -886,7 +887,7 @@ struct DateOfBirthPickerSheet: View {
                             Text("Done").fontWeight(.semibold)
                         }
                     }
-                    .foregroundStyle(Color("appBlackColor"))
+                    .tint(Color("appBlackColor"))
                 }
             }
         }
