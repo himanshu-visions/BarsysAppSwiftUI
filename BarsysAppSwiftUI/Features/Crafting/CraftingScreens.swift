@@ -1054,6 +1054,23 @@ struct CraftingView: View {
         }
         .navigationTitle("Crafting")
         .navigationBarTitleDisplayMode(.inline)
+        // Keep the tab bar visible on the Crafting screen — UIKit's
+        // `CraftingViewController` doesn't set `hidesBottomBarWhenPushed`
+        // so the tab bar stays on-screen throughout the craft flow.
+        .toolbar(.visible, for: .tabBar)
+        // 1:1 UIKit parity — `CraftingViewController` sets
+        // `navigationItem.hidesBackButton = true` (StationProcessViewController
+        // L127) so the system back button + swipe-back gesture are
+        // BOTH disabled while a drink is being dispensed. The only
+        // way out is the Cancel capsule at the bottom, which sends the
+        // BLE `.cancel` (202) command and waits for `dataFlushed`
+        // before dismissing the screen.
+        //
+        // Without these modifiers the SwiftUI user could swipe back mid-
+        // pour and leave the device in a half-dispensed state with no
+        // UI observing the completion ack.
+        .navigationBarBackButtonHidden(true)
+        .interactiveDismissDisabled()
         // Publish "we're on the crafting screen" so the disconnect
         // handler shows the during-crafting alert copy + error haptic.
         // 1:1 port of UIKit
@@ -1402,7 +1419,8 @@ struct CraftingView: View {
                 } label: {
                     Text(ConstantButtonsTitle.cancelButtonTitle)
                         .cancelCapsule(height: 40, cornerRadius: 20,
-                                       textColor: .black)
+                                       textColor: .black,
+                                       showsBorder: false)
                         .font(.system(size: 14))
                         .frame(width: 168)
                 }

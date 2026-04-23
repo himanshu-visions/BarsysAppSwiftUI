@@ -266,6 +266,22 @@ struct FavoritesView: View {
                 loadMyDrinksInitially()
             }
         }
+        // Refresh My Drinks when the EditRecipe save-success flow
+        // signals a tick. Fires when the user saved an edit while
+        // Favorites was already on-screen — we skip the redundant
+        // `router.push(.favorites)` and just re-run the My Drinks fetch
+        // in-place so the edited drink appears immediately.
+        .onChange(of: router.myDrinksRefreshTick) { _ in
+            // Also honour the pre-selected tab index the edit flow set,
+            // so the user lands on My Drinks if they were on Barsys
+            // Recipes when they edited.
+            if let idx = router.pendingFavoritesTabIndex,
+               let tab = FavouritesTab(rawValue: idx) {
+                selectedTab = tab
+                router.pendingFavoritesTabIndex = nil
+            }
+            resetMyDrinksForRefresh()
+        }
         .simultaneousGesture(
             // Tapping anywhere outside a more-menu dismisses it (mirrors
             // UIKit's tap-away behaviour).
@@ -299,7 +315,13 @@ struct FavoritesView: View {
                 EditRecipeView(
                     recipeID: recipe.id,
                     existingRecipe: recipe,
-                    isCustomizing: false
+                    isCustomizing: false,
+                    // Signal that Edit was opened from Favorites — after
+                    // save-success the view model will refresh the
+                    // current list in-place instead of pushing a brand
+                    // new Favorites route (which would stack a second
+                    // copy of this very screen).
+                    openedFromFavorites: true
                 )
             }
             // Mount the alert overlay INSIDE the fullScreenCover so the

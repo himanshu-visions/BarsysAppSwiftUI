@@ -244,6 +244,15 @@ final class AppRouter: ObservableObject {
     /// so the new/updated drink is visible immediately.
     @Published var pendingFavoritesTabIndex: Int? = nil
 
+    /// Increment-on-change signal that tells any currently-presented
+    /// `FavoritesView` to re-fetch its My Drinks list. Used after the
+    /// EditRecipe save-success flow when the user was ALREADY on
+    /// Favorites — we don't want to push a new Favorites route (which
+    /// would stack a second copy) so we just ping this tick. Mirrors
+    /// the UIKit parity where `FavouritesVC.viewWillAppear` re-runs
+    /// `getFavouritesRecipeData()` on every re-appearance.
+    @Published var myDrinksRefreshTick: Int = 0
+
     // One NavigationStack path per tab.
     @Published var barBotPath = NavigationPath()
     @Published var explorePath = NavigationPath()

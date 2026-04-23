@@ -767,7 +767,8 @@ extension View {
     /// iOS.
     func cancelCapsule(height: CGFloat = 54,
                        cornerRadius: CGFloat? = nil,
-                       textColor: SwiftUI.Color = SwiftUI.Color("appBlackColor")) -> some View {
+                       textColor: SwiftUI.Color = SwiftUI.Color("appBlackColor"),
+                       showsBorder: Bool = true) -> some View {
         let iOS26Available: Bool = {
             if #available(iOS 26.0, *) { return true } else { return false }
         }()
@@ -784,25 +785,17 @@ extension View {
                     if iOS26Available {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(.regularMaterial)
-                        // White "wet glass" sheen — the primary
-                        // whitening layer on top of `.regularMaterial`.
-                        // `UIColor` closure is trait-resolved at draw
-                        // time: light mode returns the EXACT historical
-                        // 35% white alpha (bit-identical pixels so the
-                        // capsule renders the SAME wet-glass look as
-                        // before); dark mode returns 5% white alpha so
-                        // the capsule blends with the adaptive dark
-                        // material instead of reading as a prominent
-                        // light pill. Matches the visual weight of the
-                        // My Bar "Upload from Photos" capsule in dark
-                        // mode where the surface reads as an elevated
-                        // dark `Theme.Color.surface` chip.
+                        // Force the light-mode wet-glass sheen in BOTH
+                        // color schemes — the user asked for the dark-
+                        // mode capsule to look identical to light mode
+                        // (matches the Rating popup's left button in
+                        // light mode). Trait-resolved 35% white alpha
+                        // on a `.regularMaterial` base renders as the
+                        // EXACT historical light-mode pixels on every
+                        // device. (Previously dark mode used 5% which
+                        // made the pill blend into the dark backdrop.)
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(Color(UIColor { trait in
-                                trait.userInterfaceStyle == .dark
-                                    ? UIColor.white.withAlphaComponent(0.05)
-                                    : UIColor.white.withAlphaComponent(0.35) // EXACT historical
-                            }))
+                            .fill(SwiftUI.Color.white.opacity(0.35))
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(Theme.Gradient.glassHighlight)
                             .opacity(0.5)
@@ -820,13 +813,22 @@ extension View {
                 }
             )
             .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(
-                        iOS26Available
-                            ? AnyShapeStyle(Theme.Gradient.cancelCapsuleBorder)
-                            : AnyShapeStyle(Theme.Color.craftButtonBorder),
-                        lineWidth: iOS26Available ? 1.5 : 1.0
-                    )
+                // `showsBorder == false` matches the UIKit Crafting-view
+                // cancel button where the pill has no visible stroke —
+                // only the translucent glass fill. The default remains
+                // `true` so every other call site (popups, alerts) keeps
+                // the gradient border.
+                Group {
+                    if showsBorder {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .stroke(
+                                iOS26Available
+                                    ? AnyShapeStyle(Theme.Gradient.cancelCapsuleBorder)
+                                    : AnyShapeStyle(Theme.Color.craftButtonBorder),
+                                lineWidth: iOS26Available ? 1.5 : 1.0
+                            )
+                    }
+                }
             )
             .barsysShadow(.floatingButton)
     }
@@ -1395,8 +1397,18 @@ private struct BarsysPopupCard: View {
     @ViewBuilder
     private var alertSecondaryButtonBackground: some View {
         if #available(iOS 26.0, *) {
+            // Force the light-mode background in BOTH color schemes so
+            // the Rating / confirm popup's LEFT capsule button ("No, stay
+            // in the app", "No", etc.) renders identically in dark mode
+            // as it does in light mode. The previous dark rendering used
+            // an adaptive `.ultraThinMaterial` that turned the pill into
+            // a muddy dark shape against the already-dark popup card,
+            // making the text barely legible. We keep the same visual
+            // family by compositing white tints explicitly rather than
+            // relying on trait-resolved materials.
             ZStack {
-                Capsule(style: .continuous).fill(.ultraThinMaterial)
+                Capsule(style: .continuous)
+                    .fill(SwiftUI.Color.white.opacity(0.85))
                 Capsule(style: .continuous)
                     .fill(Theme.Color.cancelButtonGray.opacity(0.15))
             }

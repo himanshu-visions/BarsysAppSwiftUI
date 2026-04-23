@@ -1931,6 +1931,17 @@ struct EditRecipeView: View {
     /// - `false` → editing an EXISTING My Drink
     ///   (FavoritesView My Drinks tab "Edit"). API: PATCH /my/recipes/{id}.
     var isCustomizing: Bool = false
+    /// When `true`, the edit screen was opened from within FavoritesView
+    /// (edit existing My Drink). After save-success, we just dismiss the
+    /// cover — FavoritesView is already on-screen and will refresh via
+    /// its own `.onChange(of: router.myDrinksRefreshTick)` observer
+    /// (UIKit parity: FavouritesVC.viewWillAppear re-runs its fetch).
+    ///
+    /// Prevents the "already on Favorites, but we pushed a new Favorites
+    /// screen on top of it" stack bug. When `false` (the RecipeDetail
+    /// customise flow), we keep the UIKit-parity push to Favorites +
+    /// pre-select the My Drinks tab.
+    var openedFromFavorites: Bool = false
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService    // hide-add row depends on Barsys 360 connection
     @EnvironmentObject private var router: AppRouter
@@ -3091,12 +3102,26 @@ struct EditRecipeView: View {
                     // Step 1 — dismiss the edit cover (UIKit `removeFromParent` +
                     // `view.removeFromSuperview()`).
                     dismiss()
-                    // Step 2 — after the cover slide-out animation finishes,
-                    // route to Favorites and pre-select the My Drinks tab
-                    // (UIKit `BarBotCoordinator.showFavourites(tabSelected: 1)`).
+                    // Step 2 — route behaviour:
+                    //   • If the user opened Edit FROM Favorites, they
+                    //     are already on that screen. Don't stack a new
+                    //     `.favorites` route on top — just bump the
+                    //     refresh tick so FavoritesView re-pulls the My
+                    //     Drinks list (UIKit parity:
+                    //     `FavouritesVC.viewWillAppear → refreshData()`).
+                    //     Also pre-select the My Drinks tab index so
+                    //     the user sees their saved edit straight away.
+                    //   • Otherwise (RecipeDetail → Customize flow),
+                    //     push to Favorites with `My Drinks` preselected —
+                    //     matches UIKit
+                    //     `BarBotCoordinator.showFavourites(tabSelected: 1)`.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                         router.pendingFavoritesTabIndex = 1   // My Drinks
-                        router.push(.favorites)
+                        if openedFromFavorites {
+                            router.myDrinksRefreshTick &+= 1
+                        } else {
+                            router.push(.favorites)
+                        }
                     }
                 }
             } catch {

@@ -1003,15 +1003,16 @@ private struct AlertPopupButtonStyle: ViewModifier {
                 }
             }
         } else if #available(iOS 26.0, *) {
-            // iOS 26 BORDERED variant — UIKit `applyCancelCapsuleGradientBorderStyle()`
-            // applies a glass effect with `cancelButtonGray` tint. We
-            // approximate with `.regularMaterial` + a subtle white tint
-            // so the button reads as a frosted pill on the popup card.
-            buttonShape
-                .fill(.regularMaterial)
-                .overlay(
-                    buttonShape.fill(Theme.Color.cancelButtonGray.opacity(0.15))
-                )
+            // iOS 26 BORDERED variant — user asked that the LEFT capsule
+            // button in popups render identically in dark mode to how
+            // it renders in light mode. Adaptive `.regularMaterial`
+            // flipped the fill to a muddy dark pill in dark mode.
+            // Replace with an explicit white tint + the same grey wash
+            // so BOTH modes read as the bright pill from the storyboard.
+            ZStack {
+                buttonShape.fill(SwiftUI.Color.white.opacity(0.85))
+                buttonShape.fill(Theme.Color.cancelButtonGray.opacity(0.15))
+            }
         } else {
             // Pre-26 BORDERED variant — UIKit
             // `makeBorder(1, .craftButtonBorderColor)` + white bg.
