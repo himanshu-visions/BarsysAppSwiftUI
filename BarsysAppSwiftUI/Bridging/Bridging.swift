@@ -33,7 +33,20 @@ final class ConnectionMonitor: @unchecked Sendable {
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
-            self?.currentStatus = path.status
+            guard let self else { return }
+            let wasOffline = self.currentStatus != .satisfied
+            self.currentStatus = path.status
+            // Fire a one-shot "connection restored" notification on the
+            // rising edge (offline → online) so screens that failed to
+            // load data while offline can auto-retry their fetches.
+            if wasOffline && path.status == .satisfied {
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .barsysConnectionRestored,
+                        object: nil
+                    )
+                }
+            }
         }
         monitor.start(queue: queue)
     }
@@ -52,6 +65,19 @@ final class ConnectionMonitor: @unchecked Sendable {
             return currentStatus == .satisfied
         }
     }
+
+    /// Synchronous snapshot of the last-known path status. Used by
+    /// connection-restore observers that need to decide whether to
+    /// retry without awaiting the 50ms debounce on `isConnected`.
+    var isConnectedNow: Bool { currentStatus == .satisfied }
+}
+
+extension Notification.Name {
+    /// Posted on the main queue when network connectivity transitions
+    /// from offline → online. Subscribers (e.g. BarBotViewModel) use this
+    /// to re-run fetches that failed while offline, so users never see
+    /// stale / placeholder data after reconnecting.
+    static let barsysConnectionRestored = Notification.Name("barsys.connectionRestored")
 }
 
 // MARK: - WebView

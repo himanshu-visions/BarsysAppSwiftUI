@@ -661,6 +661,47 @@ final class BarBotViewModel: ObservableObject {
     /// button can abort exactly the right request.
     private var inFlight: [UUID: Task<Void, Never>] = [:]
 
+    /// Observer handle for `.barsysConnectionRestored` — posts when
+    /// `NWPathMonitor` flips from offline → online. We use it to
+    /// re-fetch occasion chips and chat history that failed to load
+    /// while the user was offline, so they never see stale/empty UI
+    /// once the network returns.
+    private var connectionRestoreObserver: NSObjectProtocol?
+
+    init() {
+        connectionRestoreObserver = NotificationCenter.default.addObserver(
+            forName: .barsysConnectionRestored,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleConnectionRestored()
+            }
+        }
+    }
+
+    deinit {
+        if let obs = connectionRestoreObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+    }
+
+    /// Called on the rising edge of connectivity. Re-fires any fetch
+    /// whose data is still missing so the UI refreshes automatically.
+    private func handleConnectionRestored() {
+        if options.isEmpty {
+            optionsRetryCount = 0
+            fetchOptions()
+        }
+        // The history list is populated the first time the user opens
+        // the chat history drawer. If they opened it while offline and
+        // the fetch failed, `sessions` will be empty — retry it now.
+        let userId = UserDefaultsClass.getUserId() ?? ""
+        if sessions.isEmpty && !userId.isEmpty {
+            fetchSessions()
+        }
+    }
+
     /// Ports isProcessingRequest — last message waiting for an answer.
     var isProcessingRequest: Bool {
         guard let last = messages.last else { return false }
@@ -710,11 +751,24 @@ final class BarBotViewModel: ObservableObject {
         isOptionsLoading = true
         Task { [weak self] in
             guard let self else { return }
+            // Pre-flight: if we are offline, skip the API call entirely
+            // and leave `options` empty. The connection-restored observer
+            // will re-trigger this fetch once the network returns, so the
+            // user never sees placeholder chips while offline.
+            let online = await ConnectionMonitor.shared.isConnected
+            guard online else {
+                await MainActor.run {
+                    self.options = []
+                    self.isOptionsLoading = false
+                }
+                return
+            }
             do {
                 let cards = try await BarBotAPIService.shared.fetchHomeCards()
                 await MainActor.run {
-                    self.options = cards.isEmpty ? self.fallbackOptions : cards
+                    self.options = cards
                     self.isOptionsLoading = false
+                    self.optionsRetryCount = 0
                 }
             } catch {
                 await MainActor.run { self.retryOptionsIfNeeded() }
@@ -730,18 +784,14 @@ final class BarBotViewModel: ObservableObject {
                 self?.fetchOptions()
             }
         } else {
-            options = fallbackOptions
+            // Retries exhausted. Do NOT fall back to static placeholder
+            // chips — the user specifically does not want dummy data
+            // when the API is unreachable. Leave the grid empty; the
+            // `.barsysConnectionRestored` observer will retry the
+            // fetch automatically once the network comes back.
+            options = []
             isOptionsLoading = false
         }
-    }
-
-    private var fallbackOptions: [BarBotOption] {
-        [
-            .init(title: "Birthday Party", prompt: "Suggest cocktails for a birthday party"),
-            .init(title: "Date Night", prompt: "Recommend romantic cocktails for a date night"),
-            .init(title: "Game Day", prompt: "What are good drinks for watching sports?"),
-            .init(title: "After Dinner", prompt: "Suggest after-dinner digestif cocktails")
-        ]
     }
 
     // MARK: - Send (ports sendQuestionToServer)
@@ -888,14 +938,27 @@ final class BarBotViewModel: ObservableObject {
         guard !userId.isEmpty else { return }
         isLoadingSessions = true
         Task { [weak self] in
+            guard let self else { return }
+            // Pre-flight connectivity check — mirrors the options fetch.
+            // If offline, bail out and wait for `.barsysConnectionRestored`
+            // to re-trigger this fetch instead of showing a stuck spinner
+            // or stale empty history to the user.
+            let online = await ConnectionMonitor.shared.isConnected
+            guard online else {
+                await MainActor.run {
+                    self.sessions = []
+                    self.isLoadingSessions = false
+                }
+                return
+            }
             do {
                 let list = try await BarBotAPIService.shared.fetchSessions(userId: userId)
                 await MainActor.run {
-                    self?.sessions = list
-                    self?.isLoadingSessions = false
+                    self.sessions = list
+                    self.isLoadingSessions = false
                 }
             } catch {
-                await MainActor.run { self?.isLoadingSessions = false }
+                await MainActor.run { self.isLoadingSessions = false }
             }
         }
     }
