@@ -1884,8 +1884,38 @@ final class CatalogService: ObservableObject {
     private let storage: StorageService
     private var api: APIClient?
 
+    /// Observer handle for `.barsysConnectionRestored`. When the device
+    /// regains connectivity we re-run `preload()` so any fetch that
+    /// failed while offline (e.g. the All Recipes list coming up empty
+    /// on a fresh install with no cache) refreshes automatically —
+    /// user doesn't have to pull-to-refresh or restart the screen.
+    private var connectionRestoreObserver: NSObjectProtocol?
+
     init(storage: StorageService) {
         self.storage = storage
+        connectionRestoreObserver = NotificationCenter.default.addObserver(
+            forName: .barsysConnectionRestored,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { [weak self] in
+                await self?.handleConnectionRestored()
+            }
+        }
+    }
+
+    deinit {
+        if let obs = connectionRestoreObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+    }
+
+    /// Called on the offline → online rising edge. Bypasses the 30s rate
+    /// limit (the previous call likely failed due to no network, not a
+    /// genuine rate-limit condition) and re-runs the full catalog fetch.
+    private func handleConnectionRestored() async {
+        lastAPICallTime = .distantPast
+        await preload()
     }
 
     /// Set the API client after init (avoids circular dependency in AppEnvironment).
@@ -1925,6 +1955,19 @@ final class CatalogService: ObservableObject {
         mixlists = storage.allMixlists()
 
         guard let api else { return }
+
+        // Pre-flight connectivity check. If the device is offline we skip
+        // the API call entirely — storage cache is already rendered above
+        // (empty list if no cache), and the `.barsysConnectionRestored`
+        // observer will re-run `preload()` the moment Wi-Fi / cellular
+        // comes back. This prevents an avoidable URLError + lets the
+        // fresh-install "All Recipes" screen repopulate itself without
+        // the user manually retrying.
+        let online = await ConnectionMonitor.shared.isConnected
+        guard online else {
+            isLoading = false
+            return
+        }
 
         // Rate limit: skip API call if called too recently (prevents 429)
         // BUT always allow if storage is empty (e.g. app restart — in-memory storage lost)
