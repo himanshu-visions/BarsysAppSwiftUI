@@ -748,7 +748,13 @@ final class BarBotViewModel: ObservableObject {
 
     func send(ble: BLEService) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || selectedImage != nil else { return }
+        guard !text.isEmpty || selectedImage != nil else {
+            // Whitespace-only input with no image: mirror the UIKit
+            // behaviour of clearing the field so the placeholder reappears
+            // instead of leaving stray spaces/newlines in the pill.
+            if draft != text { draft = text }
+            return
+        }
         guard canProcessNewRequest else { return }
 
         let msg = ChatMessage(questionText: text,
