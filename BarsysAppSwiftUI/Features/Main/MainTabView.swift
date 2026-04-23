@@ -159,37 +159,32 @@ struct MainTabView: View {
             .onChange(of: ble.isAnyDeviceConnected) { _ in
                 setFourthTabToSearchItem()
             }
-            // Re-apply selectedImage when user switches tabs — SwiftUI's
-            // .tabItem modifier can reset UITabBarItem, losing our selectedImage.
+            // Re-apply selectedImage of the 4th tab when user switches
+            // tabs — SwiftUI's `.tabItem` rebuild can reset the
+            // 4th-tab's search-item selectedImage. A small defer lets
+            // SwiftUI's rebuild land first so we overwrite the final
+            // state (not an intermediate one that gets rebuilt).
+            //
+            // The first 3 tabs do NOT need any runtime re-apply now —
+            // their horizontal composite is baked directly into
+            // SwiftUI's `.tabItem` via `Image(uiImage:)` (see
+            // `tabLabel(_:connected:)`), so SwiftUI reproduces the
+            // exact same content on every rebuild. No race, no flicker.
             .onChange(of: router.selectedTab) { _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     setFourthTabToSearchItem()
                 }
             }
-            // Re-apply selectedImage when the system color scheme flips
-            // so the Home tab's selected-state asset swaps between
-            // `newHomeSelectedTab` (light) and `newHomeSelectedTabDark`
-            // (dark) live, without requiring an app restart or tab
-            // switch. The 0.05s defer mirrors the other re-application
-            // sites — gives SwiftUI's `.tabItem` rebuild a tick to
-            // settle before we overwrite the resolved selectedImage.
+            // Re-apply on color-scheme flip so the 4th tab's selected
+            // asset switches between light and dark variants live.
             .onChange(of: colorScheme) { _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     setFourthTabToSearchItem()
                 }
             }
-            // Re-apply on scene activation so a background theme flip
-            // is reflected the moment the app returns to foreground.
-            // Without this, if the user backgrounds the app in light
-            // mode, switches the device to dark mode in Control Centre
-            // / Settings, and reopens the app, the 4th tab's selected
-            // asset would stay on the stale `newHomeSelectedTab`
-            // (light) image because SwiftUI's `colorScheme` update on
-            // re-activation can arrive before the UITabBarItem has
-            // finished rebuilding. The 0.1s defer gives UIKit's trait-
-            // collection propagation a moment to settle before we
-            // overwrite `selectedImage`; without it we occasionally
-            // raced with the system's own appearance re-evaluation.
+            // Re-apply on scene activation (background → foreground)
+            // — catches theme flips that happened while app was
+            // suspended.
             .onChange(of: scenePhase) { newPhase in
                 guard newPhase == .active else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -259,11 +254,45 @@ struct MainTabView: View {
             }
             return tab.title
         }()
-        Label {
-            Text(title)
-        } icon: {
-            Image(imageName)
+
+        // iOS 26+ glass tab bar: for the first 3 tabs, render a
+        // pre-composed HORIZONTAL (icon + title side-by-side) image
+        // DIRECTLY inside SwiftUI's `.tabItem` via `Image(uiImage:)`.
+        //
+        // This is the ROOT fix for the "fluctuation on tab select"
+        // issue:
+        //
+        //   Previously we let SwiftUI build a stacked `Label { Text }
+        //   icon: { Image }` and then OVERWROTE the resulting
+        //   `UITabBarItem.image` from Swift code after the fact.
+        //   SwiftUI re-evaluates `.tabItem` on every body re-render
+        //   (tab select, BLE flip, colorScheme flip) and rebuilds the
+        //   `UITabBarItem` from the Label — wiping our composite
+        //   until the next async re-apply landed. The user observed
+        //   that race as flicker / inconsistent content.
+        //
+        //   With this approach the `.tabItem` content IS the composite
+        //   from the start — SwiftUI's rebuild reproduces the exact
+        //   same `Image(uiImage:)` every time, so there's nothing to
+        //   race against and nothing to fluctuate. No async reapply
+        //   needed for the first 3 tabs.
+        //
+        // The 4th tab (search system item) still needs runtime
+        // UIKit hooks (handled in `setFourthTabToSearchItem`), and
+        // pre-iOS 26 keeps the classic stacked Label — both paths
+        // stay bit-identical to their previous behavior.
+        if #available(iOS 26.0, *),
+           tab != .homeOrControlCenter,
+           let composite = Self.horizontalTabImage(iconName: imageName, title: title) {
+            Image(uiImage: composite)
                 .renderingMode(.template)
+        } else {
+            Label {
+                Text(title)
+            } icon: {
+                Image(imageName)
+                    .renderingMode(.template)
+            }
         }
     }
 
@@ -361,7 +390,8 @@ struct MainTabView: View {
         // circle on the right side of the tab bar (outside the 3-item pill).
         // SwiftUI's TabView/.tabItem doesn't support system items, so we
         // walk the UIKit hierarchy to find the UITabBarController and
-        // replace the 4th item.
+        // replace the 4th item. The 0.1s defer lets SwiftUI finish
+        // mounting the UITabBarController first.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             setFourthTabToSearchItem()
         }
@@ -391,6 +421,24 @@ struct MainTabView: View {
         let tabIndex = 3
         guard let vcs = tabBarController.viewControllers,
               vcs.count > tabIndex else { return }
+
+        // iOS 26+ horizontal layout for the first 3 tabs is now
+        // driven DIRECTLY by SwiftUI's `.tabItem` via `Image(uiImage:)`
+        // (see `tabLabel(_:connected:)`), so this function no longer
+        // touches those items. Runtime overrides were the source of
+        // the selection-time fluctuation the user reported — every
+        // tab-select triggered a re-apply pass that flashed the
+        // standard stacked layout before restoring the composite.
+        //
+        // With the composite baked into SwiftUI's view tree there is
+        // no race: SwiftUI's rebuild reproduces the same composite
+        // image verbatim, so the tab bar never flickers between
+        // representations.
+        //
+        // The 4th tab still requires a runtime hook (below) because
+        // SwiftUI's TabView doesn't expose the `.search` system item
+        // type or the `selectedImage` asset-swap we need for the
+        // Home ↔ Control Center state.
 
         let isConnected = ble.isAnyDeviceConnected
 
@@ -447,6 +495,63 @@ struct MainTabView: View {
         // Force the tab bar to re-layout so it picks up the new selectedImage
         tabBarController.tabBar.setNeedsLayout()
         tabBarController.tabBar.layoutIfNeeded()
+    }
+
+    // MARK: - Horizontal tab item content (iOS 26+ glass tab bar)
+    //
+    // Pre-renders [icon][spacing][title] as a single UIImage so the
+    // first 3 tab items can display horizontal content WITHOUT
+    // altering the tab bar's or item's own dimensions. The composite
+    // is returned as a template image so the tab bar's `tintColor`
+    // drives both the icon AND the title color uniformly (selected
+    // vs unselected colors configured in `configureAppearance()`).
+    //
+    // Cache by (iconName, title) so the composite is rendered once
+    // and reused across re-runs of `setFourthTabToSearchItem`.
+    private static var horizontalTabImageCache: [String: UIImage] = [:]
+
+    private static func horizontalTabImage(iconName: String,
+                                           title: String) -> UIImage? {
+        let key = "\(iconName)|\(title)"
+        if let cached = horizontalTabImageCache[key] { return cached }
+
+        guard let icon = UIImage(named: iconName) else { return nil }
+
+        // Tab-bar icons in the Assets.xcassets are designed to render
+        // at ~25x25 pt — match UITabBarItem's native stacked-layout
+        // icon size so the composite reads at the same visual scale
+        // as the current (vertical) layout.
+        let iconSize = CGSize(width: 25, height: 25)
+        let font = UIFont.systemFont(ofSize: 10, weight: .regular)
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.black // recolored by .alwaysTemplate
+        ]
+        let titleSize = (title as NSString).size(withAttributes: titleAttrs)
+        let spacing: CGFloat = 4
+
+        let totalWidth = iconSize.width + spacing + ceil(titleSize.width)
+        let totalHeight = max(iconSize.height, ceil(titleSize.height))
+
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: totalWidth, height: totalHeight)
+        )
+        let composite = renderer.image { _ in
+            let iconY = (totalHeight - iconSize.height) / 2
+            icon.draw(in: CGRect(x: 0,
+                                 y: iconY,
+                                 width: iconSize.width,
+                                 height: iconSize.height))
+
+            let titleY = (totalHeight - titleSize.height) / 2
+            (title as NSString).draw(
+                at: CGPoint(x: iconSize.width + spacing, y: titleY),
+                withAttributes: titleAttrs
+            )
+        }
+        let templated = composite.withRenderingMode(.alwaysTemplate)
+        horizontalTabImageCache[key] = templated
+        return templated
     }
 
     // MARK: - BLE connection/disconnection callbacks
