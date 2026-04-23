@@ -773,12 +773,21 @@ struct BarsysAlertOverlay: View {
 
     /// UIKit `alertPopUpBackgroundStyle()` from UIViewClass+GradientStyles.swift:
     ///   iOS 26+: addGlassEffect(cornerRadius: BarsysCornerRadius.medium=12)
+    ///            — REAL `UIGlassEffect(.regular)`. We route through
+    ///            `BarsysGlassPanelBackground` (the same UIViewRepresentable
+    ///            used by SideMenu, DeviceListPopup, DeviceConnectedPopup,
+    ///            BarsysPopupCard). Previously this used SwiftUI's
+    ///            `.regularMaterial` which is a different recipe — the
+    ///            Device Disconnected alert read as a flatter, more
+    ///            translucent card than the rest of the app's glass
+    ///            popups (especially in dark mode where the two
+    ///            materials diverge visibly).
     ///   Pre-26: UIColor.white.withAlphaComponent(0.95), cornerRadius=12
     @ViewBuilder
     private var alertCardBackground: some View {
         if #available(iOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.regularMaterial)
+            BarsysGlassPanelBackground()
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.white.opacity(0.95))
