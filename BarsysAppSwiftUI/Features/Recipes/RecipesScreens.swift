@@ -621,6 +621,21 @@ struct RecipeDetailView: View {
                 .background(Theme.Color.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbarContent(for: recipe) }
+                // Publish the local `hasUnsavedChanges` flag to the
+                // router so the tab-bar Binding in `MainTabView` can
+                // show the UIKit-parity "unsaved changes" confirmation
+                // if the user taps a tab while edits are pending.
+                // Cleared on disappear so the guard never persists
+                // after the recipe page is gone.
+                .onChange(of: hasUnsavedChanges) { newValue in
+                    router.hasUnsavedRecipeChanges = newValue
+                }
+                .onAppear {
+                    router.hasUnsavedRecipeChanges = hasUnsavedChanges
+                }
+                .onDisappear {
+                    router.hasUnsavedRecipeChanges = false
+                }
                 // Keyboard accessory — ports UIKit
                 // `RecipePageViewController+Helpers.swift` L37:
                 // `cell.ingredientQuantityTextField.addDoneToolbar()`.

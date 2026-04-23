@@ -614,6 +614,13 @@ struct MyProfileView: View {
     /// re-pull on every foreground cycle.
     @ObservedObject private var profileStore = UserProfileStore.shared
     @Environment(\.dismiss) private var dismiss
+    /// Reactive colour scheme — used by the OK button so its dark-mode
+    /// rendering matches the recipe page's "Add to Favorites" capsule
+    /// (white-glass fill + etched-gradient stroke + black label) while
+    /// light mode stays on the original UIKit-parity clear/transparent
+    /// pill. The two buttons differ only in their label text when the
+    /// user is in dark mode.
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var showImageSourceSheet = false
     @State private var showImagePicker = false
@@ -1181,7 +1188,15 @@ struct MyProfileView: View {
             } label: {
                 Text("Ok")
                     .font(.system(size: 14))
-                    .foregroundStyle(Color("appBlackColor"))
+                    // In dark mode the button reads as a white-glass
+                    // pill (matches the recipe page's "Add to Favorites"
+                    // capsule) so force the label to `.black` for
+                    // contrast on the white fill. In light mode keep
+                    // the adaptive `appBlackColor` token — bit-identical
+                    // to the pre-change pixels.
+                    .foregroundStyle(colorScheme == .dark
+                                     ? Color.black
+                                     : Color("appBlackColor"))
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(profileOkButtonBackground)
@@ -1251,15 +1266,24 @@ struct MyProfileView: View {
     @ViewBuilder
     private var profileOkButtonBackground: some View {
         if #available(iOS 26.0, *) {
-            // UIKit L289-292 → applyCancelCapsuleGradientBorderStyle
-            // → addGlassEffect(tintColor: .cancelButtonGray). The
-            // SwiftUI analogue is `.regularMaterial` (closest bridge
-            // to UIGlassEffect) plus a very subtle cancelButtonGray
-            // tint to match the warm-grey wash UIKit applies.
-            ZStack {
-                Capsule(style: .continuous).fill(.regularMaterial)
+            if colorScheme == .dark {
+                // Dark mode — mirror the recipe page's
+                // `cancelCapsuleBackground` (RecipesScreens.swift:1376).
+                // Explicit white@0.85 fill so the pill reads as the
+                // same white-glass capsule the user sees on the
+                // "Add to Favorites" CTA. Avoids the adaptive
+                // `.regularMaterial` that previously turned this
+                // button into a muddy dark blob in dark mode.
                 Capsule(style: .continuous)
-                    .fill(Color("cancelButtonGray").opacity(0.12))
+                    .fill(SwiftUI.Color.white.opacity(0.85))
+            } else {
+                // Light mode — unchanged UIKit-parity recipe:
+                // `.regularMaterial` + cancelButtonGray@0.12 tint.
+                ZStack {
+                    Capsule(style: .continuous).fill(.regularMaterial)
+                    Capsule(style: .continuous)
+                        .fill(Color("cancelButtonGray").opacity(0.12))
+                }
             }
         } else {
             // UIKit L232-235 → `btnOk.backgroundColor = .clear`.
@@ -1277,7 +1301,30 @@ struct MyProfileView: View {
     @ViewBuilder
     private var profileOkButtonBorder: some View {
         if #available(iOS 26.0, *) {
-            EmptyView()
+            if colorScheme == .dark {
+                // Dark mode — same 3-stop white/light-grey gradient
+                // stroke the recipe-page `cancelCapsuleBorder` uses
+                // (RecipesScreens.swift:1402). Gives the pill a crisp
+                // etched edge against the dark backdrop instead of
+                // relying on the adaptive material for separation.
+                Capsule(style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                SwiftUI.Color.white.opacity(0.95),
+                                SwiftUI.Color(white: 0.85).opacity(0.9),
+                                SwiftUI.Color.white.opacity(0.95)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.5
+                    )
+            } else {
+                // Light mode — unchanged: no stroke (UIKit
+                // `addGlassEffect` supplies the visual separation).
+                EmptyView()
+            }
         } else {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color("craftButtonBorderColor"), lineWidth: 1)

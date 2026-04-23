@@ -81,6 +81,35 @@ struct MainTabView: View {
         Binding(
             get: { router.selectedTab },
             set: { newTab in
+                // UIKit-parity guard — if a RecipeDetailView currently on
+                // screen reports unsaved quantity edits, surface the
+                // same "Keep Editing / Discard" confirmation UIKit's
+                // `RecipePageViewController.showUnsavedChangesAlertForBack`
+                // used to show. The navigation is deferred until the
+                // user taps Discard; Keep Editing leaves them on the
+                // recipe page with the edits intact. Matches constants:
+                //   • `unsavedChangesForRecipe`
+                //   • `keepEditingButtonTitle` / `discardButtonTitle`
+                if router.hasUnsavedRecipeChanges {
+                    router.pendingUnsavedDiscardAction = {
+                        // Running inside Discard: safe to commit the
+                        // full tab reset now.
+                        router.hasUnsavedRecipeChanges = false
+                        router.popToRoot(in: newTab)
+                        if router.showSideMenu { router.showSideMenu = false }
+                        if router.showBarBotHistory { router.showBarBotHistory = false }
+                        router.selectedTab = newTab
+                    }
+                    router.unsavedChangesConfirmPopup = .confirm(
+                        title: Constants.unsavedChangesForRecipe,
+                        message: nil,
+                        primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                        secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                        isDestructive: false,
+                        isCloseHidden: true
+                    )
+                    return
+                }
                 // Always pop the tab the user is tapping back to root.
                 // `AppRouter.popToRoot(in:)` resigns the keyboard and
                 // clears the specific tab's NavigationPath; it's a no-op
@@ -272,6 +301,23 @@ struct MainTabView: View {
             router.confirmPairDevice()
         }, onSecondary: {
             // UIKit continueButton (LEFT, "No") → dismiss silently.
+        })
+        // Unsaved-changes confirmation shown when a tab-bar tap is
+        // blocked by `router.hasUnsavedRecipeChanges`. Primary "Keep
+        // Editing" leaves the user on the recipe page; Secondary
+        // "Discard" runs the captured tab-switch action and resets
+        // the unsaved flag. 1:1 port of UIKit
+        // `RecipePageViewController.showUnsavedChangesAlertForBack`.
+        .barsysPopup($router.unsavedChangesConfirmPopup, onPrimary: {
+            // "Keep Editing" — drop the pending discard closure; user
+            // stays on the recipe page with edits intact.
+            router.pendingUnsavedDiscardAction = nil
+        }, onSecondary: {
+            // "Discard" — run the captured tab-switch closure which
+            // clears the flag, pops the target tab's stack, and
+            // commits the tab change.
+            router.pendingUnsavedDiscardAction?()
+            router.pendingUnsavedDiscardAction = nil
         })
     }
 

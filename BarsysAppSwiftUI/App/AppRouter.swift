@@ -274,6 +274,28 @@ final class AppRouter: ObservableObject {
     /// `getFavouritesRecipeData()` on every re-appearance.
     @Published var myDrinksRefreshTick: Int = 0
 
+    /// Published by the currently-presented `RecipeDetailView` when the
+    /// user has edited ingredient quantities but not yet committed (via
+    /// Craft or Save). Consumed by `MainTabView`'s tab-selection
+    /// binding — if `true`, a tab-bar tap surfaces the UIKit-parity
+    /// "unsaved changes" confirmation popup instead of immediately
+    /// switching tabs. Cleared when the recipe view disappears so the
+    /// guard never persists once the user has left the recipe page.
+    @Published var hasUnsavedRecipeChanges: Bool = false
+
+    /// Popup state the MainTabView renders via `.barsysPopup` when a
+    /// tab-bar tap is blocked by `hasUnsavedRecipeChanges`. "Keep
+    /// Editing" = primary (right, orange-filled), "Discard" = secondary
+    /// (left, bordered). Matches the copy UIKit used in
+    /// `RecipePageViewController.showUnsavedChangesAlertForBack`.
+    @Published var unsavedChangesConfirmPopup: BarsysPopup? = nil
+
+    /// Closure the `unsavedChangesConfirmPopup` runs on the "Discard"
+    /// action — carries the captured tab-switch target so the
+    /// confirmation pop can complete the navigation the user intended.
+    /// Cleared after use to avoid re-running stale actions.
+    var pendingUnsavedDiscardAction: (() -> Void)? = nil
+
     /// True while `FavoritesView` is on-screen. Set in its `.onAppear` /
     /// `.onDisappear`. Used by the side menu to suppress a duplicate push
     /// when the user taps "Favourites" while the screen is already open
