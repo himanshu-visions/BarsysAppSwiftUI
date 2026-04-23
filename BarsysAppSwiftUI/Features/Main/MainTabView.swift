@@ -584,6 +584,14 @@ struct MainTabView: View {
         ble.onDeviceConnected = { [weak router, weak env] deviceName in
             guard let router, let env else { return }
 
+            // If the "device disconnected" alert is still on screen from a
+            // prior power-off, auto-dismiss it now that the device is back.
+            // Mirrors UIKit's `dismiss(animated:)` on the presented alert
+            // when a reconnect event fires.
+            if env.alerts.current?.title == Constants.deviceDisconnectedTitle {
+                env.alerts.dismiss()
+            }
+
             // 1:1 with UIKit `BleManagerDelegate+Connect.swift` L155-185 —
             // branches based on `AppNavigationState.pendingConnectionSource`:
             //

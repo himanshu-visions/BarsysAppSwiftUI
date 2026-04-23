@@ -2071,6 +2071,7 @@ struct ChatInputBar: View {
             // 24×24 with black tint, NOT a circle, NOT brand-coloured.)
             Button {
                 HapticService.light()
+                hideKeyboard()
                 vm.send(ble: ble)
             } label: {
                 Image("sendImage")
@@ -2620,9 +2621,13 @@ struct BarBotCraftView: View {
         //     so the user can't exit mid-response.
         ToolbarItemGroup(placement: .topBarTrailing) {
             NavigationRightGlassButtons(
-                onFavorites: { router.push(.favorites, in: .barBot) },
+                onFavorites: {
+                    hideKeyboard()
+                    router.push(.favorites, in: .barBot)
+                },
                 onProfile: {
                     guard viewModel.canProcessNewRequest else { return }
+                    hideKeyboard()
                     withAnimation(.easeInOut(duration: 0.4)) {
                         router.showSideMenu = true
                     }

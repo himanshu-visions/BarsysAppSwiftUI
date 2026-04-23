@@ -1181,6 +1181,7 @@ struct MyProfileView: View {
             //   tappable only after any field is edited (`isEdit`).
             Button {
                 HapticService.light()
+                hideKeyboard()
                 Task { _ = await viewModel.save(env: env) }
             } label: {
                 // Ports PrimaryOrangeButton.makeOrangeStyle():
