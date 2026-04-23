@@ -1040,52 +1040,62 @@ struct RecipeDetailView: View {
         // 24pt horizontal padding drives the final width, exactly
         // replicating the UIKit autolayout result on every device.
         let url = URL(string: recipe.imageURL)
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let img):
-                // Remote image: .fill so it covers the full square,
-                // clipped by the rounded rect below.
-                img.resizable().aspectRatio(contentMode: .fill)
-            case .empty:
-                // Loading state — 1:1 with UIKit `sd_setImage(with:imgUrl,
-                // placeholderImage: .myDrink)`: SDWebImage shows the
-                // `myDrink` artwork BEFORE + DURING the download, then
-                // swaps to the downloaded image on completion. The
-                // previous SwiftUI port left the hero as a flat gray
-                // during loading — noticeable when a BarBot full-recipe
-                // hits a slow image CDN. Matching UIKit by rendering
-                // the placeholder at the SAME `.fit` + `padding(40)`
-                // framing we use for the failure state, so the hero
-                // has consistent visual weight across load states and
-                // the layout never jumps when the real image arrives.
-                Image("myDrink")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .padding(40)
-            case .failure:
-                // Failed / no URL: same placeholder framing (UIKit
-                // `sd_setImage` falls back to the placeholder on
-                // failure too).
-                Image("myDrink")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .padding(40)
-            @unknown default:
-                Image("myDrink")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .padding(40)
+        // GeometryReader resolves the parent's PROPOSED width (screen –
+        // 48 from the caller's `.padding(.horizontal, 24)`). We then
+        // pin the AsyncImage to an explicit `width × width` square.
+        //
+        // The earlier implementation used
+        //   `AsyncImage(...).frame(maxWidth: .infinity).aspectRatio(1, .fit)`
+        // which works only when the remote image has a "normal" aspect
+        // ratio. When the remote asset has wild intrinsic dimensions
+        // (e.g. 3000×1000 landscape), AsyncImage propagates the
+        // image's intrinsic size UP through the modifier chain, the
+        // `.fill` content-mode keeps that width, and
+        // `.aspectRatio(1, .fit)` is reinterpreted against the huge
+        // intrinsic — the container ends up rendering wider than the
+        // padded parent, which stretched the ENTIRE recipe-detail
+        // VStack (title / description / ingredients) off-screen. That
+        // was the bug the user reported.
+        //
+        // Pinning via `.frame(width: side, height: side)` inside the
+        // GeometryReader ignores the image's intrinsic size entirely
+        // and produces a consistent square on every device and for
+        // every remote asset.
+        GeometryReader { geo in
+            let side = geo.size.width
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().aspectRatio(contentMode: .fill)
+                case .empty:
+                    // Loading state — 1:1 with UIKit `sd_setImage(with:imgUrl,
+                    // placeholderImage: .myDrink)`: SDWebImage shows the
+                    // `myDrink` artwork BEFORE + DURING the download.
+                    Image("myDrink")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(40)
+                case .failure:
+                    Image("myDrink")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(40)
+                @unknown default:
+                    Image("myDrink")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(40)
+                }
             }
+            .frame(width: side, height: side)
+            .clipped()
+            .background(Color("lightBorderGrayColor"))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        // Fixed 1:1 frame — UIKit storyboard `VN9-Mm-R3c` constraint
-        // `width:height = 1:1` with leading/trailing = parent ± 24.
-        // Stays the same size whether we're rendering the placeholder
-        // (empty / failure) or the loaded image, so the layout doesn't
-        // reflow when the download completes.
-        .frame(maxWidth: .infinity)
+        // Tell the GeometryReader to be a 1:1 square so it requests
+        // `proposedWidth × proposedWidth` from its parent — matches
+        // the UIKit storyboard constraint `width:height = 1:1`.
         .aspectRatio(1, contentMode: .fit)
-        .background(Color("lightBorderGrayColor"))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - Ingredients
