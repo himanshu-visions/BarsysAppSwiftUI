@@ -253,6 +253,18 @@ final class AppRouter: ObservableObject {
     /// `getFavouritesRecipeData()` on every re-appearance.
     @Published var myDrinksRefreshTick: Int = 0
 
+    /// True while `FavoritesView` is on-screen. Set in its `.onAppear` /
+    /// `.onDisappear`. Used by the side menu to suppress a duplicate push
+    /// when the user taps "Favourites" while the screen is already open
+    /// (previously it would stack a second copy on top of the first).
+    @Published var isShowingFavorites: Bool = false
+
+    /// Same pattern for `PreferencesView`.
+    @Published var isShowingPreferences: Bool = false
+
+    /// Same pattern for `PairDeviceView` (Pair Your Device screen).
+    @Published var isShowingPairDevice: Bool = false
+
     // One NavigationStack path per tab.
     @Published var barBotPath = NavigationPath()
     @Published var explorePath = NavigationPath()

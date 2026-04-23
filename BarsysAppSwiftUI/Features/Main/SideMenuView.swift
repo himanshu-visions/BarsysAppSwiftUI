@@ -764,6 +764,15 @@ private struct SideMenuPanel: View {
             return
 
         case "Device":
+            // If the user is already on Pair Your Device AND no device is
+            // connected (so the menu row would have pushed that same
+            // screen again), just dismiss the side menu. UIKit never
+            // double-pushed the same VC because `SideMenuViewController`
+            // checked the top of the nav stack before presenting.
+            if !ble.isAnyDeviceConnected && router.isShowingPairDevice {
+                onDismiss()
+                return
+            }
             onDismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 // UIKit: if connected → openDeviceConnectedPopUp(), else → showPairYourDevice()
@@ -776,6 +785,11 @@ private struct SideMenuPanel: View {
             return
 
         case "Preferences":
+            // Already on Preferences → just close the side menu, no push.
+            if router.isShowingPreferences {
+                onDismiss()
+                return
+            }
             onDismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 router.push(.preferences)
@@ -783,6 +797,11 @@ private struct SideMenuPanel: View {
             return
 
         case "Favourites":
+            // Already on Favourites → just close the side menu, no push.
+            if router.isShowingFavorites {
+                onDismiss()
+                return
+            }
             onDismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 router.push(.favorites)

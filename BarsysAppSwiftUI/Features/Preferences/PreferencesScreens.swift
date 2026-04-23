@@ -138,6 +138,11 @@ struct PreferencesView: View {
         // pill renders against the same canvas as HomeView (ChooseOptions)
         // — makes the material blur + capsule stroke read identical.
         .chooseOptionsStyleNavBar()
+        // Publish "we're on Preferences" so the side menu can skip a
+        // duplicate push when the user taps Preferences while this
+        // screen is already visible.
+        .onAppear { router.isShowingPreferences = true }
+        .onDisappear { router.isShowingPreferences = false }
     }
 }
 

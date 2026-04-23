@@ -103,6 +103,11 @@ struct PairDeviceView: View {
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()
+        // Publish "we're on Pair Your Device" so the side menu's
+        // "Device" row can skip a duplicate `router.push(.pairDevice)`
+        // when this screen is already visible underneath the menu.
+        .onAppear { router.isShowingPairDevice = true }
+        .onDisappear { router.isShowingPairDevice = false }
         .fullScreenCover(isPresented: $showDeviceListPopup) {
             DeviceListPopup(
                 isPresented: $showDeviceListPopup,

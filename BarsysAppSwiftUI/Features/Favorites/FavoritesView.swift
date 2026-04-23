@@ -230,6 +230,11 @@ struct FavoritesView: View {
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()
+        // Publish "we're on Favourites" so the side menu can skip a
+        // duplicate `router.push(.favorites)` when the user taps the
+        // Favourites row while this screen is already on-screen.
+        .onAppear { router.isShowingFavorites = true }
+        .onDisappear { router.isShowingFavorites = false }
         .onAppear {
             if !didTrackView {
                 didTrackView = true
