@@ -204,6 +204,10 @@ struct DeviceListPopup: View {
 
     @EnvironmentObject private var ble: BLEService
     @EnvironmentObject private var router: AppRouter
+    /// Reactive color scheme — drives the dark-mode-only gradient border
+    /// overlay on the glass card so the popup has a clearly-defined edge
+    /// against the dark backdrop (light mode stays unchanged).
+    @Environment(\.colorScheme) private var colorScheme
 
     // MARK: - State machine
     @State private var isConnecting = false
@@ -290,6 +294,34 @@ struct DeviceListPopup: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .frame(width: popupSize, height: popupSize)
+                // Dark-mode-only etched-glass border. In light mode the
+                // popup already separates from its backdrop via the
+                // natural glass frost; in dark mode the `.regular`
+                // `UIGlassEffect` darkens and the card's edge becomes
+                // indistinct. A subtle 1pt white→transparent gradient
+                // stroke (same recipe used by `BarsysPopupCard` in
+                // Theme.swift L1135-1144) reads as a soft "highlight
+                // rim", defining the card without looking like a hard
+                // border. Applied ONLY on dark mode per user request —
+                // light mode pixels stay unchanged.
+                .overlay(
+                    Group {
+                        if colorScheme == .dark {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [
+                                            .white.opacity(0.70),
+                                            .white.opacity(0.20)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1
+                                )
+                        }
+                    }
+                )
 
                 // Transparent content host — matches `CCd-kw-jXK` bg=clear.
                 popupContent
