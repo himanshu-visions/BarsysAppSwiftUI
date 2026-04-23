@@ -1061,25 +1061,41 @@ struct CraftingView: View {
         .navigationTitle("Crafting")
         .navigationBarTitleDisplayMode(.inline)
         // Hide the tab bar on the Crafting screen — the user is in a
-        // focused craft flow with the only escape hatch being the
-        // Cancel capsule at the bottom, so exposing tab-bar items
-        // here would let them accidentally exit mid-pour and leave
-        // the device in a half-dispensed state. The tab bar returns
-        // automatically when Crafting pops off the stack.
+        // focused craft flow with the only escape hatches being the
+        // Cancel capsule at the bottom and the nav-bar back button
+        // (which now also routes through the same cancel-drink flow,
+        // see `NavigationBackActionInterceptor` below). The tab bar
+        // returns automatically when Crafting pops off the stack.
         .toolbar(.hidden, for: .tabBar)
-        // 1:1 UIKit parity — `CraftingViewController` sets
-        // `navigationItem.hidesBackButton = true` (StationProcessViewController
-        // L127) so the system back button + swipe-back gesture are
-        // BOTH disabled while a drink is being dispensed. The only
-        // way out is the Cancel capsule at the bottom, which sends the
-        // BLE `.cancel` (202) command and waits for `dataFlushed`
-        // before dismissing the screen.
-        //
-        // Without these modifiers the SwiftUI user could swipe back mid-
-        // pour and leave the device in a half-dispensed state with no
-        // UI observing the completion ack.
-        .navigationBarBackButtonHidden(true)
+        // Swipe-back is DISABLED so an accidental gesture mid-pour
+        // can't pop the screen while the device is still dispensing.
+        // The nav-bar back button STAYS VISIBLE (default system
+        // chevron / glass circle) but its tap is intercepted via
+        // `UINavigationItem.backAction` — tapping it now opens the
+        // same "Cancel Drink" confirmation popup the Cancel capsule
+        // uses. The popup's "Yes, Cancel" handler sends the BLE
+        // `.cancel` (202) command and waits for `dataFlushed` before
+        // `dismiss()` actually pops the screen. So the back button
+        // and the Cancel capsule are functionally identical — just
+        // two entry points to the same cancel-drink flow.
         .interactiveDismissDisabled()
+        .background(
+            NavigationBackActionInterceptor { _ in
+                // Don't call `popIfAllowed` — the pop happens later
+                // via `dismiss()` once the BLE cancel has been
+                // acknowledged. Reuse the EXISTING cancelDrinkPopup
+                // state so the confirmation UX is bit-identical to
+                // the Cancel capsule tap (same title, message,
+                // primary/secondary titles, primaryFillColor).
+                cancelDrinkPopup = .confirm(
+                    title: "Cancel Drink",
+                    message: "Are you sure you want to cancel the current drink?",
+                    primaryTitle: "Yes, Cancel",
+                    secondaryTitle: "No",
+                    primaryFillColor: "segmentSelectionColor"
+                )
+            }
+        )
         // Publish "we're on the crafting screen" so the disconnect
         // handler shows the during-crafting alert copy + error haptic.
         // 1:1 port of UIKit
