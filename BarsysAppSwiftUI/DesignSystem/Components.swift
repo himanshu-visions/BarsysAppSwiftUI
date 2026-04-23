@@ -738,7 +738,12 @@ struct BarsysAlertOverlay: View {
             //   • Glass background via alertPopUpBackgroundStyle
             .padding(.horizontal, 24)        // UIKit `mnn-57-zFZ` 24pt margin
             .padding(.vertical, 24)
-            .frame(width: 277)               // UIKit `t2p-he-XsL` exact width
+            // Storyboard width was 277pt, but at that size "No, stay in
+            // the app" (the widest secondary-button title in the app)
+            // touches the button's leading/trailing edges with no visible
+            // breathing room. Widened to 315pt so two-button alerts have
+            // ~12pt of padding between the label text and the pill edges.
+            .frame(width: 315)
             .background(alertCardBackground)
             .overlay(
                 // 1:1 UIKit `BarsysGlassBackground` border gradient
@@ -964,6 +969,13 @@ private struct AlertPopupButtonStyle: ViewModifier {
         content
             .font(.system(size: 12))                          // .caption1 = 12pt
             .foregroundStyle(Color("appBlackColor"))          // black title
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)                          // gracefully shrink
+                                                               // if a longer title
+                                                               // still overflows
+            .padding(.horizontal, 8)                           // breathing room
+                                                               // between label text
+                                                               // and pill edges
             .frame(maxWidth: .infinity)
             .frame(height: 45)                                // storyboard constraint
             .background(buttonBackground)

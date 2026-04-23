@@ -153,8 +153,23 @@ enum CraftingScreenKind {
 
 final class AppRouter: ObservableObject {
 
+    /// Resigns first responder globally so any open keyboard is dismissed
+    /// before the next screen appears. Mirrors UIKit's
+    /// `self.view.endEditing(true)` that was invoked inside every
+    /// navigation trigger (tab switches, pushes, side-menu opens). Placed
+    /// here so every router transition funnels through a single point —
+    /// callers don't need to remember to dismiss on each button.
+    private static func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+    }
+
     @Published var rootScreen: RootScreen = .splash
-    @Published var selectedTab: AppTab = .homeOrControlCenter
+    @Published var selectedTab: AppTab = .homeOrControlCenter {
+        didSet {
+            if selectedTab != oldValue { Self.dismissKeyboard() }
+        }
+    }
 
     /// Right-side menu (profile / settings panel). UIKit
     /// `rightMenuNavigationController`. The `didSet` enforces a STRICT
@@ -172,6 +187,7 @@ final class AppRouter: ObservableObject {
                 showSideMenu = false
                 showBarBotHistory = false
             }
+            if showSideMenu && !oldValue { Self.dismissKeyboard() }
         }
     }
 
@@ -191,6 +207,7 @@ final class AppRouter: ObservableObject {
             if showBarBotHistory && showSideMenu {
                 showSideMenu = false
             }
+            if showBarBotHistory && !oldValue { Self.dismissKeyboard() }
         }
     }
 
@@ -361,6 +378,7 @@ final class AppRouter: ObservableObject {
     // MARK: - Push / pop
 
     func push(_ route: Route, in tab: AppTab? = nil) {
+        Self.dismissKeyboard()
         let target = tab ?? selectedTab
         switch target {
         case .barBot:              barBotPath.append(route)
@@ -429,6 +447,7 @@ final class AppRouter: ObservableObject {
     }
 
     func popToRoot(in tab: AppTab? = nil) {
+        Self.dismissKeyboard()
         let target = tab ?? selectedTab
         switch target {
         case .barBot:              barBotPath.removeLast(barBotPath.count)
@@ -444,6 +463,7 @@ final class AppRouter: ObservableObject {
     /// Used by alerts that need to close the screen after the user
     /// dismisses them (e.g. "Perishable Ingredients Cleaned" → pop).
     func popTop(in tab: AppTab? = nil) {
+        Self.dismissKeyboard()
         let target = tab ?? selectedTab
         switch target {
         case .barBot:
