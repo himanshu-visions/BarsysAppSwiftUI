@@ -1111,6 +1111,10 @@ struct DeviceConnectedPopup: View {
     @Binding var isPresented: Bool
     @EnvironmentObject private var ble: BLEService
     @EnvironmentObject private var env: AppEnvironment
+    /// Reactive color scheme — drives the dark-mode-only gradient border
+    /// overlay on the glass card so the popup has a clearly-defined edge
+    /// against the dark backdrop (light mode stays unchanged).
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Storyboard popup card frame — constraints `dxF-oY-6Dw` (leading=49)
     /// / `eqc-th-bzO` (trailing=49) on the 393pt reference canvas yield
@@ -1178,6 +1182,35 @@ struct DeviceConnectedPopup: View {
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                // Dark-mode-only etched-glass border. In light mode the
+                // popup already separates from its backdrop via the
+                // natural glass frost; in dark mode the `.regular`
+                // `UIGlassEffect` darkens and the card's edge becomes
+                // indistinct. A subtle 1pt white→transparent gradient
+                // stroke (matches the DeviceListPopup fix at
+                // DeviceScreens.swift:298 and `BarsysPopupCard` at
+                // Theme.swift:1135) reads as a soft highlight rim,
+                // defining the card without looking like a hard border.
+                // Applied ONLY on dark mode per user request — light
+                // mode pixels stay unchanged.
+                .overlay(
+                    Group {
+                        if colorScheme == .dark {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [
+                                            .white.opacity(0.70),
+                                            .white.opacity(0.20)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1
+                                )
+                        }
+                    }
+                )
                 // UIKit `alertPopUpBackgroundStyle` applies NO drop
                 // shadow — the popup's elevation is conveyed entirely
                 // through the prominent blur contrast behind it. Match
