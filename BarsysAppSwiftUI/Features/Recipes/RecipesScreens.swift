@@ -607,6 +607,13 @@ struct RecipeDetailView: View {
                 .background(Theme.Color.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbarContent(for: recipe) }
+                // Keyboard accessory — ports UIKit
+                // `RecipePageViewController+Helpers.swift` L37:
+                // `cell.ingredientQuantityTextField.addDoneToolbar()`.
+                // The Recipe-detail ingredient-quantity rows use
+                // `.numberPad` / `.decimalPad`, neither of which has a
+                // built-in Done key, so the accessory is essential.
+                .keyboardDoneToolbar()
                 // Flat `primaryBackgroundColor` nav bar so the top-right
                 // glass pill renders on the same canvas HomeView uses.
                 .chooseOptionsStyleNavBar()
@@ -2143,6 +2150,12 @@ struct EditRecipeView: View {
         .ignoresSafeArea(edges: [.top, .bottom])
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
+        // Keyboard accessory — ports UIKit
+        // `EditViewController+TableView.swift` L23:
+        // `cell.textFieldQuantity.addDoneToolbar()`.
+        // Edit-recipe ingredient-quantity fields use `.numberPad` /
+        // `.decimalPad`, so the Done accessory is required to dismiss.
+        .keyboardDoneToolbar()
         // 1:1 with UIKit `showActionSheetForImagePicker`
         // (ImagePickerViewController.swift L45-89): Camera / Photos /
         // Cancel alert. SwiftUI `confirmationDialog` renders the same
