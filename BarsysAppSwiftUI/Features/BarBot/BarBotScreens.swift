@@ -4085,6 +4085,19 @@ struct BarBotCraftingView: View {
                            value: sheetOffsetY)
         }
         .background(ClearBackgroundView())
+        // Mount the glass-loader overlay INSIDE the BarBotCraftingView
+        // hierarchy. `.loadingOverlay(env.loading)` is also applied at
+        // the app root (BarsysAppSwiftUIApp.swift:83), but that root
+        // instance sits BENEATH the `.fullScreenCover` that presents
+        // this view — so when `onCancelTap` called
+        // `env.loading.show("Cancelling drink...")` the spinner
+        // rendered behind the still-visible BarBotCraftingView,
+        // which is the "glass loader behind" bug the user reported.
+        // Layering the overlay here makes the loader sit on top of
+        // the crafting sheet as the user expects (UIKit DrinksCancelVC
+        // parity — the cancel loader is on the SAME window level as
+        // the crafting UI, never behind it).
+        .loadingOverlay(env.loading)
         .onAppear {
             // Slide up.
             sheetOffsetY = 0
