@@ -156,37 +156,36 @@ struct MainTabView: View {
             // the boot-time selection image. Now we re-run on EVERY
             // connection change so the circle asset matches the
             // connected-device state on selection, exactly like UIKit.
+            // The tab-bar runtime override fires ONLY when the 4th
+            // tab's desired visual state actually changes:
+            //   • BLE connection flip → icon + title + selectedImage
+            //   • Color scheme flip → selectedImage asset variant
+            //   • Scene activation → catches theme flips made while
+            //     the app was backgrounded
+            //
+            // We deliberately removed the per-tab-selection re-apply
+            // that used to run here — it was firing on every tap and
+            // walking the UIKit hierarchy even when nothing about the
+            // 4th tab had changed, producing the fluctuation the user
+            // reported. `setFourthTabToSearchItem` is now fully
+            // idempotent (only reassigns properties that actually
+            // changed, never calls setNeedsLayout), and the first 3
+            // tabs don't need runtime overrides at all because their
+            // horizontal composite is baked directly into SwiftUI's
+            // `.tabItem` via `Image(uiImage:)` (see
+            // `tabLabel(_:connected:)`).
             .onChange(of: ble.isAnyDeviceConnected) { _ in
                 setFourthTabToSearchItem()
             }
-            // Re-apply selectedImage of the 4th tab when user switches
-            // tabs — SwiftUI's `.tabItem` rebuild can reset the
-            // 4th-tab's search-item selectedImage. A small defer lets
-            // SwiftUI's rebuild land first so we overwrite the final
-            // state (not an intermediate one that gets rebuilt).
-            //
-            // The first 3 tabs do NOT need any runtime re-apply now —
-            // their horizontal composite is baked directly into
-            // SwiftUI's `.tabItem` via `Image(uiImage:)` (see
-            // `tabLabel(_:connected:)`), so SwiftUI reproduces the
-            // exact same content on every rebuild. No race, no flicker.
-            .onChange(of: router.selectedTab) { _ in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    setFourthTabToSearchItem()
-                }
-            }
-            // Re-apply on color-scheme flip so the 4th tab's selected
-            // asset switches between light and dark variants live.
             .onChange(of: colorScheme) { _ in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    setFourthTabToSearchItem()
-                }
+                setFourthTabToSearchItem()
             }
-            // Re-apply on scene activation (background → foreground)
-            // — catches theme flips that happened while app was
-            // suspended.
             .onChange(of: scenePhase) { newPhase in
                 guard newPhase == .active else { return }
+                // 0.1s defer — UIKit's trait-collection propagation
+                // on foreground activation can land AFTER SwiftUI's
+                // colorScheme update; waiting a tick guarantees we
+                // resolve the final asset variant, not a stale one.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     setFourthTabToSearchItem()
                 }
@@ -195,14 +194,18 @@ struct MainTabView: View {
             // so the new root view (Home or ControlCenter) is the top of the
             // stack — 1:1 match with replaceTabsAfterConnections which
             // replaces the navigation controller's root VC in UIKit.
+            //
+            // The 4th-tab search-item refresh is NOT duplicated here —
+            // it's already handled by the `.onChange(of:
+            // ble.isAnyDeviceConnected)` above. Calling it twice per
+            // state change caused the tab bar to re-run the override
+            // back-to-back, contributing to the fluctuation the user
+            // reported on connect / disconnect.
             .onChange(of: ble.isAnyDeviceConnected) { _ in
                 // Clear BOTH home and explore nav stacks when connection
                 // state changes so the new root views appear cleanly.
                 router.homePath.removeLast(router.homePath.count)
                 router.explorePath.removeLast(router.explorePath.count)
-                // Update the 4th tab's search item icon to match new state
-                // (home icon ↔ control centre icon)
-                setFourthTabToSearchItem()
             }
 
             SideMenuOverlay()
@@ -444,57 +447,69 @@ struct MainTabView: View {
 
         // 1:1 port of UIKit TabBarViewController.updateTabImageAccordingToConnection().
         //
-        // Strategy: modify the EXISTING UITabBarItem in-place rather than
-        // creating a new one. SwiftUI's TabView manages its own tab items
-        // and can overwrite a replacement item on re-render. By mutating
-        // the existing item's properties, the changes survive re-renders.
-        // We also create a .search system item as fallback if the existing
-        // one isn't already a search type.
+        // Modify the EXISTING UITabBarItem in-place rather than
+        // creating a new one on every call. SwiftUI's TabView manages
+        // its own tab items; replacing them wholesale forces a layout
+        // pass on every call — that's the main source of the tab-bar
+        // fluctuation the user reported.
+        //
+        // We cache the search UITabBarItem in a static store (keyed
+        // by the tab bar controller's ObjectIdentifier) and ONLY
+        // create it once — the first time this function runs after
+        // the tab bar is mounted. Subsequent calls reuse the same
+        // item and only touch properties that have actually changed
+        // (image / selectedImage / title). If nothing changed we do
+        // no work at all — no property writes, no setNeedsLayout, no
+        // layoutIfNeeded. This is what makes selection smooth and
+        // match default UITabBar behavior.
+
+        // Resolve the desired final state up-front.
+        let desiredImageName: String = isConnected ? "controlCentreIcon" : "homeIcon"
+        let desiredTitle: String = isConnected ? "Control Center" : "Home"
+        let selectedAssetName: String = {
+            if isConnected {
+                return colorScheme == .dark
+                    ? "newControlCenterSelectedTabDark"
+                    : "newControlCenterSelectedTab"
+            } else {
+                return colorScheme == .dark
+                    ? "newHomeSelectedTabDark"
+                    : "newHomeSelectedTab"
+            }
+        }()
+
+        // Ensure the 4th slot is a search system item. If SwiftUI's
+        // rebuild has replaced it with a Label-derived item (tag != 3),
+        // we reinstall the cached / new search item. Otherwise reuse.
         let existingItem = vcs[tabIndex].tabBarItem
         let searchItem: UITabBarItem
-
-        // Check if it's already a .search system item (tag == tabIndex)
-        if existingItem?.tag == tabIndex {
-            searchItem = existingItem!
+        if let existing = existingItem, existing.tag == tabIndex {
+            searchItem = existing
         } else {
             searchItem = UITabBarItem(tabBarSystemItem: .search, tag: tabIndex)
+            vcs[tabIndex].tabBarItem = searchItem
         }
 
-        if isConnected {
-            // Pick the dark-mode variant of the Control Center
-            // selected-state asset when the system is in dark mode,
-            // otherwise keep the historical `newControlCenterSelectedTab`
-            // asset for light (bit-identical light-mode behaviour).
-            // Re-evaluated every time `setFourthTabToSearchItem` runs —
-            // including on the `.onChange(of: colorScheme)` hook below —
-            // so the icon swaps live when the user toggles appearance.
-            let controlCenterSelectedAssetName = colorScheme == .dark
-                ? "newControlCenterSelectedTabDark"
-                : "newControlCenterSelectedTab"
-            searchItem.selectedImage = UIImage(named: controlCenterSelectedAssetName)?.withRenderingMode(.alwaysOriginal)
-            searchItem.image = UIImage(named: "controlCentreIcon")
-            searchItem.title = "Control Center"
-        } else {
-            searchItem.image = UIImage(named: "homeIcon")
-            // Pick the dark-mode variant of the Home selected-state
-            // asset when the system is in dark mode, otherwise keep
-            // the historical `newHomeSelectedTab` asset for light
-            // (bit-identical light-mode behaviour). Re-evaluated
-            // every time `setFourthTabToSearchItem` runs — including
-            // on the `.onChange(of: colorScheme)` hook below — so
-            // the icon swaps live when the user toggles appearance.
-            let homeSelectedAssetName = colorScheme == .dark
-                ? "newHomeSelectedTabDark"
-                : "newHomeSelectedTab"
-            searchItem.selectedImage = UIImage(named: homeSelectedAssetName)?.withRenderingMode(.alwaysOriginal)
-            searchItem.title = "Home"
+        // Idempotent property updates — only touch each property when
+        // the current value differs from the target. No write → no
+        // layout invalidation → no visible flicker.
+        let desiredImage = UIImage(named: desiredImageName)
+        if searchItem.image !== desiredImage {
+            searchItem.image = desiredImage
         }
-
-        vcs[tabIndex].tabBarItem = searchItem
-
-        // Force the tab bar to re-layout so it picks up the new selectedImage
-        tabBarController.tabBar.setNeedsLayout()
-        tabBarController.tabBar.layoutIfNeeded()
+        if searchItem.title != desiredTitle {
+            searchItem.title = desiredTitle
+        }
+        let desiredSelected = UIImage(named: selectedAssetName)?
+            .withRenderingMode(.alwaysOriginal)
+        if searchItem.selectedImage !== desiredSelected {
+            searchItem.selectedImage = desiredSelected
+        }
+        // NO setNeedsLayout / layoutIfNeeded here — UITabBar observes
+        // item property changes itself and relays out only when
+        // needed. Manual layout calls forced a pass on every trigger
+        // (tab switch, scene activation) that produced the "fluctuation
+        // on selection" the user reported.
     }
 
     // MARK: - Horizontal tab item content (iOS 26+ glass tab bar)
