@@ -35,14 +35,18 @@ struct MainTabView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
 
-    /// Shared BarBot view model used by the `BarBotHistorySideMenuOverlay`
-    /// mounted at this level (so the drawer renders above the tab bar
-    /// like the right-side `SideMenuOverlay`). `BarBotCraftView` owns
-    /// its own `@StateObject` VM for its chat state — this instance
-    /// here just backs the history drawer's session list, which is
-    /// fetched on appear and doesn't need to share state with the
-    /// chat view's in-flight messages.
-    @StateObject private var barBotHistoryVM = BarBotViewModel()
+    /// SHARED BarBot view model — owned here at `MainTabView` so both
+    /// `BarBotCraftView` (via `@EnvironmentObject`) and the
+    /// `BarBotHistorySideMenuOverlay` mounted at this level read the
+    /// SAME instance. This is essential because tapping a session row
+    /// in the history drawer calls `vm.loadSession(session)` which
+    /// mutates `messages` — those updates must reach the chat view
+    /// that the user returns to after the drawer dismisses. Similarly
+    /// "new chat" on the drawer resets via the same VM. A previous
+    /// iteration mounted a SEPARATE VM here, which left session
+    /// selection and new-chat silently no-op against the chat screen
+    /// the user could see.
+    @StateObject private var barBotSharedVM = BarBotViewModel()
 
     /// SwiftUI color-scheme env — read so the 4th tab's selected-state
     /// image can swap between `newHomeSelectedTab` (light) and
@@ -139,10 +143,20 @@ struct MainTabView: View {
             TabView(selection: tabSelection) {
 
                 // 0 — BarBot
+                //
+                // `barBotSharedVM` is injected via `.environmentObject`
+                // so both `BarBotCraftView` (which uses it via
+                // `@EnvironmentObject`) AND the
+                // `BarBotHistorySideMenuOverlay` mounted below on
+                // MainTabView's ZStack reference the SAME VM instance.
+                // Tapping a session in the drawer therefore updates
+                // the chat view the user returns to, and "new chat"
+                // resets the chat the user sees.
                 NavigationStack(path: $router.barBotPath) {
                     BarBotCraftView()
                         .navigationDestination(for: Route.self) { RouteView(route: $0) }
                 }
+                .environmentObject(barBotSharedVM)
                 .tabItem { tabLabel(.barBot) }
                 .tag(AppTab.barBot)
 
@@ -301,7 +315,7 @@ struct MainTabView: View {
             if router.showBarBotHistory || router.historyOpenDragProgress > 0 {
                 BarBotHistorySideMenuOverlay(
                     isPresented: $router.showBarBotHistory,
-                    vm: barBotHistoryVM,
+                    vm: barBotSharedVM,
                     closeDragProgress: $router.historyCloseDragProgress,
                     openDragProgress: router.historyOpenDragProgress,
                     isFullyPresented: router.showBarBotHistory

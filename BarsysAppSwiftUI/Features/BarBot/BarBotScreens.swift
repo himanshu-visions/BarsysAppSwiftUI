@@ -2246,7 +2246,16 @@ struct ScrollToBottomButton: View {
 // MARK: - BarBotCraftView (ports BarBotViewController)
 
 struct BarBotCraftView: View {
-    @StateObject private var viewModel = BarBotViewModel()
+    // `viewModel` is now injected from `MainTabView` via
+    // `.environmentObject(barBotSharedVM)` so the SAME VM instance
+    // drives both this chat view AND the
+    // `BarBotHistorySideMenuOverlay` mounted on MainTabView's ZStack.
+    // That way tapping a session row in the drawer calls
+    // `viewModel.loadSession(session)` which mutates `messages` —
+    // and because it's the same VM, this chat view's message list
+    // re-renders automatically. Similarly the drawer's "New Chat"
+    // button resets the VM this view observes.
+    @EnvironmentObject private var viewModel: BarBotViewModel
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService
@@ -3061,6 +3070,22 @@ private struct ScrollOffsetPreferenceKey: PreferenceKey {
 //     button wired to `didPressDismissButton`).
 // The trailing 42pt is therefore a dead-zone scrim that tap-dismisses;
 // swipe-right (SideMenuManager pan) also dismisses.
+/// Axis lock for the panel's close-drag gesture. Decided on the FIRST
+/// `onChanged` event after `minimumDistance` is exceeded, and held for
+/// the rest of that gesture so partway-through direction changes can't
+/// accidentally engage / disengage the close animation.
+private enum PanelDragAxis {
+    /// No axis decided yet — the next `onChanged` will pick one.
+    case undetermined
+    /// The gesture is a clearly horizontal-left pan → drives the close
+    /// drag animation.
+    case closeDrag
+    /// The gesture is vertical (scroll) or rightward (non-close) →
+    /// ignored for the rest of its lifetime so the ScrollView / tap
+    /// can run without sideways flinches.
+    case ignored
+}
+
 struct BarBotHistorySideMenuOverlay: View {
     @Binding var isPresented: Bool
     @ObservedObject var vm: BarBotViewModel
@@ -3075,6 +3100,10 @@ struct BarBotHistorySideMenuOverlay: View {
     /// True once the panel is fully presented — controls whether the
     /// scrim is interactive and whether the close pan gesture is mounted.
     let isFullyPresented: Bool
+
+    /// Per-gesture axis lock — see `PanelDragAxis` above. Resets on
+    /// every `.onEnded` so each new touch starts from scratch.
+    @State private var panelDragAxis: PanelDragAxis = .undetermined
 
     /// UIKit panel visible width = 351 / 393 ≈ 89.3% of screen width.
     private var panelWidth: CGFloat {
@@ -3179,29 +3208,70 @@ struct BarBotHistorySideMenuOverlay: View {
             // Interactive LEFTWARD-pan dismiss — 1:1 with UIKit
             // SideMenuManager `addPanGestureToPresent` for a left menu.
             //
-            // Uses SwiftUI `DragGesture(minimumDistance: 8)` as a
-            // `.simultaneousGesture` so it COEXISTS with the table's
-            // vertical scroll + the cell's tap (UIKit SideMenuSwift
-            // achieves this internally via UIGestureRecognizerDelegate's
-            // `shouldRecognizeSimultaneouslyWith`). A previous port used
-            // a UIKit `UIPanGestureRecognizer` mounted via
-            // `UIViewRepresentable` whose `hitTest` returned `self` for
-            // ALL touches, swallowing every tap and scroll regardless of
-            // direction. SwiftUI's gesture arbitration handles the same
-            // intent without monopolising the touch stream.
+            // Uses SwiftUI `DragGesture` as a `.simultaneousGesture`
+            // so it coexists with the table's vertical scroll and the
+            // cell's tap. Two refinements over the previous version
+            // (which let small gesture jitter start the close drag,
+            // producing horizontal fluctuation when the user was
+            // vertically scrolling AND let mid-swipe row taps fire):
+            //
+            //   1. `minimumDistance: 20` — raises the tap-vs-drag
+            //      threshold above typical finger jitter, so a clean
+            //      row tap never engages the drag.
+            //
+            //   2. A per-gesture AXIS LOCK (`@State panelDragAxis`).
+            //      On the FIRST onChanged event we inspect the
+            //      translation to decide what the user is doing:
+            //        • horizontal-left-dominant → engage the close
+            //          drag for this gesture's lifetime.
+            //        • anything else (vertical, rightward, tied) →
+            //          lock OUT of the close drag for this gesture's
+            //          lifetime so the ScrollView keeps the finger
+            //          and the panel doesn't flinch horizontally.
+            //      The lock is reset to `.undetermined` at
+            //      `.onEnded`, so every new touch starts from scratch.
             .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
+                DragGesture(minimumDistance: 20)
                     .onChanged { v in
                         guard isFullyPresented else { return }
-                        // Only react to LEFTWARD pans (negative .width).
-                        // Vertical scrolls + rightward overshoots stay
-                        // out of our way so the table remains scrollable.
+                        if panelDragAxis == .undetermined {
+                            let dx = v.translation.width
+                            let dy = v.translation.height
+                            // Require a clear horizontal-left dominance
+                            // (|dx| > 1.5·|dy| AND dx < 0) before we
+                            // claim the drag for the close animation.
+                            // Otherwise we treat the gesture as either
+                            // a scroll or a mis-directed pan and IGNORE
+                            // every subsequent `.onChanged` tick — the
+                            // panel can't fluctuate sideways while the
+                            // user is scrolling vertically.
+                            if abs(dx) > abs(dy) * 1.5 && dx < 0 {
+                                panelDragAxis = .closeDrag
+                            } else {
+                                panelDragAxis = .ignored
+                                return
+                            }
+                        }
+                        guard panelDragAxis == .closeDrag else { return }
                         let dx = min(0, v.translation.width)
                         let progress = min(1, max(0, -dx / panelWidth))
                         closeDragProgress = progress
                     }
                     .onEnded { v in
+                        let axisAtEnd = panelDragAxis
+                        panelDragAxis = .undetermined
                         guard isFullyPresented else { return }
+                        guard axisAtEnd == .closeDrag else {
+                            // Scroll / tap / rightward pan — if any
+                            // partial close progress leaked through,
+                            // snap it back cleanly.
+                            if closeDragProgress > 0 {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                    closeDragProgress = 0
+                                }
+                            }
+                            return
+                        }
                         let dx = -v.translation.width                  // positive when moving left
                         let predictedDx = -v.predictedEndTranslation.width
                         let past = dx > panelWidth * 0.4
