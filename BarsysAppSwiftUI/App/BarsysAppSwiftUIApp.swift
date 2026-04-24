@@ -117,12 +117,18 @@ struct RootView: View {
                 //   disconnect BLE → remove last-connected-device data →
                 //   clearAll UserDefaults → clear cache timestamps →
                 //   AFTER 1.5s loader: auth.logout() + router.logout().
-                env.loading.show("Logging Out")
+                env.loading.show(Constants.loaderLoggingOut)
                 env.analytics.track(TrackEventName.logoutEvent.rawValue)
                 env.ble.disconnectAll()
                 UserDefaultsClass.removeLastConnectedDevice()
                 UserDefaultsClass.removeLastConnectedDeviceTime()
                 UserDefaultsClass.clearAll()
+                // Reset the in-memory `@Published` tutorial flag — see
+                // SideMenuView.performLogout for the full rationale;
+                // `clearAll()` wipes the UserDefaults key but NOT
+                // `PreferencesService`'s cached @Published value, so
+                // the next login would skip Tutorial without this.
+                env.preferences.hasSeenTutorial = false
                 UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForCacheRecipeData")
                 UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForMixlistData")
                 UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForFavourites")

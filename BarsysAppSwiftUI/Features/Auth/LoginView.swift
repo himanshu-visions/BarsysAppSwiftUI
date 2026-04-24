@@ -322,6 +322,19 @@ struct LoginView: View {
         }, onCancel: {
             focusedField = nil
         })
+        .onAppear {
+            // 1:1 with UIKit `UIViewController+Navigation.swift` L14-19:
+            //   if UIApplication.shared.topViewController() is LoginViewController {
+            //       NetworkingUtility.resetExpirationFlag()
+            //       return
+            //   }
+            // Once the user is back on the Login screen, a subsequent
+            // Ory session can safely raise a fresh "session expired"
+            // alert. Without this reset the dedup flag would stay
+            // stuck `true` after the first expiration and swallow
+            // every future 401 until the app is relaunched.
+            SessionExpirationHandler.shared.reset()
+        }
     }
 
     /// Standalone background image layer. Wrapped in its OWN ZStack with

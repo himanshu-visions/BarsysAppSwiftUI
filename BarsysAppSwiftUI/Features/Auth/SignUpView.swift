@@ -301,13 +301,40 @@ final class SignUpViewModel: ObservableObject {
         defer { isWorking = false }
         do {
             if let ory = api as? OryAPIClient {
-                let profile = try await ory.verifyRegistrationOtp(fullName: fullName,
-                                                                  email: email,
-                                                                  phone: formattedPhone,
-                                                                  otp: otp,
-                                                                  dobStr: dobYearMonthDay)
-                auth.applySignedInProfile(profile)
+                // IMPORTANT: Ory self-service registration returns the
+                // identity but does NOT create a session — the server
+                // sends no `session_token`. UIKit mirrors this by NOT
+                // auto-signing the user in: after verify success,
+                // `SuccessViewController` fades in briefly and the nav
+                // stack pops back to Login so the user re-authenticates
+                // via phone+OTP to MINT a real session.
+                //
+                // The previous SwiftUI port called
+                // `auth.applySignedInProfile(profile)` here, which
+                // flipped `isAuthenticated = true` and minted a
+                // placeholder UUID as the session token when Ory
+                // returned `nil`. The RootView then transitioned to
+                // `.main`, CatalogService.preload fired authenticated
+                // `cache/recipes` + `cache/mixlists` requests with the
+                // fake UUID bearer token, the server replied 401, and
+                // `SessionExpirationHandler` kicked the user to Login
+                // with the "Your session has expired…" alert — the
+                // exact bug the user reported.
+                //
+                // Fix: discard the returned `UserProfile` here and let
+                // `SignUpView`'s success closure pop the user back to
+                // Login. OryAPIClient has already persisted name /
+                // email / phone / DOB to UserDefaults via its own
+                // `verifyRegistrationOtp` so the Login screen can
+                // pre-fill fields if desired on a subsequent attempt.
+                _ = try await ory.verifyRegistrationOtp(fullName: fullName,
+                                                        email: email,
+                                                        phone: formattedPhone,
+                                                        otp: otp,
+                                                        dobStr: dobYearMonthDay)
             } else {
+                // Mock backend path — no real session concept, so
+                // retaining the previous flow keeps unit tests green.
                 try await auth.signUp(firstName: firstNameComponent(),
                                       lastName: lastNameComponent(),
                                       email: email,
@@ -754,19 +781,55 @@ struct SignUpView: View {
         hideKeyboard()
         Task {
             if viewModel.otpSent {
+                // Glass loader — 1:1 with UIKit
+                // `SignUpViewController+Actions.swift` L99
+                // `showGlassLoader(message: "Registering")`. The
+                // in-button ProgressView alone doesn't match UIKit's
+                // full-screen blocking loader.
+                env.loading.show(Constants.loaderRegistering)
                 await viewModel.verifyOtpToRegister(api: env.api,
                                                     auth: env.auth,
                                                     alerts: env.alerts,
                                                     analytics: env.analytics) {
-                    Task {
-                        await env.onLoginSuccessAsync()
-                        router.didLogin(hasSeenTutorial: env.preferences.hasSeenTutorial)
+                    // 1:1 with UIKit post-register navigation
+                    // (`AuthCoordinator.showSuccess(origin: .signUp)`
+                    // → `SuccessViewController` fades in 0.45s →
+                    // `popToRootViewController`): show a brief
+                    // visual confirmation then AUTO-pop back to
+                    // Login so the user can authenticate via
+                    // phone+OTP and mint a real Ory session. The
+                    // previous SwiftUI port tried to auto-log the
+                    // user in with a UUID placeholder token (see
+                    // `SignUpViewModel.verifyOtpToRegister` comment),
+                    // which caused the "Choose Options → session
+                    // expired → Login" bounce the user reported.
+                    //
+                    // Toast duration matches UIKit's fade timing
+                    // (~0.45s animation + 0.15s settle + ~1s read);
+                    // the pop itself fires at 0.8s so iOS has time
+                    // to finish the push animation before replaying
+                    // it in reverse.
+                    env.loading.hide()
+                    env.toast.show(Constants.accountCreatedSuccessfully,
+                                   color: Color("successGreenColor"),
+                                   duration: 2.5)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        if path.count > 0 { path.removeLast() }
                     }
                 }
+                // Safety net — if verify threw, `onSuccess` is skipped
+                // and the loader is still up. Hide it so the user can
+                // correct the OTP and retry. `LoadingState.hide()` is
+                // idempotent.
+                env.loading.hide()
             } else {
+                // UIKit `SignUpViewController+Actions.swift` L21/L68
+                // `showGlassLoader(message: "Sending OTP")`.
+                env.loading.show(Constants.loaderSendingOTP)
                 await viewModel.sendRegistrationOtp(api: env.api,
                                                     alerts: env.alerts,
                                                     analytics: env.analytics)
+                env.loading.hide()
             }
         }
     }

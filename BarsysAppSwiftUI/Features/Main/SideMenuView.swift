@@ -994,6 +994,17 @@ private struct SideMenuPanel: View {
         // Clear ALL UserDefaults (ports UserDefaultsClass.clearAll)
         UserDefaultsClass.clearAll()
 
+        // CRITICAL: `PreferencesService` holds an in-memory
+        // `@Published var hasSeenTutorial` set at init; wiping the
+        // underlying UserDefaults key does NOT refresh it. Without the
+        // explicit reset below, a user who logs back in sees
+        // `router.didLogin(hasSeenTutorial: true)` → lands straight on
+        // Main / Control Center and SKIPS the Tutorial step that UIKit
+        // shows on a fresh account. The didSet on the @Published writes
+        // `false` back to UserDefaults AND fires a publisher emission so
+        // every SwiftUI observer picks up the fresh value immediately.
+        env.preferences.hasSeenTutorial = false
+
         // Clear cached recipes/mixlists timestamps so next login does fresh fetch
         UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForCacheRecipeData")
         UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForMixlistData")

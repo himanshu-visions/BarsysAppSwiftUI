@@ -138,6 +138,24 @@ enum Constants {
     /// must use the same copy so QA screenshots still match.
     static let expiredSessionToken = "Your session has expired. Please log in again to continue."
 
+    /// Glass-loader messages — 1:1 with UIKit
+    /// `SignUpViewController+Actions.swift` (L21/L68 "Sending OTP",
+    /// L99 "Registering") and `UIViewController+Navigation.swift` (L26/L57
+    /// "Logging Out"). Hard-coded literals are kept here so the SwiftUI
+    /// port and QA reference screenshots match without hunting through
+    /// view code.
+    static let loaderSendingOTP = "Sending OTP"
+    static let loaderRegistering = "Registering"
+    static let loaderLoggingOut = "Logging Out"
+    static let loaderDeletingAccount = "Deleting Your Account"
+
+    /// Shown once the sign-up OTP verifies — mirrors the UIKit
+    /// `SuccessViewController` behaviour (brief confirmation before
+    /// popping back to Login). UIKit presents a visual checkmark with a
+    /// fade-in; SwiftUI surfaces the same intent via the custom success
+    /// popup (`AlertQueue.showSuccess`).
+    static let accountCreatedSuccessfully = "Your account has been created. Please log in to continue."
+
     /// Raw Ory payload marker — UIKit `ValidationsApiResponseError.expiredSessionToken`.
     /// Some 200-OK responses embed this in the body when the token has
     /// lapsed server-side, which UIKit also treats as a session-expired

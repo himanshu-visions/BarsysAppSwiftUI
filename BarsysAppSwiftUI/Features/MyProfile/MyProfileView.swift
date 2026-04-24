@@ -542,28 +542,71 @@ final class MyProfileViewModel: ObservableObject {
     //
     // Success = HTTP 204 in UIKit. We accept any 2xx here since the
     // server has occasionally shipped 200 with a body too.
-    func deleteAccount(env: AppEnvironment) async {
+    //
+    // Returns `true` when the server confirmed the deletion so the
+    // caller can sequence the loader → logout navigation. UIKit runs
+    // the equivalent tear-down in MyProfileViewModel L195-199
+    // (brazeDeleteUser → preferences.clearAll → determineRootAndPresent).
+    /// Side effects on success: BLE disconnect, analytics,
+    /// `BrazeService.deleteUser`, `UserDefaultsClass.clearAll`, reset of
+    /// the in-memory `hasSeenTutorial` flag, and clearing of cache
+    /// timestamps — matching the manual-logout path in
+    /// `SideMenuView.performLogout` so the two entry points leave the
+    /// app in an identical post-auth state.
+    @discardableResult
+    func deleteAccount(env: AppEnvironment) async -> Bool {
         isWorking = true
         defer { isWorking = false }
         guard let req = authorizedRequest(path: Self.profilePath, method: "DELETE") else {
-            return
+            return false
         }
         do {
             let (_, resp) = try await URLSession.shared.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if (200..<300).contains(status) {
-                env.analytics.track(TrackEventName.deleteProfileEvent.rawValue)
-                // 1:1 with UIKit `TrackEventsClass.brazeDeleteUser(userID:)`
-                // (TrackEventsClass.swift L188-200): clear PII, swap
-                // user, `wipeData()` and disable the SDK so no further
-                // events leak after the account is gone.
-                BrazeService.shared.deleteUser(userId: env.auth.profile.id)
-                UserDefaultsClass.clearAll()
-            } else {
+            guard (200..<300).contains(status) else {
                 env.alerts.show(message: Constants.profileUpdateError)
+                return false
             }
+
+            env.analytics.track(TrackEventName.deleteProfileEvent.rawValue)
+            // 1:1 with UIKit `TrackEventsClass.brazeDeleteUser(userID:)`
+            // (TrackEventsClass.swift L188-200): clear PII, swap user,
+            // `wipeData()` and disable the SDK so no further events
+            // leak after the account is gone.
+            BrazeService.shared.deleteUser(userId: env.auth.profile.id)
+
+            // BLE teardown — UIKit's delete-account path relies on
+            // `UserDefaultsClass.clearAll()` wiping `lastConnectedDevice`
+            // to stop the auto-reconnect loop, but any LIVE BLE
+            // connection (Barsys 360 / Coaster / Shaker) stays up
+            // unless we explicitly cancel it. Manual logout already
+            // calls `ble.disconnectAll()`; we do the same here so the
+            // user isn't left with a ghost peripheral after the
+            // account vanishes.
+            env.ble.disconnectAll()
+
+            UserDefaultsClass.removeLastConnectedDevice()
+            UserDefaultsClass.removeLastConnectedDeviceTime()
+            UserDefaultsClass.clearAll()
+
+            // Force-reset the `PreferencesService` in-memory tutorial
+            // flag. See SideMenuView.performLogout — without this the
+            // next sign-in after a delete would skip Tutorial and
+            // drop the user straight into Home/Control Center.
+            env.preferences.hasSeenTutorial = false
+
+            // Cache timestamps aren't covered by `clearAll` — strip
+            // them so a future login performs a fresh incremental
+            // fetch from `timestamp=` instead of an empty response.
+            UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForCacheRecipeData")
+            UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForMixlistData")
+            UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForFavourites")
+            UserDefaults.standard.removeObject(forKey: "coreDataMixlistCount")
+
+            return true
         } catch {
             env.alerts.show(message: error.localizedDescription)
+            return false
         }
     }
 }
@@ -771,7 +814,29 @@ struct MyProfileView: View {
             Button("Do not delete", role: .cancel) {}
             Button(ConstantButtonsTitle.yesButtonTitle, role: .destructive) {
                 Task {
-                    await viewModel.deleteAccount(env: env)
+                    // 1:1 with UIKit `MyProfileViewModel.deleteProfile()`
+                    // L188 `showGlassLoader(message: "Deleting Your Account")`.
+                    // The in-button spinner is insufficient; the delete
+                    // API can take multiple seconds and the view should
+                    // block during the tear-down (BLE disconnect,
+                    // Braze wipe, UserDefaults clear) so the user
+                    // can't retap or navigate.
+                    env.loading.show(Constants.loaderDeletingAccount)
+                    let didDelete = await viewModel.deleteAccount(env: env)
+                    env.loading.hide()
+
+                    // Only navigate to auth on a CONFIRMED deletion —
+                    // otherwise the user stays on MyProfile and sees
+                    // the error alert surfaced inside `deleteAccount`.
+                    // Without this guard, a 4xx/5xx would have still
+                    // popped the user to Login with a blank profile.
+                    guard didDelete else { return }
+
+                    // Match the manual logout finish: `auth.logout()`
+                    // fires the Braze logout event and resets
+                    // `isAuthenticated`; `router.logout()` swaps the
+                    // root scene to `.auth` and clears nav stacks.
+                    env.auth.logout()
                     router.logout()
                 }
             }
