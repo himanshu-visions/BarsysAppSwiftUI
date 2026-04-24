@@ -984,8 +984,14 @@ private struct SideMenuPanel: View {
         // Show loading indicator
         env.loading.show("Logging Out")
 
-        // Disconnect BLE (ports BleManager.disconnectedTypeState = .manuallyDisconnected)
-        ble.disconnectAll()
+        // Disconnect BLE SILENTLY — the normal `disconnectAll()` fires
+        // the `onDeviceDisconnected` callback which shows a red toast
+        // ("{device} is Disconnected") and an alert. During a user-
+        // initiated logout that noise chases the user onto the Login
+        // screen and looks like an error; UIKit's `logoutAction()`
+        // branch runs `clearPeripheral()` instead of the alert-showing
+        // disconnect handler — `disconnectAllSilently()` matches that.
+        ble.disconnectAllSilently()
 
         // Remove device data immediately
         UserDefaultsClass.removeLastConnectedDevice()
@@ -1049,6 +1055,33 @@ extension BLEService {
     /// Matches `BleManager.disconnectedTypeState = .manuallyDisconnected` +
     /// `clearPeripheral()` sequence from `logoutAction()`.
     func disconnectAll() {
+        for device in connected {
+            disconnect(device)
+        }
+        disconnectedState = .manuallyDisconnected
+        reconnectionState = .idle
+    }
+
+    /// Same as `disconnectAll()` but SUPPRESSES the
+    /// `onDeviceDisconnected` toast + "Device disconnected" alert.
+    /// Used by the logout / session-expired / delete-account flows —
+    /// UIKit fires a soft `clearPeripheral()` on these paths WITHOUT
+    /// running the alert-showing disconnect handler, so the user
+    /// sees a clean transition to Login instead of a stale
+    /// "{device} is Disconnected" toast chasing them onto the Auth
+    /// screen. Other entry points (Control Center "Disconnect"
+    /// button, unexpected peripheral drop) continue to call the
+    /// standard `disconnectAll()` so the user still gets the alert.
+    ///
+    /// Implementation: save + null the `onDeviceDisconnected` closure
+    /// across the disconnect loop so each peripheral teardown runs
+    /// silently, then restore the closure in case the app is
+    /// reopened (the auth flow tears down `BLEService` anyway, but
+    /// restoring is defensive against future refactors).
+    func disconnectAllSilently() {
+        let savedHandler = onDeviceDisconnected
+        onDeviceDisconnected = nil
+        defer { onDeviceDisconnected = savedHandler }
         for device in connected {
             disconnect(device)
         }

@@ -438,9 +438,65 @@ final class CraftingViewModel: ObservableObject {
             }
         }
 
-        // Build the command once — same "200,s1,q1,...,s6,q6" format
-        // used by UIKit `BleCommandBuilder.buildCommandString`. The
-        // row list is already filtered to base+mixer by `start(...)`.
+        // 1:1 with UIKit `BleCommandBuilder.buildCommandString`
+        // L136-143: after walking A→F and collecting the matched
+        // recipe ingredients into `tempActualStationsArrayToPour`,
+        // UIKit REPLACES `craftVc.recipeIngredientsArr` with that
+        // station-A→F-ordered list. This reorder is the load-bearing
+        // piece that makes the cell gradient track the device's
+        // actual pour sequence on Barsys 360.
+        //
+        // Why: the 360 firmware pours stations in A→F order (skipping
+        // empty slots) and reports progress via `"218,{idx},405"`
+        // where `idx` is a 0-based POUR-SEQUENCE position (0 = first
+        // active pour, 1 = second, …). The dispatch handler then
+        // pattern-matches `where idx == currentIngredient` — which
+        // only lines up when `recipeIngredients[0]` is the ingredient
+        // assigned to the FIRST A→F station, `recipeIngredients[1]`
+        // is the second, etc.
+        //
+        // The previous SwiftUI port kept `recipeIngredients` in the
+        // recipe's original JSON order. If the recipe listed
+        // ingredients in a different order than their stations
+        // (e.g. recipe order [bourbon, vermouth, bitters] but stations
+        // [vermouth=A, bourbon=C, bitters=E]), firmware would report
+        // `dispensingStarted(0)` when station A (vermouth) started,
+        // `idx=0` against `currentIngredient=0` matched, but the cell
+        // at row 0 was bourbon — so the "now pouring" gradient
+        // highlighted the WRONG ingredient and never advanced,
+        // exactly matching the bug report.
+        //
+        // Coaster + Shaker do NOT need the reorder — their command is
+        // positional (14 fixed slots of quantity-only, no station
+        // mapping) and the firmware's `idx` for those devices equals
+        // the recipe-order index by construction. Only the Barsys 360
+        // path rewires recipe ↔ station mapping, so only this path
+        // reorders the pourable list.
+        let order: [StationName] = [.a, .b, .c, .d, .e, .f]
+        var orderedIngredients: [CraftingIngredientRow] = []
+        for st in order {
+            guard let stationObj = arrStations.first(where: { $0.station == st }) else { continue }
+            let sp = stationObj.category?.primary?.lowercased() ?? ""
+            let ss = stationObj.category?.secondary?.lowercased() ?? ""
+            guard stationObj.category?.primary != nil else { continue }
+            guard let match = recipeIngredients.first(where: { r in
+                let rp = r.category?.primary?.lowercased() ?? ""
+                let rs = r.category?.secondary?.lowercased() ?? ""
+                return rp == sp && rs == ss && !r.ingredientName.isEmpty
+            }) else { continue }
+            var row = match
+            row.station = st
+            orderedIngredients.append(row)
+        }
+        // Replace ONLY when at least one match survived — if all
+        // station slots are empty (shouldn't happen post-validation),
+        // leave the list untouched rather than blanking the UI.
+        if !orderedIngredients.isEmpty {
+            self.recipeIngredients = orderedIngredients
+        }
+
+        // Build the command using the A→F-ordered list — same
+        // "200,s1,q1,...,s6,q6" format used by UIKit.
         let command = build360Command(stations: arrStations,
                                       recipeIngredients: recipeIngredients)
 
@@ -466,16 +522,46 @@ final class CraftingViewModel: ObservableObject {
 
     /// 1:1 port of `BleCommandBuilder.buildCommandString` for Barsys 360.
     ///
-    /// Walks A→F, matching each station to a recipe ingredient by
-    /// `category.primary + category.secondary` (lowercased). If matched,
-    /// emits `",{stationNumber},{quantity}"`; otherwise emits `",0,0"`.
-    /// Output is padded with `,0` pairs to exactly 15 components total.
+    /// **Format**: non-empty `(station, qty)` pairs appear FIRST in the
+    /// command, followed by `,0,0` pairs for every empty station, then
+    /// zero-padded to 15 components total. This matches UIKit
+    /// `BleCommandBuilder.buildCommandString` L78-189 — two passes:
+    ///   1. Walk A→F and append `,{num},{qty}` for each matched station
+    ///      (skipping empty ones; empty station names collected into
+    ///      `nilStationNamesArray`).
+    ///   2. Walk the nil-station list and append `,0,0` for each.
+    ///
+    /// **Why the order matters**: the Barsys 360 firmware iterates the
+    /// pairs left-to-right and reports pour progress via
+    /// `"218,{idx},405"` / `"218,{idx},401"` where `idx` is the 0-based
+    /// POSITION of the pair in the command. With the old "interleaved"
+    /// format (empty stations emitted in their A→F slot), a recipe with
+    /// only stations C + E matched produced
+    ///   `"200,0,0,0,0,3,60,0,0,5,30,0,0"`
+    /// and firmware reported `dispensingStarted(2)` for station C,
+    /// `dispensingStarted(4)` for station E. The dispatch handler's
+    /// `where idx == currentIngredient` guard therefore never fired
+    /// (currentIngredient is 0, 1, 2, … after the reorder in
+    /// `load360AndSendCommand`), so the "Now pouring" cell gradient
+    /// never advanced and the drink never transitioned through to
+    /// `.awaitingGlassRemoval` / `.completed` — exactly the bug report.
+    ///
+    /// Compact format for the same recipe:
+    ///   `"200,3,60,5,30,0,0,0,0,0,0,0,0,0,0"`
+    /// Firmware reports `dispensingStarted(0)` for C (pair index 0) and
+    /// `dispensingStarted(1)` for E (pair index 1), which aligns with
+    /// `currentIngredient = 0, 1` — cell gradient advances, completion
+    /// fires on `allIngredientsPoured` + `dataFlushed` exactly as UIKit.
+    ///
+    /// Coaster + Shaker unaffected — their command is `sendCoasterOrShakerCommand`
+    /// (positional 14 quantity-only slots, no station mapping).
     private func build360Command(stations: [CraftingIngredientRow],
                                  recipeIngredients: [CraftingIngredientRow]) -> String {
         let order: [(StationName, Int)] = [
             (.a, 1), (.b, 2), (.c, 3), (.d, 4), (.e, 5), (.f, 6)
         ]
-        var cmd = "200"
+        var matchedPairs: [String] = []
+        var emptySlotCount = 0
         for (station, num) in order {
             let stationObj = stations.first { $0.station == station }
             let match = recipeIngredients.first { r in
@@ -488,12 +574,21 @@ final class CraftingViewModel: ObservableObject {
                     && !r.ingredientName.isEmpty
             }
             if let m = match {
-                cmd += ",\(num),\(Int(m.ingredientQuantity))"
+                matchedPairs.append("\(num),\(Int(m.ingredientQuantity))")
             } else {
-                cmd += ",0,0"
+                emptySlotCount += 1
             }
         }
-        // Pad to 15 components.
+        // Non-empty pairs first — matches UIKit pass 1.
+        var cmd = "200"
+        for pair in matchedPairs {
+            cmd += ",\(pair)"
+        }
+        // Trailing `,0,0` per empty station — UIKit pass 2.
+        for _ in 0..<emptySlotCount {
+            cmd += ",0,0"
+        }
+        // Final pad to 15 components — UIKit post-pass padding loop.
         let components = cmd.components(separatedBy: ",")
         if components.count < 15 {
             let pad = Array(repeating: "0", count: 15 - components.count)
@@ -586,33 +681,14 @@ final class CraftingViewModel: ObservableObject {
     private func handleDataFlushed(ble: BLEService,
                                    onCompleted: (() -> Void)?,
                                    onDismiss: (() -> Void)?) {
-        // Completion path (UIKit L61-68, L77-87).
+        // Completion path (UIKit L61-68): universal — any device where
+        // `currentIngredient` has advanced past zero AND state is
+        // awaitingGlassRemoval. Post-fix this is the normal happy path
+        // on Barsys 360 now that the compact command format + A→F
+        // reorder keep `currentIngredient` in sync with firmware
+        // `dispensingComplete` indices.
         if currentIngredient > 0, state == .awaitingGlassRemoval {
-            state = .completed
-            // UIKit `CraftingViewController+BleResponse.swift` L63:
-            // `HapticService.shared.success()` when the drink
-            // completes. SwiftUI port adds the same success haptic
-            // so the device confirms-completion cue feels identical.
-            HapticService.success()
-            // 1:1 port of UIKit `DrinkCompleteViewController.viewDidLoad`
-            // L111-114: after the drink finishes AND Barsys 360 is
-            // connected, call `updateQuantitiesOnBasedPouringCompletion`
-            // to PATCH the new (reduced) station quantities back to the
-            // server so perishable timers + remaining ml counts stay in
-            // sync with what the hardware actually dispensed.
-            if ble.isBarsys360Connected() {
-                let deviceName = ble.getConnectedDeviceName()
-                let feedback = stationQuantityFeedback
-                let stationsSnapshot = arrStations
-                Task {
-                    await CraftingViewModel.updateQuantitiesOnBasedPouringCompletion(
-                        deviceName: deviceName,
-                        feedback: feedback,
-                        stations: stationsSnapshot
-                    )
-                }
-            }
-            onCompleted?()
+            completeDrink(ble: ble, onCompleted: onCompleted)
             return
         }
         // Cancel-acknowledged dismissals per device (UIKit L69-76).
@@ -631,7 +707,55 @@ final class CraftingViewModel: ObservableObject {
             case .none:
                 break
             }
+            return
         }
+
+        // 1:1 with UIKit `handleDataFlushed` L77-87: DEFENSIVE fallback
+        // for Barsys 360. If the first branch didn't trigger because
+        // `currentIngredient == 0` — which can happen on very short
+        // recipes or if a firmware quirk drops a `dispensingComplete`
+        // event — but `state` is still awaitingGlassRemoval AND Barsys
+        // 360 is the connected device, force completion. UIKit adds
+        // this specifically so the DrinkComplete screen still fires
+        // when the primary counter check fails. Coaster / Shaker do
+        // NOT get this branch (UIKit doesn't either) — their pours are
+        // short enough that the counter always advances.
+        if ble.isBarsys360Connected(), state == .awaitingGlassRemoval {
+            completeDrink(ble: ble, onCompleted: onCompleted)
+            return
+        }
+    }
+
+    /// Shared completion path extracted from `handleDataFlushed`. Runs
+    /// the success haptic, fires the server-side station quantity
+    /// update (Barsys 360 only), and pushes DrinkComplete via the
+    /// injected `onCompleted` closure.
+    private func completeDrink(ble: BLEService, onCompleted: (() -> Void)?) {
+        state = .completed
+        // UIKit `CraftingViewController+BleResponse.swift` L63:
+        // `HapticService.shared.success()` when the drink
+        // completes. SwiftUI port adds the same success haptic
+        // so the device confirms-completion cue feels identical.
+        HapticService.success()
+        // 1:1 port of UIKit `DrinkCompleteViewController.viewDidLoad`
+        // L111-114: after the drink finishes AND Barsys 360 is
+        // connected, call `updateQuantitiesOnBasedPouringCompletion`
+        // to PATCH the new (reduced) station quantities back to the
+        // server so perishable timers + remaining ml counts stay in
+        // sync with what the hardware actually dispensed.
+        if ble.isBarsys360Connected() {
+            let deviceName = ble.getConnectedDeviceName()
+            let feedback = stationQuantityFeedback
+            let stationsSnapshot = arrStations
+            Task {
+                await CraftingViewModel.updateQuantitiesOnBasedPouringCompletion(
+                    deviceName: deviceName,
+                    feedback: feedback,
+                    stations: stationsSnapshot
+                )
+            }
+        }
+        onCompleted?()
     }
 
     // MARK: - Barsys 360 (ports `handleBarsys360Response`)
@@ -1689,6 +1813,10 @@ struct DrinkCompleteView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
     @Environment(\.dismiss) private var dismiss
+    /// Used to pin the Done button's peach-tan gradient in dark mode
+    /// (matches the Recipe Page Craft button treatment — see
+    /// `drinkCompleteDoneBackground`). Light mode is untouched.
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Rating popup state — 1:1 port of UIKit DrinkCompleteViewController
     /// viewDidLoad L126-134 which checks shouldShowRatingPrompt interval.
@@ -1867,22 +1995,20 @@ struct DrinkCompleteView: View {
                             } label: {
                                 Text("Done")
                                     .font(.system(size: 16, weight: .medium))
-                                    // Preserve EXACT pure black in
-                                    // light mode (bit-identical to the
-                                    // previous hard-coded `Color.black`).
-                                    // In dark mode, switch to a near-
-                                    // white tone so the title remains
-                                    // legible on the pre-iOS 26 clear-
-                                    // bg variant of the Done button —
-                                    // iOS 26+ gets a brand-orange
-                                    // gradient bg where black still
-                                    // works, but the closure handles
-                                    // both branches uniformly.
-                                    .foregroundStyle(Color(UIColor { trait in
-                                        trait.userInterfaceStyle == .dark
-                                            ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
-                                            : UIColor.black // EXACT historical
-                                    }))
+                                    // Title colour is pinned to BLACK in
+                                    // both appearance modes now that the
+                                    // Done button renders a peach-tan
+                                    // gradient on both light AND dark
+                                    // (dark mode override — see
+                                    // `drinkCompleteDoneBackground`).
+                                    // Black contrasts best against the
+                                    // peach fill and matches every other
+                                    // brand primary CTA in the app
+                                    // (Craft, Clean, Continue, Stop).
+                                    // Light-mode pixels stay identical
+                                    // because the previous code also
+                                    // resolved to black in light mode.
+                                    .foregroundStyle(Color.black)
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 45)
                                     .background(drinkCompleteDoneBackground)
@@ -2061,21 +2187,73 @@ struct DrinkCompleteView: View {
     /// "Done" — makeOrangeStyle on iOS 26+ (brand gradient capsule),
     /// makeBorder(1, sideMenuSelectionColor) on pre-26.
     /// NOTE: pre-26 uses sideMenuSelectionColor border, NOT craftButtonBorderColor.
+    ///
+    /// Dark-mode override: both code paths swap the brand gradient /
+    /// clear fill for the same hard-coded peach-tan LinearGradient the
+    /// Recipe Page Craft button uses
+    /// (`ReadyToPourView.craftButtonBackground` L970-982 and
+    /// `RecipesScreens.primaryOrangeButtonBackground`). The reasons:
+    ///
+    /// • The `brandGradientTop` / `brandGradientBottom` assets have
+    ///   dark-appearance variants that resolve to a near-black brown;
+    ///   leaving the iOS 26+ path untouched would render the Done
+    ///   capsule as a dark muddy pill in dark mode, not the orange
+    ///   CTA the user expects.
+    /// • The pre-26 clear-fill + `sideMenuSelectionColor` border style
+    ///   barely reads on the dark `primaryBackgroundColor` (0.11 luma)
+    ///   background — the button visually disappears. Filling with the
+    ///   peach gradient in dark mode brings it in line with every other
+    ///   brand primary CTA (Craft, Clean, Continue, Stop).
+    ///
+    /// Light-mode pixels are unchanged on BOTH iOS 26+ AND pre-26 —
+    /// the `else` branches of the `colorScheme == .dark` checks below
+    /// preserve the exact prior rendering.
     @ViewBuilder
     private var drinkCompleteDoneBackground: some View {
         if #available(iOS 26.0, *) {
-            // makeOrangeStyle → brand gradient capsule
-            Capsule(style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
-                        startPoint: .top,
-                        endPoint: .bottom
+            if colorScheme == .dark {
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.980, green: 0.878, blue: 0.800),
+                                Color(red: 0.949, green: 0.761, blue: 0.631)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     )
-                )
+            } else {
+                // Light mode — original asset-driven brand gradient.
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
         } else {
-            // pre-26: no fill, just border
-            Capsule(style: .continuous).fill(Color.clear)
+            if colorScheme == .dark {
+                // Dark-mode pre-26 uses the same peach fill as iOS 26+
+                // so the Done button reads as a solid CTA on the dark
+                // background — matches Recipe Page Craft button dark.
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.980, green: 0.878, blue: 0.800),
+                                Color(red: 0.949, green: 0.761, blue: 0.631)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            } else {
+                // Light-mode pre-26 — EXACT original (clear + border).
+                Capsule(style: .continuous).fill(Color.clear)
+            }
         }
     }
 
@@ -2084,9 +2262,17 @@ struct DrinkCompleteView: View {
         if #available(iOS 26.0, *) {
             EmptyView()
         } else {
-            // pre-26: makeBorder(width: 1, color: .sideMenuSelectionColor)
-            Capsule(style: .continuous)
-                .stroke(Color("sideMenuSelectionColor"), lineWidth: 1)
+            if colorScheme == .dark {
+                // Dark mode already has the peach fill from above —
+                // the sideMenuSelectionColor border would clash, so
+                // drop it entirely (matches Recipe Craft button
+                // pre-26 dark: no border over the orange capsule).
+                EmptyView()
+            } else {
+                // Light-mode pre-26 — EXACT original border.
+                Capsule(style: .continuous)
+                    .stroke(Color("sideMenuSelectionColor"), lineWidth: 1)
+            }
         }
     }
 

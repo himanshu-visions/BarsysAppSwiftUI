@@ -579,11 +579,12 @@ final class MyProfileViewModel: ObservableObject {
             // `UserDefaultsClass.clearAll()` wiping `lastConnectedDevice`
             // to stop the auto-reconnect loop, but any LIVE BLE
             // connection (Barsys 360 / Coaster / Shaker) stays up
-            // unless we explicitly cancel it. Manual logout already
-            // calls `ble.disconnectAll()`; we do the same here so the
-            // user isn't left with a ghost peripheral after the
-            // account vanishes.
-            env.ble.disconnectAll()
+            // unless we explicitly cancel it. Use the SILENT variant
+            // (see `BLEService.disconnectAllSilently()`) so the user
+            // isn't chased onto the Login screen by a red
+            // "{device} is Disconnected" toast / alert after
+            // successfully deleting their account.
+            env.ble.disconnectAllSilently()
 
             UserDefaultsClass.removeLastConnectedDevice()
             UserDefaultsClass.removeLastConnectedDeviceTime()

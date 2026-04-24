@@ -119,7 +119,11 @@ struct RootView: View {
                 //   AFTER 1.5s loader: auth.logout() + router.logout().
                 env.loading.show(Constants.loaderLoggingOut)
                 env.analytics.track(TrackEventName.logoutEvent.rawValue)
-                env.ble.disconnectAll()
+                // Silent disconnect — see `BLEService.disconnectAllSilently()`
+                // for the rationale (suppresses the red "{device} is
+                // Disconnected" toast + alert on session-expired / logout
+                // so the user lands on Login without an error noise-trail).
+                env.ble.disconnectAllSilently()
                 UserDefaultsClass.removeLastConnectedDevice()
                 UserDefaultsClass.removeLastConnectedDeviceTime()
                 UserDefaultsClass.clearAll()
