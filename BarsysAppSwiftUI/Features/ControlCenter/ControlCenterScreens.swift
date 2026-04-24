@@ -1533,26 +1533,62 @@ enum StationsAPIService {
                 "flavourTags": slot.category?.flavourTags ?? []
             ]
 
-            // Decide ingredient_name + quantity. UIKit:
-            //   • `emptyDoubleDash` ("--") → ingredient_name "", quantity nil
-            //   • empty slot → ingredient_name "", quantity 0
-            //   • filled slot → ingredient_name <name>, quantity <slot qty>
-            //     (which autoMap sets to `maximumQuantityDoubleMLFor360`)
+            // Decide ingredient_name + quantity. 1:1 port of UIKit
+            // `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients`
+            // L15-55:
+            //
+            // ```
+            // var quantityToSend = NumericConstants.maximumQuantityDoubleMLFor360  // 750.0
+            // if (ingredientNameActualToSend ?? "").isEmpty {
+            //     quantityToSend = NumericConstants.zeroDoubleValue  // 0.0
+            // }
+            // ```
+            //
+            // CRITICAL: UIKit ALWAYS writes `"750.0"` for every
+            // filled slot on PATCH, regardless of the slot's
+            // current quantity. This is the "reset to max on
+            // re-setup" semantic — by the time the user hits
+            // Proceed, the server must see every ingredient back
+            // at full stock.
+            //
+            // Previous SwiftUI port wrote `"\(slot.ingredientQuantity)"`
+            // — which preserves the IN-MEMORY quantity (e.g. 600 ml
+            // after the user crafted a few drinks). That meant
+            // SwiftUI-written station state drifted from UIKit-
+            // written state by the exact amount the user had
+            // dispensed, producing divergent `quantity` rows on the
+            // server and — downstream — different Ready-to-Pour /
+            // StationsMenu readings between the two apps.
+            //
+            // ```
+            // if (stationNameDictToSave["ingredient_name"] as? String) == Constants.emptyDoubleDash {
+            //     stationNameDictToSave.setValue("", forKey: "ingredient_name")
+            //     stationNameDictToSave.setValue(nil, forKey: "quantity")
+            // }
+            // ```
+            // For the `"--"` sentinel UIKit writes `ingredient_name: ""`
+            // + `quantity: nil` (JSON null) — that's the explicit
+            // clear-station path.
+            //
+            // Empty-string / missing ingredient → `quantity: "0.0"`
+            // (not nil) matches the non-sentinel empty branch of
+            // UIKit's conditional.
             let isEmpty = slot.ingredientName.isEmpty
             let isDash = slot.ingredientName == Constants.emptyDoubleDash
             let ingredientNameValue: String = (isEmpty || isDash) ? "" : slot.ingredientName
-            // UIKit emits quantity as a `Double`-formatted string
-            // (`"\(quantityToSend)"` where quantityToSend is a Double).
-            // Preserve that format so a filled slot sends "750.0" not
-            // "750", matching the exact JSON bytes UIKit writes.
             let quantityValue: Any
             if isDash {
-                // UIKit's sentinel branch clears quantity entirely.
                 quantityValue = NSNull()
             } else if isEmpty {
                 quantityValue = "0.0"
             } else {
-                quantityValue = "\(slot.ingredientQuantity)"
+                // UIKit's always-750.0 reset — NOT the slot's
+                // current quantity. Use the canonical constant
+                // (`NumericConstants.maximumQuantityIntMLFor360` →
+                // Double(750) → "750.0") so the bytes match
+                // byte-for-byte regardless of what the in-memory
+                // slot was carrying.
+                quantityValue = "\(Double(NumericConstants.maximumQuantityIntMLFor360))"
             }
 
             var stationDict: [String: Any] = [
