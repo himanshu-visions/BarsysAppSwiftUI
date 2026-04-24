@@ -234,6 +234,7 @@ struct LoginView: View {
 
     @State private var showCountryPicker = false
     @FocusState private var focusedField: FocusField?
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Fields that can hold the keyboard focus — matches the UIKit setupToolbar
     /// outlets (txtPhoneNumber + txtOtp1…6).
@@ -262,11 +263,15 @@ struct LoginView: View {
             GeometryReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        // Splash logo (storyboard: 219x20, top:94)
+                        // Splash logo (storyboard: 219x20, top:94).
+                        // The PNG is a dark wordmark on transparency — invert
+                        // it in dark mode so it reads white on the dark
+                        // surface. Light mode keeps the original pixels.
                         Image("splashAppIcon")
                             .resizable()
                             .scaledToFit()
                             .frame(width: 219, height: 20)
+                            .invertedInDarkMode(colorScheme == .dark)
                             .padding(.top, 94)
 
                         // Tagline
@@ -324,12 +329,25 @@ struct LoginView: View {
     /// keyboard region — and crucially, this safe-area override does NOT
     /// propagate to the sibling content layer in `body`, so the form still
     /// gets normal keyboard avoidance.
+    @ViewBuilder
     private var backgroundLayer: some View {
         GeometryReader { proxy in
-            Image("loginBackgroundImage")
-                .resizable()
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .clipped()
+            Group {
+                if colorScheme == .dark {
+                    // `loginBackgroundImage` has no dark variant and is a
+                    // light glass artwork; leaving it in dark mode renders
+                    // near-white adaptive text unreadable. Swap for the
+                    // adaptive `primaryBackgroundColor` (dark surface) so the
+                    // existing adaptive text/border colors stay legible.
+                    // Light mode continues to render the original image.
+                    Color("primaryBackgroundColor")
+                } else {
+                    Image("loginBackgroundImage")
+                        .resizable()
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
         }
         .ignoresSafeArea(.all)
         .allowsHitTesting(false)
@@ -409,11 +427,14 @@ struct LoginView: View {
                     HStack(spacing: 4) {
                         Text(viewModel.selectedCountry.flag)
                             .font(.system(size: 28))
+                        // Chevron PNG ships as a dark asset — invert in dark
+                        // mode so it stays visible against the dark surface.
                         Image("downArrowSmall")
                             .resizable()
                             .scaledToFit()
                             .frame(width: 14)
                             .foregroundStyle(Color("appBlackColor"))
+                            .invertedInDarkMode(colorScheme == .dark)
                         Text(viewModel.countryDialCodeDisplay)
                             .font(.system(size: 17, weight: .light))
                             .foregroundStyle(Color("appBlackColor"))
@@ -570,5 +591,17 @@ extension View {
     func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                         to: nil, from: nil, for: nil)
+    }
+
+    /// Applies `colorInvert()` only when `active` is true — used by Login /
+    /// SignUp to flip the dark PNG assets (splashAppIcon, downArrowSmall,
+    /// tickIcon) to white in dark mode while leaving light mode untouched.
+    @ViewBuilder
+    func invertedInDarkMode(_ active: Bool) -> some View {
+        if active {
+            self.colorInvert()
+        } else {
+            self
+        }
     }
 }

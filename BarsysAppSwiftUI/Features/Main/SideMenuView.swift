@@ -406,7 +406,6 @@ private struct SideMenuPanel: View {
     /// Ports `selectedSection` — only one section is expanded at a time.
     @State private var selectedSection: Int? = nil
 
-    @State private var showLogoutConfirm = false
     /// Shows DeviceConnectedPopup when tapping "Device" while connected.
     /// Ports UIKit `openDeviceConnectedPopUp()`.
     @State private var showDeviceConnectedPopup = false
@@ -703,14 +702,15 @@ private struct SideMenuPanel: View {
             }
             .animation(.easeInOut(duration: 0.2), value: selectedSection)
         }
-        .confirmationDialog("", isPresented: $showLogoutConfirm, titleVisibility: .visible) {
-            Button(ConstantButtonsTitle.logoutButtonTitle, role: .destructive) {
-                performLogout()
-            }
-            Button(ConstantButtonsTitle.cancelButtonTitle, role: .cancel) {}
-        } message: {
-            Text(Constants.doYouWantToLogout)
-        }
+        // Logout confirmation popup — surfaced through `env.alerts` so it
+        // renders via `BarsysAlertOverlay`, which is the direct SwiftUI
+        // port of UIKit `AlertPopUpHorizontalStackController`
+        // (orange-filled primary on the right, bordered neutral on the
+        // left, no close X). The previous `.confirmationDialog` path
+        // rendered a native iOS action sheet and didn't match the
+        // UIKit custom popup visuals or button labels (UIKit uses
+        // "No", not "Cancel"). Triggered from `handleSectionTap` via
+        // `presentLogoutConfirmation()` below.
         // Rating popup is now shown at the MainTabView level via
         // router.pendingRatingPopup — see handleSectionTap "Review the App".
         // Device Connected Popup — shown when tapping "Device" while connected.
@@ -823,7 +823,7 @@ private struct SideMenuPanel: View {
     private func handleSectionTap(section: SideMenuSection, index: Int) {
         switch section.name {
         case "Logout":
-            showLogoutConfirm = true
+            presentLogoutConfirmation()
             return
 
         case "Device":
@@ -944,6 +944,32 @@ private struct SideMenuPanel: View {
     }
 
     // MARK: - Logout
+
+    /// 1:1 with UIKit `UIViewController+Navigation.logoutActionWithMessage(
+    ///     reason: .userInitiated, ...)` manual branch (L54-74):
+    ///
+    ///     showCustomAlertMultipleButtons(
+    ///         title: Constants.doYouWantToLogout,
+    ///         subTitleStr: nil,
+    ///         cancelButtonTitle: ConstantButtonsTitle.logoutButtonTitle,   // "Log out" — TINTED
+    ///         continueButtonTitle: ConstantButtonsTitle.noButtonTitle,    // "No"     — NEUTRAL
+    ///         cancelButtonColor: .segmentSelectionColor,
+    ///         isCloseButtonHidden: true)
+    ///
+    /// The UIKit `cancelButton` becomes the SwiftUI **primary** slot
+    /// (right-hand tinted orange button) and fires the destructive
+    /// action; `continueButton` is the **secondary** slot (left-hand
+    /// neutral bordered button) and is a pure no-op.
+    private func presentLogoutConfirmation() {
+        env.alerts.show(
+            title: Constants.doYouWantToLogout,
+            primaryTitle: ConstantButtonsTitle.logoutButtonTitle,
+            secondaryTitle: ConstantButtonsTitle.noButtonTitle,
+            onPrimary: { performLogout() },
+            onSecondary: nil,
+            hideClose: true
+        )
+    }
 
     private func performLogout() {
         // Ports `logoutAction()` from SideMenuViewController exactly:

@@ -130,6 +130,19 @@ enum Constants {
     static let doYouWantToDeleteIngredient = "Are you sure you want to delete this ingredient?"
     static let doYouWantToDeleteRecipe = "Are you sure you want to delete this recipe?"
     static let doYouWantToLogout = "Do you want to Log out ?"
+
+    /// 1:1 with UIKit `Constants.expiredSessionToken` in
+    /// `BarsysApp/Helpers/Constants/Constants.swift` — the exact string
+    /// shown in the session-expired alert after a 401 is intercepted by
+    /// `NetworkingUtility.triggerSessionExpirationLogout`. Both apps
+    /// must use the same copy so QA screenshots still match.
+    static let expiredSessionToken = "Your session has expired. Please log in again to continue."
+
+    /// Raw Ory payload marker — UIKit `ValidationsApiResponseError.expiredSessionToken`.
+    /// Some 200-OK responses embed this in the body when the token has
+    /// lapsed server-side, which UIKit also treats as a session-expired
+    /// event. Keep in lower-case because UIKit does substring match.
+    static let expiredSessionTokenBodyMarker = "expired session token"
     static let areYouSureYouWantToDeleteAccount = "Are you sure you want to\ndelete the account?"
 
     static let codeHasBeenSent = "A code has been sent"

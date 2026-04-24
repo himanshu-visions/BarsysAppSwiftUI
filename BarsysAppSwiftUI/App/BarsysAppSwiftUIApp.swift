@@ -84,9 +84,56 @@ struct RootView: View {
         .appAlert(env.alerts)
         .toastOverlay(env.toast)
         .task {
+            // Wire SessionExpirationHandler before bootstrap fires any network
+            // calls — otherwise an early 401 (e.g. recipe/mixlist preload
+            // after a long app suspension with a rolled Ory session) would
+            // reach the singleton before its alert + logout closures are
+            // installed and be silently dropped. 1:1 with UIKit hooking
+            // `NetworkingUtility` at AppDelegate bootstrap.
+            configureSessionExpirationHandler()
+
             await env.bootstrap()
             router.handleBootstrap(authenticated: env.auth.isAuthenticated,
                                     hasSeenTutorial: env.preferences.hasSeenTutorial)
         }
+    }
+
+    /// Installs the two hooks `SessionExpirationHandler` needs:
+    ///   1. how to surface the alert (via `env.alerts.showSessionExpired`)
+    ///   2. how to perform the logout once the user taps OK
+    ///
+    /// Uses the same clear-UserDefaults + auth.logout + router.logout
+    /// sequence that `SideMenuView.performLogout()` runs for the manual
+    /// logout path, so both code paths converge on identical state after
+    /// returning to the auth screen.
+    private func configureSessionExpirationHandler() {
+        SessionExpirationHandler.shared.configure(
+            showAlert: { [env] onConfirm in
+                env.alerts.showSessionExpired(onConfirm: onConfirm)
+            },
+            performLogout: { [env, router] in
+                // 1:1 with UIKit `logoutActionWithMessage(reason: .sessionExpired)`:
+                //   show "Logging Out" loader → track logout event →
+                //   disconnect BLE → remove last-connected-device data →
+                //   clearAll UserDefaults → clear cache timestamps →
+                //   AFTER 1.5s loader: auth.logout() + router.logout().
+                env.loading.show("Logging Out")
+                env.analytics.track(TrackEventName.logoutEvent.rawValue)
+                env.ble.disconnectAll()
+                UserDefaultsClass.removeLastConnectedDevice()
+                UserDefaultsClass.removeLastConnectedDeviceTime()
+                UserDefaultsClass.clearAll()
+                UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForCacheRecipeData")
+                UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForMixlistData")
+                UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForFavourites")
+                UserDefaults.standard.removeObject(forKey: "coreDataMixlistCount")
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    env.loading.hide()
+                    env.auth.logout()
+                    router.logout()
+                }
+            }
+        )
     }
 }

@@ -271,12 +271,51 @@ final class OryAPIClient: APIClient {
         let url = URL(string: "\(Endpoint.baseUrlOry)\(Endpoint.sendAndVerifyOtpForRegister)\(flowId)")!
         let parsed = try await postOry(url: url, body: body)
 
-        let addresses = parsed.session?.identity?.verifiableAddresses ?? []
-        let status = addresses.first(where: { $0.status?.lowercased() == "completed" })?.status
-            ?? addresses.last?.status
-            ?? ""
+        // Status resolution — 1:1 with UIKit
+        // `VerifyOtpToRegisterUser` in BarsysApp. A successful registration
+        // often returns the identity at the TOP level (`identity`, decoded
+        // here as `signUpIdentity`) with NO `session` object yet — only
+        // checking `session.identity.verifiable_addresses` would leave
+        // status empty and throw a bogus "Unable to…" error even though
+        // the account was created. Match UIKit's two-path resolve exactly:
+        //   1. Start from `session.identity.verifiable_addresses.last.status`.
+        //   2. If empty → search `signUpIdentity.verifiable_addresses` for a
+        //      "completed" entry and use that.
+        //   3. Otherwise → still check `session.identity.verifiable_addresses`
+        //      for a "completed" entry so it wins over a non-terminal "last".
+        var status = parsed.session?.identity?.verifiableAddresses?.last?.status ?? ""
+        if status.isEmpty {
+            if let completed = parsed.signUpIdentity?.verifiableAddresses?
+                .first(where: { ($0.status ?? "").lowercased() == "completed" })?.status {
+                status = completed
+            }
+        } else {
+            if let completed = parsed.session?.identity?.verifiableAddresses?
+                .first(where: { ($0.status ?? "").lowercased() == "completed" })?.status {
+                status = completed
+            }
+        }
 
-        guard status.lowercased() == "completed" || status.lowercased() == "sent" else {
+        // Flow expired is surfaced via `error.reason` — match UIKit and
+        // bubble the Ory-supplied reason string verbatim.
+        if let reason = parsed.error?.reason,
+           !reason.isEmpty,
+           OryMessageMatcher.isFlowExpired(reason) {
+            throw AppError.network(reason)
+        }
+
+        // "User already exists" is delivered as a ui.messages entry (NOT in
+        // `error.reason`). Map it to the canonical constant so the UI shows
+        // a stable, translatable string instead of Ory's raw wording.
+        if let uiMsg = parsed.ui?.messages?.first?.text,
+           OryMessageMatcher.matchesUserAlreadyExists(uiMsg) {
+            throw AppError.network(Constants.userAlreadyExists)
+        }
+
+        // UIKit only treats "completed" as success here (not "sent"); "sent"
+        // means the OTP was dispatched but the identity isn't verified yet,
+        // so accepting it would register unverified users.
+        guard status.lowercased() == "completed" else {
             let msg = parsed.ui?.messages?.first?.text ?? Constants.signUpError
             throw AppError.network(msg)
         }
@@ -284,17 +323,21 @@ final class OryAPIClient: APIClient {
         // Persist everything to UserDefaultsClass — same as UIKit registration
         // success branch (sendRegisterationOtpWithOry completion → stores
         // session token / name / email / phone / dob via UserDefaultsClass).
-        let traitsResp = parsed.session?.identity?.traits
+        // Prefer `session.identity` when present, otherwise fall back to
+        // `signUpIdentity` — some Ory responses carry identity info only at
+        // the top level right after registration.
+        let identityResp = parsed.session?.identity ?? parsed.signUpIdentity
+        let traitsResp = identityResp?.traits
         UserDefaultsClass.storeSessionToken(parsed.sessionToken)
         UserDefaultsClass.storeSessionId(parsed.session?.sessionId)
-        UserDefaultsClass.storeUserId(parsed.session?.identity?.identityId)
+        UserDefaultsClass.storeUserId(identityResp?.identityId)
         UserDefaultsClass.storeName(traitsResp?.name?.first ?? fullName)
         UserDefaultsClass.storePhone(traitsResp?.phone ?? phone)
         UserDefaultsClass.storeEmail(traitsResp?.email ?? email)
         UserDefaultsClass.storeDoB(traitsResp?.dob ?? dobStr)
 
         return UserProfile(
-            id: parsed.session?.identity?.identityId ?? UUID().uuidString,
+            id: identityResp?.identityId ?? UUID().uuidString,
             firstName: traitsResp?.name?.first ?? fullName,
             lastName: "",
             email: traitsResp?.email ?? email,
@@ -340,6 +383,14 @@ final class OryAPIClient: APIClient {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
+            // 1:1 with UIKit `NetworkingUtility.validateResponse` — a 401
+            // OR a 200 whose body contains "expired session token" both
+            // mean the Ory session has lapsed. Hand off to the shared
+            // handler (deduped across concurrent 401s) and bail so we
+            // don't try to decode an empty / error body as a profile.
+            if await SessionExpirationCheck.inspectAndHandle(response: response, data: data) {
+                return
+            }
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
                 print("[OryAPIClient] Profile fetch failed: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
@@ -434,6 +485,13 @@ final class OryAPIClient: APIClient {
         // UIKit: NetworkingUtility.createRequest(includeAuth: true) adds Bearer token
         let request = authenticatedRequest(url: url)
         let (data, response) = try await URLSession.shared.data(for: request)
+        // Session-expired check must run BEFORE the status-code guard.
+        // Without this, a 401 on the recipes endpoint just falls into the
+        // `return []` branch and the user sees an empty Explore screen
+        // instead of the "Your session has expired…" alert that UIKit shows.
+        if await SessionExpirationCheck.inspectAndHandle(response: response, data: data) {
+            return []
+        }
         guard let httpResponse = response as? HTTPURLResponse else { return [] }
         print("[OryAPIClient] Recipes response status: \(httpResponse.statusCode), bytes: \(data.count)")
 
@@ -481,6 +539,11 @@ final class OryAPIClient: APIClient {
 
         let request = authenticatedRequest(url: url)
         let (data, response) = try await URLSession.shared.data(for: request)
+        // Matches the recipes endpoint — a 401 here has to fire the
+        // session-expired alert, not silently return [].
+        if await SessionExpirationCheck.inspectAndHandle(response: response, data: data) {
+            return []
+        }
         guard let httpResponse = response as? HTTPURLResponse else { return [] }
         print("[OryAPIClient] Mixlists response status: \(httpResponse.statusCode), bytes: \(data.count)")
 
@@ -530,6 +593,9 @@ final class OryAPIClient: APIClient {
         request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        if await SessionExpirationCheck.inspectAndHandle(response: response, data: data) {
+            return []
+        }
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
             print("[OryAPIClient] Favourites fetch failed: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
@@ -596,6 +662,12 @@ final class OryAPIClient: APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        if await SessionExpirationCheck.inspectAndHandle(response: response, data: data) {
+            // UIKit short-circuits the caller with an error once the
+            // expired-session alert is queued, so the Favourites tab
+            // doesn't try to render a stale empty page under the alert.
+            throw AppError.network(Constants.expiredSessionToken)
+        }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         print("[OryAPIClient] fetchMyDrinks offset=\(offset): HTTP \(status)")
 
@@ -1333,5 +1405,20 @@ enum OryMessageMatcher {
     static func isFlowExpired(_ text: String?) -> Bool {
         guard let t = text?.lowercased() else { return false }
         return t.contains("flow expired") || t.contains("expired self-service flow")
+    }
+
+    /// Mirrors `ResponseMessageMatcher.matchesUserAlreadyExistsPattern` from
+    /// the UIKit app — any Ory ui.messages text that indicates the
+    /// identifier (phone or email) is already registered. Used by
+    /// `verifyRegistrationOtp` to map the raw Ory wording to a stable
+    /// `Constants.userAlreadyExists` string.
+    static func matchesUserAlreadyExists(_ text: String?) -> Bool {
+        guard let t = text?.lowercased() else { return false }
+        return t.contains("account with the same identifier")
+            || t.contains("already exists")
+            || t.contains("identifier already exists")
+            || t.contains("user with this email")
+            || t.contains("user with this phone")
+            || t.contains("this identifier is already")
     }
 }

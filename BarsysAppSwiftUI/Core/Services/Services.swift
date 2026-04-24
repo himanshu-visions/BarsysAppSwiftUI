@@ -2230,19 +2230,43 @@ final class AlertQueue: ObservableObject {
     /// `cancelButtonTitle` even though it's visually the primary
     /// action for decision alerts); `secondary` is the right-side
     /// neutral button.
+    ///
+    /// `hideClose` maps to UIKit `isCloseButtonHidden` — callers like the
+    /// logout confirmation pass `true` so the user must tap Log out or
+    /// No (no escape hatch via the corner X).
     func show(title: String,
               message: String = "",
               primaryTitle: String,
               secondaryTitle: String,
               onPrimary: (() -> Void)? = nil,
-              onSecondary: (() -> Void)? = nil) {
+              onSecondary: (() -> Void)? = nil,
+              hideClose: Bool = false) {
         current = AppAlertItem(
             title: title,
             message: message,
             primaryActionTitle: primaryTitle,
             primaryAction: onPrimary,
             secondaryActionTitle: secondaryTitle,
-            secondaryAction: onSecondary
+            secondaryAction: onSecondary,
+            hideClose: hideClose
+        )
+    }
+
+    /// 1:1 port of UIKit `NetworkingUtility.triggerSessionExpirationLogout`'s
+    /// call to `showDefaultAlert(message: Constants.expiredSessionToken,
+    /// okTitle: "Ok", okAction: …)`. Renders as a single-button popup —
+    /// message in the title slot, "OK" as the confirm, no close X so the
+    /// user can't bypass the logout. Tapping OK runs `onConfirm` which
+    /// drives the standard logout flow (clear UserDefaults → navigate to
+    /// Login → reset the de-dup flag).
+    func showSessionExpired(onConfirm: @escaping () -> Void) {
+        current = AppAlertItem(
+            title: Constants.expiredSessionToken,
+            message: "",
+            primaryActionTitle: ConstantButtonsTitle.okButtonTitle,
+            primaryAction: onConfirm,
+            hideClose: true,
+            singlePrimaryStyle: .popup
         )
     }
 

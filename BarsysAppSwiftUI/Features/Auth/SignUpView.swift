@@ -358,6 +358,7 @@ struct SignUpView: View {
 
     @State private var showCountryPicker = false
     @State private var showDatePicker = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         // Two-layer pattern identical to LoginView:
@@ -370,10 +371,21 @@ struct SignUpView: View {
         ZStack {
             // 1. Background layer
             GeometryReader { proxy in
-                Image("signUpBg")
-                    .resizable()
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .clipped()
+                Group {
+                    if colorScheme == .dark {
+                        // `signUpBg` has no dark variant and is a light
+                        // artwork; in dark mode it collides with the
+                        // adaptive near-white text. Swap for the adaptive
+                        // `primaryBackgroundColor` dark surface. Light mode
+                        // still renders the original image.
+                        Color("primaryBackgroundColor")
+                    } else {
+                        Image("signUpBg")
+                            .resizable()
+                    }
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .clipped()
             }
             .ignoresSafeArea(.all)
             .allowsHitTesting(false)
@@ -382,10 +394,13 @@ struct SignUpView: View {
             GeometryReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
+                        // Dark wordmark PNG — invert in dark mode so it reads
+                        // as white on the dark surface. Light mode untouched.
                         Image("splashAppIcon")
                             .resizable()
                             .scaledToFit()
                             .frame(width: 219, height: 20)
+                            .invertedInDarkMode(colorScheme == .dark)
                             .padding(.top, 94)
 
                         Text("Let's create your account")
@@ -568,6 +583,7 @@ struct SignUpView: View {
                         Image("downArrowSmall")
                             .resizable().scaledToFit().frame(width: 14)
                             .foregroundStyle(Color("appBlackColor"))
+                            .invertedInDarkMode(colorScheme == .dark)
                         Text(viewModel.countryDialCodeDisplay)
                             .font(.system(size: 17, weight: .light))
                             .foregroundStyle(Color("appBlackColor"))
@@ -680,10 +696,13 @@ struct SignUpView: View {
                                 lineWidth: viewModel.isTermsAccepted ? 4 : 2)
                         .frame(width: 22, height: 22)
                     if viewModel.isTermsAccepted {
+                        // Tick PNG is dark — invert in dark mode so the
+                        // checkmark stays visible inside the tan outline box.
                         Image("tickIcon")
                             .resizable()
                             .scaledToFit()
                             .frame(width: 14, height: 14)
+                            .invertedInDarkMode(colorScheme == .dark)
                     }
                 }
             }

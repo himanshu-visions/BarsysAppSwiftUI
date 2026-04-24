@@ -43,6 +43,7 @@
 		C4B50937F0DB7D1AE2858866 /* SocketCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36289E47075AC22B19ED3F3C /* SocketCommands.swift */; };
 		C737E89940EB404F9F45CC71 /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 466627296E5B80833D7CA5F0 /* AppRouter.swift */; };
 		D12E12500F5BBACD37F1BAC2 /* OryAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */; };
+		5E5310E5105E55105E55105A /* SessionExpirationHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E5310E5105E55105E55105B /* SessionExpirationHandler.swift */; };
 		D97FC15AC7D31879AF295EB0 /* Services.swift in Sources */ = {isa = PBXBuildFile; fileRef = 291A901391A852222CC64F10 /* Services.swift */; };
 		DB0A79F222FE4BA2A079FDF8 /* TutorialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCDD315E11422E6F842CADFF /* TutorialView.swift */; };
 		E1F09062ED59BC399467FD24 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A784DE6AE56C30198F6AFD89 /* Models.swift */; };
@@ -67,6 +68,7 @@
 		1E0ED9C9D6F6DEB3A4B0DD7D /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		2221E2830DE89B36422C96FA /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OryAPIClient.swift; sourceTree = "<group>"; };
+		5E5310E5105E55105E55105B /* SessionExpirationHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExpirationHandler.swift; sourceTree = "<group>"; };
 		2680F1F49A1C9F6C53819AB2 /* SplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashView.swift; sourceTree = "<group>"; };
 		2756AA2F464A301173DEC820 /* MyProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyProfileView.swift; sourceTree = "<group>"; };
 		28D2AFB82D96A543290BEEEC /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
@@ -288,6 +290,7 @@
 				0150F73E373B9D456171F2A2 /* LocalCache.swift */,
 				257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */,
 				291A901391A852222CC64F10 /* Services.swift */,
+				5E5310E5105E55105E55105B /* SessionExpirationHandler.swift */,
 				AA11BB22CC33DD44EE552002 /* SpeakeasySocketManager.swift */,
 				BA1779BB60E125FE19ED8397 /* UserDefaultsClass.swift */,
 				14B58B8162F5E515C576B7F8 /* UserProfileStore.swift */,
@@ -448,6 +451,7 @@
 				8019E293075E35CB7FDB6DDA /* LocalCache.swift in Sources */,
 				D12E12500F5BBACD37F1BAC2 /* OryAPIClient.swift in Sources */,
 				D97FC15AC7D31879AF295EB0 /* Services.swift in Sources */,
+				5E5310E5105E55105E55105A /* SessionExpirationHandler.swift in Sources */,
 				BA2EBB5E4DA8C7B1E7F3F1B1 /* BrazeService.swift in Sources */,
 				AC0A1B2C3D4E5F6071828392 /* AnalyticsConsentManager.swift in Sources */,
 				AA11BB22CC33DD44EE551001 /* SpeakeasySocketManager.swift in Sources */,
