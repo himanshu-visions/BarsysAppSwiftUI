@@ -638,7 +638,9 @@ struct RecipeDetailView: View {
     private var baseAndMixer: [Ingredient] {
         editedIngredients.filter { ing in
             let p = (ing.category?.primary ?? "").lowercased()
-            return p != "garnish" && p != "additional"
+            // Matches UIKit SQL `fetchMatchingRecipeLists`:
+            // `NOT IN ('garnish', 'additionals', 'additional')`.
+            return p != "garnish" && p != "additional" && p != "additionals"
         }
     }
     private var garnishIngredients: [Ingredient] {
@@ -670,7 +672,9 @@ struct RecipeDetailView: View {
         // pool).
         let originalBaseAndMixer = originalIngredients.filter { ing in
             let p = (ing.category?.primary ?? "").lowercased()
-            return p != "garnish" && p != "additional"
+            // Matches UIKit SQL `fetchMatchingRecipeLists`:
+            // `NOT IN ('garnish', 'additionals', 'additional')`.
+            return p != "garnish" && p != "additional" && p != "additionals"
         }
         guard baseAndMixer.count == originalBaseAndMixer.count else { return false }
         for edited in baseAndMixer {
@@ -1727,6 +1731,159 @@ struct RecipeDetailView: View {
                                     source: .recipeCrafting)
             return
         }
+        // 1:1 port of UIKit
+        // `RecipePageViewController+Actions.didPressCraftButton` +
+        // `checkBarsys360Craftability` preflight pipeline. UIKit
+        // routes the button through `performBarsys360CraftCheck`
+        // which:
+        //   1. getStationsHere → stationsArray
+        //   2. Build `recipeIngredientsWithStationName` from
+        //      baseAndMixer with 5 ml minimum clamp.
+        //   3. For each ingredient: match station by
+        //      primary+secondary category. No match →
+        //      `ingredientDoesNotExistInStation` alert + return.
+        //   4. If station matches and
+        //      `station.ingredientQuantity < recipe.quantity` →
+        //      `insufficientIngredientQuantityFor360` alert + return.
+        //   5. `getPerishableArrayFromIngredientsArr(arrStations)` —
+        //      if any perishable-expired, show the
+        //      `perishableDescriptionTitle` popup with Clean → cleaning
+        //      and Okay → no-op (stay on recipe page). Do NOT push
+        //      crafting screen.
+        //   6. Only after all checks pass → push CraftingVC.
+        //
+        // Without this preflight the SwiftUI port let the user tap
+        // Craft → push CraftingView → dispatch-time validation → show
+        // error alert → dismiss. UIKit never lets the user land on
+        // the crafting screen in an invalid state, so the feedback
+        // is clearer and the user stays on the recipe page to fix
+        // the stations.
+        //
+        // Coaster / Shaker keep the simpler UIKit path
+        // (craftCoasterRecipeWithUpdatedQuantity) — which only
+        // enforces the 5 ml minimum before pushing. The
+        // `CraftingViewModel.start(…)` preamble handles that
+        // downstream, so we can go straight to push here.
+        if ble.isBarsys360Connected() {
+            Task { @MainActor in
+                await validateAndPushBarsys360Craft(recipe)
+            }
+            return
+        }
+        router.push(.crafting(recipe.id))
+    }
+
+    /// Ports the Barsys-360 branch of UIKit
+    /// `RecipePageViewController+Actions.performBarsys360CraftCheck` +
+    /// `RecipeCraftingClass+StationSetup.craft360RecipeForUpdatedQuantity`.
+    /// Fetches live stations, runs the full validation chain, and
+    /// either surfaces the matching alert or pushes `.crafting`.
+    @MainActor
+    private func validateAndPushBarsys360Craft(_ recipe: Recipe) async {
+        let deviceName = ble.getConnectedDeviceName()
+        guard !deviceName.isEmpty else {
+            env.alerts.show(title: Constants.deviceNotConnected)
+            return
+        }
+        env.loading.show("Checking stations…")
+        let stations = await StationsAPIService.loadStations(deviceName: deviceName)
+        env.loading.hide()
+
+        // Extract base/mixer (non-garnish, non-additional), unique by
+        // lowercased name — matches UIKit
+        // `RecipePageViewModel+DataLoading.swift` L27-28 +
+        // `.unique(by: { $0.name.lowercased() })`.
+        let rawBaseAndMixer = (recipe.ingredients ?? []).filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            // Matches UIKit SQL `fetchMatchingRecipeLists`:
+            // `NOT IN ('garnish', 'additionals', 'additional')`.
+            return p != "garnish" && p != "additional" && p != "additionals"
+        }
+        var seen = Set<String>()
+        var baseAndMixer: [Ingredient] = []
+        for ing in rawBaseAndMixer {
+            let key = ing.name.lowercased()
+            if key.isEmpty { continue }
+            if seen.insert(key).inserted { baseAndMixer.append(ing) }
+        }
+
+        // 5 ml minimum — UIKit
+        // `MainBarBotCell+Actions.craftAction` L25-29 clamps instead
+        // of alerts, but Recipe Page uses the stricter check in
+        // `craft360RecipeForUpdatedQuantity` (any < 5 ml triggers
+        // `lowIngredientQty` alert).
+        for ing in baseAndMixer {
+            if (ing.quantity ?? 0) < 5.0 {
+                env.alerts.show(title: Constants.lowIngredientQty)
+                return
+            }
+        }
+
+        // All-6-empty guard — UIKit
+        // `MainBarBotCell+Actions.craftAction` L62-70. Recipe Page
+        // takes the same path through `checkBarsys360Craftability`.
+        let emptyCount = stations.filter {
+            $0.ingredientName.isEmpty || $0.ingredientName == Constants.emptyDoubleDash
+        }.count
+        if emptyCount == 6 {
+            env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+            return
+        }
+
+        // Per-ingredient station match + quantity check — UIKit
+        // `RecipeCraftingClass+StationSetup.craft360RecipeForUpdatedQuantity`
+        // L42-65. Primary+secondary (lowercase) comparison; no match
+        // fires `ingredientDoesNotExistInStation`; station holding
+        // an ingredient with insufficient quantity fires
+        // `insufficientIngredientQuantityFor360`.
+        for ing in baseAndMixer {
+            let rp = (ing.category?.primary ?? "").lowercased()
+            let rs = (ing.category?.secondary ?? "").lowercased()
+            let matching = stations.first { slot in
+                let sp = (slot.category?.primary ?? "").lowercased()
+                let ss = (slot.category?.secondary ?? "").lowercased()
+                return !sp.isEmpty && sp == rp && ss == rs
+            }
+            guard let station = matching else {
+                env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+                return
+            }
+            if !station.ingredientName.isEmpty,
+               station.ingredientQuantity < (ing.quantity ?? 0) {
+                env.alerts.show(title: Constants.insufficientIngredientQuantityFor360)
+                return
+            }
+        }
+
+        // Perishable-expired guard — UIKit
+        // `RecipePageViewController+Actions` L90-99: show
+        // `perishableDescriptionTitle` alert with Clean/Okay. Clean
+        // routes to the cleaning flow (control-center origin — NOT
+        // setup, so we clear the setup context); Okay is a no-op
+        // (user stays on recipe page, can't craft until they clean).
+        // Use `isPerishableExpired` (computed from raw flag +
+        // updatedAt >24h check), NOT the raw `isPerishable` which
+        // is true for every perishable ingredient regardless of age.
+        let expiredPerishables = stations.filter { $0.isPerishableExpired }
+        if !expiredPerishables.isEmpty {
+            env.alerts.show(
+                title: Constants.perishableDescriptionTitle,
+                primaryTitle: Constants.cleanAlertTitle,
+                secondaryTitle: Constants.okayButtonTitle,
+                onPrimary: {
+                    router.setupStationsContext = nil
+                    router.push(.stationCleaning)
+                },
+                onSecondary: {
+                    // UIKit "Okay" primary closure is explicit `{ _ in return }` —
+                    // user stays on the recipe page and must clean
+                    // before retrying craft. No state change.
+                }
+            )
+            return
+        }
+
+        // All checks pass → push the crafting screen.
         router.push(.crafting(recipe.id))
     }
 
@@ -2848,7 +3005,9 @@ struct EditRecipeView: View {
         // Filter to base/mixer (exclude garnish + additional).
         let baseAndMixer = detected.filter {
             let p = ($0.category?.primary ?? "").lowercased()
-            return p != "garnish" && p != "additional"
+            // Matches UIKit SQL `fetchMatchingRecipeLists`:
+            // `NOT IN ('garnish', 'additionals', 'additional')`.
+            return p != "garnish" && p != "additional" && p != "additionals"
         }
 
         if baseAndMixer.isEmpty {

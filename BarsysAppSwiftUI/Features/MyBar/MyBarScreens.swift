@@ -892,7 +892,8 @@ struct MyBarView: View {
         // silently dropped (UIKit L278-280).
         let baseAndMixer = detected.filter {
             let p = ($0.category?.primary ?? "").lowercased()
-            return p != "garnish" && p != "additional"
+            // UIKit SQL: NOT IN ('garnish','additionals','additional').
+            return p != "garnish" && p != "additional" && p != "additionals"
         }
         if baseAndMixer.isEmpty {
             return ([], Constants.ingredientCannotBeUsedHere)

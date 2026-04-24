@@ -355,14 +355,52 @@ struct MixlistDetailView: View {
             : (mixlist?.recipes ?? [])
     }
 
-    /// Aggregates every distinct ingredient used by the mixlist's recipes.
-    /// Ports `MixlistDetailViewModel.baseAndMixerIngredientsArr` (the screen's
-    /// ingredient tab shows the union, keyed by name).
+    /// 1:1 port of UIKit
+    /// `MixlistDetailViewModel.baseAndMixerIngredientsArr` — the
+    /// BASE+MIXER-only (NO garnish, NO additional) distinct
+    /// ingredient list for the Ingredients tab.
+    ///
+    /// UIKit reference (RecipePageViewModel+DataLoading.swift L27):
+    /// ```
+    /// self.baseAndMixerIngredientsArr =
+    ///     self.recipe?.ingredients?.filter({
+    ///         $0.category?.primary?.lowercased() ?? "" != "garnish" &&
+    ///         $0.category?.primary?.lowercased() ?? "" != "additional"
+    ///     }) ?? []
+    /// ```
+    /// plus `.unique(by: { $0.name.lowercased() })`. The Mixlist
+    /// detail variant is the same filter applied across every
+    /// recipe's ingredients (aggregation), then deduped by
+    /// lowercased name — equivalent to UIKit's SQL
+    /// `fetchDistinctIngredientName(for:)` which returns DISTINCT
+    /// rows filtered to base/mixer only.
+    ///
+    /// User-reported bug: "The Velvet Stir: A Martini Affair shows
+    /// 13+ ingredients in SwiftUI but only 6 in UIKit". The
+    /// previous aggregator dedup by name PASSED garnishes +
+    /// additionals through, so the union of every recipe's
+    /// garnishes (olive, cherry, twist, zest, salt rim, …) +
+    /// additionals inflated the ingredient tab to a long list.
+    /// UIKit hides those on the Mixlist detail ingredients tab
+    /// because the tab is a "what do I need to stock" list, and
+    /// garnishes/additionals are per-drink UI decorations tracked
+    /// separately by the crafting flow.
     private var aggregatedIngredients: [Ingredient] {
         var seen: [String: Ingredient] = [:]
         for r in recipes {
             for i in r.ingredients ?? [] {
-                let key = i.name.lowercased()
+                let primary = (i.category?.primary ?? "").lowercased()
+                // Match UIKit `!= "garnish" && != "additional"` filter
+                // verbatim. Ingredients with no category at all (nil /
+                // empty primary) DO pass through — UIKit's guard uses
+                // `?? ""` which leaves those in the base/mixer bucket
+                // by default (legacy / user-created recipes without
+                // category data).
+                // UIKit SQL: NOT IN ('garnish','additionals','additional').
+                if primary == "garnish" || primary == "additional" || primary == "additionals" { continue }
+                let key = i.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                guard !key.isEmpty else { continue }
                 if seen[key] == nil { seen[key] = i }
             }
         }
@@ -965,8 +1003,10 @@ struct MixlistDetailView: View {
             }
         }
 
-        // 4b: perishable-expired detection.
-        let perishable = stations.filter { $0.isPerishable }
+        // 4b: perishable-expired detection. Raw `isPerishable` flag
+        // plus updated_at > 24h ago — matches UIKit
+        // `getPerishableArrayFromIngredientsArr`.
+        let perishable = stations.filter { $0.isPerishableExpired }
         if !perishable.isEmpty {
             env.alerts.show(
                 title: Constants.perishableDescriptionTitle,
@@ -1085,8 +1125,14 @@ struct MixlistDetailView: View {
 
             // Detect perishable-expired stations (`updated_at` older
             // than 24 h and `is_perishable == true`). Matches UIKit
-            // `getPerishableArrayFromIngredientsArr`.
-            let perishableExpired = currentStations.filter { $0.isPerishable }
+            // `getPerishableArrayFromIngredientsArr`. Uses
+            // `isPerishableExpired` computed property — NOT the raw
+            // `isPerishable` flag, which returns true for any
+            // station holding a perishable ingredient regardless of
+            // time elapsed. Without the expired-check, freshly-filled
+            // perishables (e.g. just-added Cream) would route the
+            // user back into cleaning on every setup pass.
+            let perishableExpired = currentStations.filter { $0.isPerishableExpired }
 
             let needsCleaning = !result.stationsToClean.isEmpty
                              || !perishableExpired.isEmpty
@@ -1101,30 +1147,55 @@ struct MixlistDetailView: View {
                 stationsToClean: result.stationsToClean + perishableExpired
             )
 
+            // 1:1 port of UIKit
+            // `RecipeCraftingClass+StationSetup.setupStationsAction`
+            // L149-164:
+            //
+            // ```
+            // if differentStationsToCleanArr.count > 0 || perishableObject != nil {
+            //     if let navVC = controller.navigationController {
+            //         ControlCenterCoordinator.init(navigationController: navVC)
+            //             .showStationCleaningFlow(
+            //                 stationsOrigin: .setupStationsFlow,
+            //                 baseAndMixerIngredients: baseAndMixerIngredientsArr,
+            //                 mixlist: mixlist,
+            //                 mixlistOrRecipeIngredients: finalArrayMapped
+            //             )
+            //     }
+            // } else {
+            //     … push StationsMenu in setupStationsFlow …
+            // }
+            // ```
+            //
+            // UIKit routes DIRECTLY to the cleaning screen — there is
+            // NO intermediate "Ingredients may be spoiled. Clean the
+            // machine before use." confirmation popup at this step.
+            // The cleaning screen's own callbacks
+            // (`onShowDifferentStationsAlert` → "Proceed to clean",
+            //  `onShowPerishableCleanedAlert` → "Perishable
+            //   Ingredients Cleaned") fire the right alerts from
+            // WITHIN the cleaning screen once it lands and finishes
+            // `getDifferentIngredientsInMixlistIngredients`.
+            //
+            // The previous SwiftUI port added an extra
+            // `perishableDescriptionTitle` Clean/Okay popup here,
+            // which:
+            //   • is not in UIKit (user-reported "wrong perishable
+            //     alert keeps popping up"),
+            //   • gave "Okay" an abort-setup side-effect that
+            //     silently wiped `setupStationsContext` without any
+            //     obvious affordance for the user to proceed after
+            //     declining, and
+            //   • interrupted the flow with a popup before the
+            //     cleaning screen could surface its own
+            //     "Proceed to clean" alert, so the user saw two
+            //     back-to-back alerts in the setup path.
+            //
+            // Direct push matches UIKit byte-for-byte.
+            HapticService.light()
             if needsCleaning {
-                // UIKit `showCustomAlertMultipleButtons` with:
-                //   title     = perishableDescriptionTitle
-                //   left      = "Clean" (segmentSelectionColor)
-                //   right     = "Okay"
-                //   closeHidden = true
-                // Clean → push StationCleaningFlow with .setupStationsFlow.
-                // Okay → clear context + stay.
-                env.alerts.show(
-                    title: Constants.perishableDescriptionTitle,
-                    primaryTitle: Constants.cleanAlertTitle,
-                    secondaryTitle: Constants.okayButtonTitle,
-                    onPrimary: {
-                        HapticService.light()
-                        router.push(.stationCleaning)
-                    },
-                    onSecondary: {
-                        // User declined — abort the setup flow.
-                        router.setupStationsContext = nil
-                    }
-                )
+                router.push(.stationCleaning)
             } else {
-                // Clean path → push StationsMenu in setup mode.
-                HapticService.light()
                 router.push(.stationsMenu)
             }
         }
@@ -1146,7 +1217,8 @@ struct MixlistDetailView: View {
                 // UIKit treats `category.primary == "garnish"` (and nil
                 // categories) as NOT base/mixer — skip them.
                 let primary = (ing.category?.primary ?? "").lowercased()
-                if primary == "garnish" || primary == "additional" { continue }
+                // UIKit SQL: NOT IN ('garnish','additionals','additional').
+                if primary == "garnish" || primary == "additional" || primary == "additionals" { continue }
                 let key = trimmed.lowercased()
                 if seen[key] == nil { seen[key] = ing }
             }
@@ -1564,19 +1636,50 @@ enum RecipeCraftingSetup {
     }
 
     /// 1:1 port of UIKit `isSameIngredient(_:_:)`. Primary+secondary
-    /// (lowercase) compare first; if BOTH sides are blank for both
-    /// fields, fall back to ingredient-name equality (lowercase, trimmed).
+    /// (lowercase) compare first. Falls back to ingredient-name
+    /// equality in two cases:
+    ///   1. BOTH sides have blank categories (UIKit's documented
+    ///      behaviour — supports legacy recipes without categories).
+    ///   2. ONE side has blank categories AND the names match
+    ///      (compatibility with stations PATCHed before the
+    ///      `category` field was included in the payload — see
+    ///      `patchAllStations` for the historical bug where the
+    ///      server lost category data on every Setup-Stations
+    ///      round-trip). Without this fallback the auto-map would
+    ///      misread the half-populated server state as "station
+    ///      holds a non-recipe ingredient" and route the user back
+    ///      into cleaning even though the ingredient names match
+    ///      perfectly — the user-reported "re-setup same mixlist
+    ///      keeps taking me to clean stations" regression.
     private static func isSameIngredient(_ a: TempIngredient,
                                          _ b: TempIngredient) -> Bool {
         let ap = a.primary.trimmingCharacters(in: .whitespaces)
         let as_ = a.secondary.trimmingCharacters(in: .whitespaces)
         let bp = b.primary.trimmingCharacters(in: .whitespaces)
         let bs = b.secondary.trimmingCharacters(in: .whitespaces)
-        if !ap.isEmpty || !bp.isEmpty || !as_.isEmpty || !bs.isEmpty {
+        let aHasCategory = !ap.isEmpty || !as_.isEmpty
+        let bHasCategory = !bp.isEmpty || !bs.isEmpty
+        let nameA = a.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let nameB = b.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if aHasCategory && bHasCategory {
+            // Both sides carry category info → strict compare (UIKit's
+            // primary branch). Category mismatch here means genuinely
+            // different ingredients (e.g. "Vodka (base/clear)" vs
+            // "Triple Sec (liqueur/citrus)").
             return ap == bp && as_ == bs
         }
-        return a.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            == b.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !aHasCategory && !bHasCategory {
+            // UIKit's documented fallback — both sides blank, compare
+            // names. Covers legacy user-created recipes / manually
+            // added ingredients that never had categories assigned.
+            return nameA == nameB && !nameA.isEmpty
+        }
+        // Asymmetric case — one side has category, the other doesn't.
+        // Accept the match when names agree. Prevents the SAME
+        // ingredient (same name) from being flagged as different just
+        // because one storage layer preserved categories while the
+        // other dropped them.
+        return nameA == nameB && !nameA.isEmpty
     }
 }
 

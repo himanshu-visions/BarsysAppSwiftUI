@@ -761,10 +761,12 @@ final class OryAPIClient: APIClient {
             params.removeValue(forKey: "id")
         }
 
-        // UIKit L95-97: barsys_360_compatible flag.
+        // UIKit L95-97: barsys_360_compatible flag. Excludes garnish
+        // + BOTH additional variants (singular + plural) to match
+        // UIKit's SQL filter.
         let baseCount = (workingRecipe.ingredients ?? []).filter {
             let primary = ($0.category?.primary ?? "").lowercased()
-            return primary != "garnish" && primary != "additional"
+            return primary != "garnish" && primary != "additional" && primary != "additionals"
         }.count
         params["barsys_360_compatible"] = baseCount <= 6
 

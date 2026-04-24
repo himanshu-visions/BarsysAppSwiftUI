@@ -230,9 +230,29 @@ struct ControlCenterView: View {
         HapticService.light()
         switch item.name.lowercased() {
         case "station clean":
+            // 1:1 with UIKit `ControlCenterViewController` L?? — Station
+            // Clean from Control Center is a DIRECT entry with
+            // `stationsOrigin = .controlCenter`. Any leftover
+            // setup-stations context from a previously abandoned
+            // setup flow (e.g. user dropped out of MixlistDetail →
+            // Setup Stations without completing) must be cleared
+            // BEFORE pushing, or StationCleaningView's `.task` will
+            // read the stale context and paint the screen as if
+            // we're in setup mode: wrong title, "Continue to Station
+            // Setup" alert firing at the end, etc.
+            router.setupStationsContext = nil
             router.push(.stationCleaning)
             env.analytics.track(TrackEventName.controlCenterCleanStationViewed.rawValue)
         case "station menu":
+            // Same rationale as "station clean" — Control Center's
+            // Station Menu entry is `stationsOrigin = .controlCenter`
+            // in UIKit (`StationsMenuViewController` init). Clearing
+            // the stale context stops StationsMenuView's `.task`
+            // from flipping into `.recipeCrafting` / "Fill Stations"
+            // mode and showing the one-shot "Pour ingredients into
+            // the machine as shown" popup that belongs strictly to
+            // the setup-stations flow.
+            router.setupStationsContext = nil
             router.push(.stationsMenu)
             env.analytics.track(TrackEventName.controlCenterStationMenuViewed.rawValue)
         case "disconnect":
@@ -1058,6 +1078,20 @@ struct StationSlot: Identifiable, Hashable {
     let station: StationName
     var ingredientName: String
     var ingredientQuantity: Double
+    /// 1:1 parity with UIKit `StationCleaningFlow.perishable` —
+    /// the RAW `is_perishable` flag as the server stores it (or as
+    /// the recipe ingredient declared it in the setup flow). NOT
+    /// the "expired" signal; that's computed on demand below via
+    /// `isPerishableExpired`.
+    ///
+    /// Previous port conflated both semantics into this single
+    /// property: `loadStations` wrote the expired flag here, while
+    /// `autoMap` wrote the raw flag. The downstream PATCH body
+    /// forwarded `is_perishable: slot.isPerishable` — which meant
+    /// the server received "expired" as the raw flag (an incorrect
+    /// state toggle on every Setup-Stations round-trip). Splitting
+    /// raw vs expired restores byte-parity with UIKit's PATCH and
+    /// keeps perishable-expiry detection UI-side only.
     var isPerishable: Bool
     /// 1:1 parity with UIKit `StationCleaningFlow.category` — carries
     /// the server-side primary / secondary / flavour-tags so the
@@ -1075,6 +1109,35 @@ struct StationSlot: Identifiable, Hashable {
 
     var isEmpty: Bool {
         ingredientName.isEmpty || ingredientName == Constants.emptyDoubleDash
+    }
+
+    /// 1:1 port of UIKit
+    /// `BleCommandBuilder.getPerishableArray(from:)` per-station
+    /// check: `perishable == true && (now - updated_at) > 86400 s`.
+    /// Used for the UI "red row" styling, the Mixlist Detail
+    /// perishable-expired routing into cleaning, and the
+    /// pre-craft perishable guard across every craft entry point.
+    ///
+    /// Implementation detail: reuses
+    /// `StationsAPIService.perishableIntervalSeconds` + the
+    /// UIKit-format date parser so the 24-hour threshold matches
+    /// byte-for-byte.
+    var isPerishableExpired: Bool {
+        guard isPerishable, let raw = updatedAt, !raw.isEmpty else { return false }
+        // UIKit format first, ISO-8601 fallbacks second — same
+        // priority order as `StationsAPIService.isExpired`.
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = StationsAPIService.stationsDateFormat
+        if let d = f.date(from: raw) {
+            return Date().timeIntervalSince(d) > StationsAPIService.perishableIntervalSeconds
+        }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let parsed = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        guard let d = parsed else { return false }
+        return Date().timeIntervalSince(d) > StationsAPIService.perishableIntervalSeconds
     }
 }
 
@@ -1138,7 +1201,25 @@ enum StationsAPIService {
             struct CategoryPayload: Decodable {
                 let primary: String?
                 let secondary: String?
+                /// UIKit `Category.flavourTags` has NO `CodingKeys`
+                /// override, so Swift uses the property name as the
+                /// JSON key — `flavourTags` in camelCase (matching the
+                /// PATCH body writer at `patchAllStations` which also
+                /// writes `"flavourTags"`). The earlier SwiftUI port
+                /// used `flavour_tags` (snake_case), which silently
+                /// failed to decode the server's camelCase key on
+                /// every GET — so `category.flavourTags` was always
+                /// nil and downstream flavour-tag features had no
+                /// data. Aliased via CodingKey rather than renaming
+                /// the Swift property so the internal Swift naming
+                /// stays consistent with the rest of the decoder
+                /// (lowercase_snake style).
                 let flavour_tags: [String]?
+
+                enum CodingKeys: String, CodingKey {
+                    case primary, secondary
+                    case flavour_tags = "flavourTags"
+                }
             }
         }
     }
@@ -1148,15 +1229,69 @@ enum StationsAPIService {
     /// `StationCleaningFlowViewModel+StationMapping.getPerishableArray()`.
     static let perishableIntervalSeconds: TimeInterval = 86_400
 
+    /// 1:1 port of UIKit `DateFormatConstants.dateFormatForStations`
+    /// (`Constants+Enums.swift`): `"yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'"`
+    /// — nanosecond-precision ISO-8601 with a LITERAL `Z` suffix (not
+    /// the time-zone offset `Z`). The server echoes this exact format
+    /// back on GET, so our `isExpired` parser must accept it verbatim;
+    /// and our PATCH writer must emit it verbatim so the server's
+    /// `updated_at` comparison is consistent. Apple's
+    /// `ISO8601DateFormatter` CANNOT parse 9-digit fractional
+    /// seconds, which is why UIKit uses a plain `DateFormatter`.
+    static let stationsDateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'"
+
+    /// Builds the DateFormatter UIKit uses for station timestamps:
+    ///   • `en_US_POSIX` locale (format parsing stability)
+    ///   • UTC (`TimeZone(secondsFromGMT: 0)`)
+    ///   • 9-digit fractional-second format
+    ///
+    /// Matches `getFormattedCurrentDate()` +
+    /// `getTimeIntervalFromDate(selectedDate:)` in
+    /// `StationsMenuViewModel+Helpers.swift` exactly.
+    private static func stationsDateFormatter() -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = stationsDateFormat
+        return f
+    }
+
+    /// Current moment formatted the UIKit way. Fed into the PATCH's
+    /// `updated_at` field so the server stores the exact string
+    /// UIKit would have written.
+    static func formattedCurrentDate() -> String {
+        stationsDateFormatter().string(from: Date())
+    }
+
     /// True when an `is_perishable` station's `updated_at` is older than
     /// `perishableIntervalSeconds`. Mirrors UIKit branching in
     /// `cellColorState(for:)` + Refill-button state machine.
+    ///
+    /// Parser priority (matches UIKit fallback ordering):
+    ///   1. `yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'` — the server format
+    ///      UIKit writes/reads (`DateFormatConstants.dateFormatForStations`).
+    ///      9-digit fractional seconds + literal `Z` suffix; Apple's
+    ///      `ISO8601DateFormatter` CANNOT parse this, which is why
+    ///      UIKit uses a plain `DateFormatter`.
+    ///   2. ISO-8601 with fractional seconds (3-digit SSS) — what
+    ///      Apple's encoder emits by default, used by some legacy
+    ///      rows.
+    ///   3. Plain ISO-8601 (no fractional seconds).
+    ///
+    /// Returning `false` on parse failure is the safe default — it
+    /// keeps the station treated as "not expired" rather than
+    /// forcing the user into unnecessary cleaning.
     private static func isExpired(updatedAt: String?, isPerishable: Bool) -> Bool {
         guard isPerishable, let raw = updatedAt, !raw.isEmpty else { return false }
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let parsed = parser.date(from: raw)
-            ?? ISO8601DateFormatter().date(from: raw)
+        // 1. UIKit station-format parser (nanosecond + literal 'Z').
+        let uikitParser = stationsDateFormatter()
+        if let d = uikitParser.date(from: raw) {
+            return Date().timeIntervalSince(d) > perishableIntervalSeconds
+        }
+        // 2/3. ISO-8601 fallbacks.
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let parsed = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
         guard let date = parsed else { return false }
         return Date().timeIntervalSince(date) > perishableIntervalSeconds
     }
@@ -1247,7 +1382,21 @@ enum StationsAPIService {
         struct CategoryPayload: Encodable {
             var primary: String?
             var secondary: String?
+            /// UIKit `Category.flavourTags` has NO explicit CodingKey
+            /// override → Swift encodes using the PROPERTY NAME as
+            /// the JSON key → `flavourTags` in camelCase (byte-
+            /// identical to how `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients`
+            /// writes `"flavourTags"` in its NSDictionary PATCH body).
+            /// Keep the Swift property as `flavour_tags` (snake_case)
+            /// for consistency with the rest of this body's property
+            /// style, but alias it back to `flavourTags` via CodingKey
+            /// so the emitted JSON matches UIKit verbatim.
             var flavour_tags: [String]?
+
+            enum CodingKeys: String, CodingKey {
+                case primary, secondary
+                case flavour_tags = "flavourTags"
+            }
         }
 
         enum CodingKeys: String, CodingKey {
@@ -1342,14 +1491,83 @@ enum StationsAPIService {
 
         var stationsDict: [String: Any] = [:]
         for slot in stations {
-            stationsDict[slot.station.rawValue] = [
-                "metric": "ML",
-                "quantity": "\(Int(slot.ingredientQuantity))",
-                "ingredient_name": slot.ingredientName.isEmpty
-                    ? NSNull() as Any
-                    : slot.ingredientName as Any,
-                "is_perishable": slot.isPerishable
+            // 1:1 port of UIKit
+            // `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients(…)`
+            // L15-55. UIKit builds each station dict with these six
+            // keys, in this ORDER, with these EXACT types:
+            //   metric         — String, `Constants.mlText.uppercased()` ("ML")
+            //   quantity       — String, `"\(quantityToSend)"` where
+            //                    quantityToSend = `maximumQuantityDoubleMLFor360`
+            //                    (750.0) for filled slots or
+            //                    `zeroDoubleValue` (0.0) for empty slots.
+            //   ingredient_name — String, `""` for empty (UIKit does NOT
+            //                    write `null` here — it sends an empty
+            //                    STRING. The `@NullCodable` wrapper on
+            //                    `ConfigurationStationBody.ingredientName`
+            //                    is used ONLY by the single-station
+            //                    update/remove endpoints, not this
+            //                    batch PATCH.)
+            //   updated_at     — String, formatted via `getFormattedCurrentDate()`
+            //                    (UIKit `yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'`)
+            //   category       — NSDictionary `{primary, secondary, flavourTags}`
+            //   is_perishable  — Bool
+            //
+            // UIKit also has a post-condition: if the ingredient_name
+            // happens to be the `"--"` sentinel (Constants.emptyDoubleDash,
+            // a placeholder UIKit uses for "empty"), it flips the value
+            // to `""` AND sets quantity to nil. We mirror that sentinel
+            // handling below.
+            //
+            // Earlier SwiftUI port:
+            //   • used `NSNull()` for empty slots' ingredient_name —
+            //     that emitted JSON `null`, which the server treats as
+            //     a different code path than UIKit's `""`.
+            //   • used `Int(slot.ingredientQuantity)` → "0" for filled
+            //     slots, diverging from UIKit's "750.0" string format.
+            // Both byte differences caused subtle server state drift
+            // that surfaced on the next setup pass as "re-route to
+            // cleaning" (user-reported regression).
+            let categoryDict: [String: Any] = [
+                "primary": slot.category?.primary ?? "",
+                "secondary": slot.category?.secondary ?? "",
+                "flavourTags": slot.category?.flavourTags ?? []
             ]
+
+            // Decide ingredient_name + quantity. UIKit:
+            //   • `emptyDoubleDash` ("--") → ingredient_name "", quantity nil
+            //   • empty slot → ingredient_name "", quantity 0
+            //   • filled slot → ingredient_name <name>, quantity <slot qty>
+            //     (which autoMap sets to `maximumQuantityDoubleMLFor360`)
+            let isEmpty = slot.ingredientName.isEmpty
+            let isDash = slot.ingredientName == Constants.emptyDoubleDash
+            let ingredientNameValue: String = (isEmpty || isDash) ? "" : slot.ingredientName
+            // UIKit emits quantity as a `Double`-formatted string
+            // (`"\(quantityToSend)"` where quantityToSend is a Double).
+            // Preserve that format so a filled slot sends "750.0" not
+            // "750", matching the exact JSON bytes UIKit writes.
+            let quantityValue: Any
+            if isDash {
+                // UIKit's sentinel branch clears quantity entirely.
+                quantityValue = NSNull()
+            } else if isEmpty {
+                quantityValue = "0.0"
+            } else {
+                quantityValue = "\(slot.ingredientQuantity)"
+            }
+
+            var stationDict: [String: Any] = [
+                "metric": Constants.mlText.uppercased(),
+                "quantity": quantityValue,
+                "ingredient_name": ingredientNameValue,
+                "is_perishable": slot.isPerishable,
+                "category": categoryDict
+            ]
+            // UIKit stamps `updated_at` on every PATCH (current
+            // nanosecond-format date). Required for perishable-expiry
+            // parity: `isExpired(updated_at:, is_perishable:)` compares
+            // against this timestamp.
+            stationDict["updated_at"] = Self.formattedCurrentDate()
+            stationsDict[slot.station.rawValue] = stationDict
         }
         let body: [String: Any] = [
             "configuration": ["stations": stationsDict]
@@ -1420,24 +1638,54 @@ enum StationsAPIService {
             return raw.map { (name, slot) in
                 let qtyStr = slot?.quantity ?? "0"
                 let qty = Double(qtyStr) ?? 0
+                // 1:1 parity with UIKit
+                // `MixlistsUpdateClass.getStationsHere` L145-160.
+                //
+                // `emptyDoubleDash` normalisation: UIKit explicitly
+                // rewrites `ingredientName == Constants.emptyDoubleDash
+                // ("--")` to `""` at fetch time:
+                //
+                //   if stations?.a.ingredientName == Constants.emptyDoubleDash {
+                //       stations?.a.ingredientName = ""
+                //   }
+                //
+                // …repeated for B-F. Previously this port passed the
+                // literal `"--"` through, which broke every downstream
+                // `ingredientName.isEmpty` check (the string was
+                // non-empty) and caused the auto-map algorithm to
+                // treat "--" as a real ingredient. Normalise here so
+                // the sentinel can only exist in one place — the UI
+                // "empty" display — and NEVER in the domain model.
+                let rawName = slot?.ingredient_name ?? ""
+                let normalisedName = (rawName == Constants.emptyDoubleDash) ? "" : rawName
+
+                // `is_perishable` stores the server's RAW flag.
+                // "Expired" check is done on demand via
+                // `StationSlot.isPerishableExpired`.
                 let perishableFlag = slot?.is_perishable ?? false
-                let expired = isExpired(updatedAt: slot?.updated_at,
-                                        isPerishable: perishableFlag)
-                // Translate the server's category payload into the
-                // domain `IngredientCategory` we use everywhere else
-                // in the app. Nil when the server omitted the object.
-                let category: IngredientCategory? = slot?.category.map {
+
+                // Category fallback — UIKit defaults to
+                // `Category(primary: "base", secondary: "", flavourTags: [])`
+                // when the server omits the object (the `??`
+                // fallback in every `StationCleaningFlow(...)`
+                // constructor call in `getStationsHere`). Matching
+                // that default here means PATCH bodies written for
+                // blank slots also carry `primary: "base"` —
+                // byte-identical to UIKit's round-trip payload.
+                let category: IngredientCategory = slot?.category.map {
                     IngredientCategory(
                         primary: $0.primary,
                         secondary: $0.secondary,
                         flavourTags: $0.flavour_tags
                     )
-                }
+                } ?? IngredientCategory(primary: "base",
+                                        secondary: "",
+                                        flavourTags: [])
                 return StationSlot(
                     station: name,
-                    ingredientName: slot?.ingredient_name ?? "",
+                    ingredientName: normalisedName,
                     ingredientQuantity: qty,
-                    isPerishable: expired,
+                    isPerishable: perishableFlag,
                     category: category,
                     updatedAt: slot?.updated_at
                 )
@@ -1545,7 +1793,12 @@ final class StationsMenuViewModel: ObservableObject {
     }
 
     var isSelectedStationOccupied: Bool { !(selectedSlot?.isEmpty ?? true) }
-    var hasPerishableIngredients: Bool { stations.contains { $0.isPerishable } }
+    /// True when ANY station holds a perishable ingredient whose
+    /// `updated_at` is older than 24h. Drives the StationsMenu
+    /// "Refill button disabled / only Clean visible" UX — matches
+    /// UIKit `setBottomButtonsAccordingToPerishableCount` which uses
+    /// `getPerishableArrayFromIngredientsArr` (the expired variant).
+    var hasPerishableIngredients: Bool { stations.contains { $0.isPerishableExpired } }
 
     /// One-shot guard for the UIKit "Pour ingredients into the machine
     /// as shown" alert on setup-stations entry. UIKit models it on
@@ -2008,6 +2261,11 @@ struct StationsMenuView: View {
                         primaryActionButton(title: "Clean", color: Color.white,
                                             textColor: Color("appBlackColor"),
                                             stroke: Color("borderColor")) {
+                            // Control-center-origin Clean — clear any
+                            // stale setup context so the cleaning
+                            // screen loads as `.controlCenter`, not
+                            // `.recipeCrafting`.
+                            router.setupStationsContext = nil
                             router.push(.stationCleaning)
                         }
                         // Refill button — orange fill ALWAYS (matches
@@ -2043,6 +2301,11 @@ struct StationsMenuView: View {
                         primaryActionButton(title: "Clean", color: Color.white,
                                             textColor: Color("appBlackColor"),
                                             stroke: Color("borderColor")) {
+                            // Control-center-origin Clean — clear any
+                            // stale setup context so the cleaning
+                            // screen loads as `.controlCenter`, not
+                            // `.recipeCrafting`.
+                            router.setupStationsContext = nil
                             router.push(.stationCleaning)
                         }
                         primaryActionButton(title: "Add Ingredient",
@@ -2222,6 +2485,34 @@ struct StationsMenuView: View {
     ///     buttons — architecturally equivalent without adding a
     ///     dedicated "Ready To Pour" listing.
     @MainActor
+    /// 1:1 port of UIKit
+    /// `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients(…)`
+    /// (lines 15-90). UIKit:
+    ///   1. Builds the `configuration.stations` dict and PATCHes via
+    ///      `StationsServiceApi.updateAllStationsTogetherWithPatch`.
+    ///   2. On PATCH success, chains three sequential refreshes:
+    ///        a) `MixlistsUpdateClass().getStationsHere { … }`
+    ///           → re-fetches the authoritative 6-station snapshot.
+    ///        b) `MixlistsUpdateClass().updateMixlists(…) { … }`
+    ///           → GETs mixlist list + favourites, inserts into DB.
+    ///        c) `MixlistsUpdateClass().getBarsys360ReadyToPourRecipes { … }`
+    ///           → filters the DB for recipes whose ingredients
+    ///              match the newly-populated stations.
+    ///   3. Pushes `ReadyToPourListViewController` via
+    ///      `RecipesCoordinator.showReadyToPour(isSpeakEasyCase:
+    ///        recipes:mixlist:mergedRecipeArrayFromBarBot:)`.
+    ///
+    /// SwiftUI port:
+    ///   • The PATCH already writes `slot.ingredientQuantity`, ingredient
+    ///     name and perishable flag in one call (`patchAllStations`).
+    ///   • `ReadyToPourView` re-reads stations + storage on appear, so
+    ///     the UIKit a/b/c refresh chain runs implicitly the moment
+    ///     we push — we just have to push instead of dismissing.
+    ///   • `setupStationsContext` carries the mixlist forward so
+    ///     `ReadyToPourView` can filter by it. The context is cleared
+    ///     by the downstream screen when the flow fully completes
+    ///     (UIKit analogue: the setup storyboard segue owns the
+    ///     `mixlist` property until the user drops back out).
     private func persistSetupStations() async {
         let deviceName = ble.getConnectedDeviceName()
         guard !deviceName.isEmpty else {
@@ -2239,11 +2530,45 @@ struct StationsMenuView: View {
                             message: "Couldn't save stations. Please try again.")
             return
         }
-        // Clear the transient setup context — the flow is complete.
-        router.setupStationsContext = nil
         HapticService.success()
-        // Pop back to MixlistDetailView.
-        dismiss()
+        // 1:1 port of UIKit
+        // `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients(…)`
+        // L60-84: after the PATCH the UIKit flow chains THREE
+        // sequential refreshes BEFORE pushing ReadyToPourVC:
+        //   a) `getStationsHere` — re-fetch the 6-station snapshot
+        //      from the server (done implicitly by
+        //      `ReadyToPourView.loadData()` on appear).
+        //   b) `updateMixlists(…)` — GETs mixlists + favourites
+        //      + inserts into the local DB. Without this step the
+        //      downstream Ready-to-Pour screen renders the STALE
+        //      pre-setup mixlist/recipe cache — the user-reported
+        //      "updated recipes and mixlist didn't come on Ready to
+        //      Pour after Setup Stations" regression.
+        //   c) `getBarsys360ReadyToPourRecipes` — run the DB filter
+        //      (also done implicitly by `ReadyToPourView.loadData()`).
+        //
+        // SwiftUI equivalent: `env.catalog.preload()` runs (a) + (b)
+        // — it refetches recipes + mixlists from the API in parallel
+        // and upserts into storage. Ready-to-Pour's `.task` then
+        // runs (a') + (c) from the refreshed cache.
+        //
+        // Use a detached task so the UI push isn't blocked on the
+        // refresh round-trip; `ReadyToPourView.loadData()` re-runs
+        // on `.task` whenever the screen appears, so even if the
+        // refresh finishes after the push the user will see the
+        // updated data without a manual refresh.
+        env.loading.show("Updating…")
+        await env.catalog.preload()
+        env.loading.hide()
+        router.push(.readyToPour)
+        // Setup-stations flow is COMPLETE — the PATCH persisted the
+        // mapped ingredients and we're handing off to Ready-to-Pour.
+        // Clear the router-level context so the NEXT entry into
+        // StationsMenu / StationCleaning (e.g. from Control Center)
+        // treats it as `.controlCenter` origin instead of reading
+        // leftover setup data and showing "Fill Stations" /
+        // "Continue to Station Setup" on a direct-entry screen.
+        router.setupStationsContext = nil
     }
 }
 
@@ -2426,6 +2751,17 @@ struct StationCleaningFlowTableRow: View {
     let slot: StationSlot
     let isSelected: Bool
     let unit: MeasurementUnit
+    /// 1:1 port of UIKit `cellColorState(for:)` branch:
+    ///     "if differentIngredientsInStationsAre contains this
+    ///      station OR stationsFromBarBot contains station.rawValue"
+    /// → paint the row with `perishableColor`. Covers setup-flow
+    /// stations whose ingredients DON'T match the mixlist (which
+    /// aren't `isPerishable == true`) so they still render red and
+    /// visibly signal "this station needs cleaning before we can
+    /// continue". Defaults to `false` so every existing call site
+    /// (StationsMenuView table, BarBot, refill) is unaffected —
+    /// only the cleaning-flow caller flips it on.
+    var isInDirtyList: Bool = false
 
     private var displayQuantity: String {
         guard !slot.isEmpty else { return "" }
@@ -2437,10 +2773,18 @@ struct StationCleaningFlowTableRow: View {
 
     /// 1:1 port of UIKit `cellColorState(for:)` → `switch` at L46-55
     /// in `StationCleaningFlowViewController+TableView.swift`.
-    /// Perishable always wins; otherwise selected drives charcoal,
-    /// unselected drives light grey.
+    /// Perishable OR dirty-list membership wins (UIKit's
+    /// `.perishable` state covers both); otherwise selected drives
+    /// charcoal, unselected drives light grey.
     private var textColor: Color {
-        if slot.isPerishable { return Color("perishableColor") }
+        // Red-row rule: expired-perishable OR dirty-list membership.
+        // UIKit `cellColorState(for:)` uses the EXPIRED variant
+        // (24h check) — fresh perishable ingredients that the user
+        // just filled shouldn't render red. `isPerishableExpired`
+        // encapsulates the same raw+time check.
+        if slot.isPerishableExpired || isInDirtyList {
+            return Color("perishableColor")
+        }
         return isSelected ? Color("charcoalGrayColor") : Color("lightGrayColor")
     }
 
@@ -2584,6 +2928,41 @@ final class StationCleaningFlowViewModel: ObservableObject {
     /// it after presentation.
     @Published var pendingDifferentStationAlert: DifferentStationAlertPayload?
 
+    /// 1:1 port of UIKit `onShowContinueSetupAlert`. Set to `true`
+    /// after every dirty station has been cleaned in
+    /// `.setupStationsFlow` origin — view shows the "Continue to
+    /// Station Setup" alert and navigates to `StationsMenuView` on
+    /// confirm, carrying the mixlist + mapped ingredients forward.
+    @Published var shouldShowContinueSetupAlert: Bool = false
+
+    /// 1:1 port of UIKit `stationsOrigin` on `StationCleaningFlowVC`.
+    /// Controls alert orchestration:
+    ///   • `.controlCenter` — user reached here from the stations
+    ///     menu to clean individual / perishable stations. After
+    ///     all dirty stations are cleaned the "Perishable Ingredients
+    ///     Cleaned" alert shows and pops.
+    ///   • `.recipeCrafting` (UIKit `.setupStationsFlow`) — user
+    ///     came from MixlistDetail → Setup Stations. After all dirty
+    ///     stations are cleaned the "Continue to Station Setup"
+    ///     alert shows and pushes the stations menu so the user can
+    ///     proceed to fill stations for their mixlist.
+    @Published var stationsOrigin: StationsMenuOrigin = .controlCenter
+
+    /// 1:1 port of UIKit `differentIngredientsInStationsAre` —
+    /// stations that the cleaning flow still owes a clean cycle.
+    /// Populated on load by `populateDifferentIngredientsInStations()`
+    /// (perishable-expired + setup-mismatch) and pruned one entry at
+    /// a time by `removeStationFromDifferentIngredients()` after each
+    /// successful clean cycle.
+    @Published var differentIngredientsInStationsAre: [StationSlot] = []
+
+    /// 1:1 port of UIKit `mappedIngredientArrayWithStations` — the
+    /// 6-station array the mixlist auto-map resolved to. Used only in
+    /// the `setupStationsFlow` path to detect stations holding
+    /// non-mixlist ingredients that must be cleaned first. Set from
+    /// `SetupStationsContext.mappedSlots` on view appear.
+    @Published var mappedIngredientArrayWithStations: [StationSlot] = []
+
     /// Strongly-typed payload for the different-station alert, mirroring
     /// UIKit `onShowDifferentStationsAlert = { stationNamesStr, stationName in … }`.
     struct DifferentStationAlertPayload: Equatable {
@@ -2605,6 +2984,175 @@ final class StationCleaningFlowViewModel: ObservableObject {
         selectedStation = targetStation
         currentFlow = .initialEmptySetup
         processState = .idle
+    }
+
+    /// 1:1 port of UIKit
+    /// `getDifferentIngredientsInMixlistIngredients()` +
+    /// `checkIfAnyDifferentStationsExistInSetUpStations()` on
+    /// screen entry. Populates `differentIngredientsInStationsAre`
+    /// and, if non-empty, surfaces the first station as the
+    /// "Proceed to clean" alert.
+    ///
+    /// UIKit runs three loops:
+    ///   1. Stations holding ingredients NOT in the recipe (only
+    ///      when origin == `.setupStationsFlow`) — compared by
+    ///      primary+secondary category, falling back to name.
+    ///   2. Perishable stations (is_perishable == true and
+    ///      updated_at older than 24h). The UIKit perishable-age
+    ///      check runs server-side here; when the mixlist setup
+    ///      flow hands us a pre-filtered `stationsToClean` we
+    ///      trust it and just mirror `isPerishable` into the array.
+    ///   3. Stations flagged by BarBot mixlists (`stationsFromBarBot`
+    ///      in UIKit). Not wired in the SwiftUI port yet — the
+    ///      BarBot mixlist feature reuses the control-center path,
+    ///      so this loop stays idle until the BarBot port lands.
+    func populateDifferentIngredientsInStations() {
+        var result: [StationSlot] = []
+        let sameCategory: (StationSlot, StationSlot) -> Bool = { a, b in
+            let ap = (a.category?.primary ?? "").lowercased()
+            let as_ = (a.category?.secondary ?? "").lowercased()
+            let bp = (b.category?.primary ?? "").lowercased()
+            let bs = (b.category?.secondary ?? "").lowercased()
+            if !ap.isEmpty || !bp.isEmpty || !as_.isEmpty || !bs.isEmpty {
+                return ap == bp && as_ == bs
+            }
+            // Fallback to name equality when both sides have no
+            // category — matches UIKit `isSameIngredient`.
+            return a.ingredientName.lowercased() == b.ingredientName.lowercased()
+        }
+
+        // Loop 1 — setup-flow mismatch. Only contributes when the
+        // origin is `.recipeCrafting` AND the caller handed us the
+        // mapped array (empty otherwise ⇒ nothing to compare against).
+        if stationsOrigin == .recipeCrafting && !mappedIngredientArrayWithStations.isEmpty {
+            for slot in stations {
+                let hasMatchingRecipe = mappedIngredientArrayWithStations.contains {
+                    sameCategory(slot, $0)
+                }
+                let occupied = !slot.ingredientName.isEmpty
+                    && slot.ingredientName != Constants.emptyDoubleDash
+                if !hasMatchingRecipe && occupied {
+                    result.append(slot)
+                }
+            }
+        }
+
+        // Loop 2 — perishable-expired stations. 1:1 port of UIKit
+        // `getDifferentIngredientsInMixlistIngredients()` loop 2
+        // which computes the 24h cutoff inline via
+        // `getTimeIntervalFromDate(selectedDate: updatedAt)`.
+        // `StationSlot.isPerishableExpired` encapsulates that
+        // computation (raw perishable flag AND updated_at older
+        // than 24h). Using the raw `isPerishable` flag here would
+        // flag every perishable ingredient regardless of age —
+        // sending users into cleaning for fresh ingredients they
+        // just filled.
+        for slot in stations where slot.isPerishableExpired {
+            if !result.contains(where: { sameCategory($0, slot) }) {
+                result.append(slot)
+            }
+        }
+
+        differentIngredientsInStationsAre = result
+    }
+
+    /// 1:1 port of UIKit `removeStationFromDifferentIngredients()`.
+    /// After a clean cycle finishes, strip the just-cleaned station
+    /// from `differentIngredientsInStationsAre` so the next alert
+    /// check sees the updated remaining-work list.
+    ///
+    /// UIKit matches on primary+secondary category first (so flushing
+    /// Station A's "Lemon Juice" also removes any other station
+    /// holding the same ingredient) and name-equality as a fallback
+    /// when categories are blank.
+    func removeStationFromDifferentIngredients() {
+        let cleanedIngredientName = stations.first(where: {
+            $0.station == selectedStation
+        })?.ingredientName ?? ""
+        let cleanedPrimary = (stations.first(where: {
+            $0.station == selectedStation
+        })?.category?.primary ?? "").lowercased()
+        let cleanedSecondary = (stations.first(where: {
+            $0.station == selectedStation
+        })?.category?.secondary ?? "").lowercased()
+        differentIngredientsInStationsAre.removeAll { slot in
+            if slot.station == selectedStation { return true }
+            let sp = (slot.category?.primary ?? "").lowercased()
+            let ss = (slot.category?.secondary ?? "").lowercased()
+            if !cleanedPrimary.isEmpty || !sp.isEmpty
+                || !cleanedSecondary.isEmpty || !ss.isEmpty {
+                return sp == cleanedPrimary && ss == cleanedSecondary
+            }
+            return slot.ingredientName.lowercased()
+                == cleanedIngredientName.lowercased()
+        }
+    }
+
+    /// 1:1 port of UIKit
+    /// `StationCleaningFlowViewModel+StationMapping.shouldCheckDifferentStationsAfterRemove()`:
+    /// gates whether the post-clean orchestration runs `checkIfAny…`.
+    /// UIKit only dispatches the check when we're in setup flow OR
+    /// there's still dirty work in the queue — AND we're not in the
+    /// middle of a flush (flush transitions to clean, not final).
+    ///
+    /// This gate is what keeps the "Perishable Ingredients Cleaned"
+    /// alert from leaking into the control-center flow: by the time
+    /// the API PATCH succeeds, `differentIngredientsInStationsAre`
+    /// has already been pruned down to 0, so for a control-center
+    /// origin the outer predicate evaluates false and the check is
+    /// skipped entirely — no alert, no pop.
+    func shouldCheckDifferentStationsAfterRemove() -> Bool {
+        (stationsOrigin == .recipeCrafting
+         || !differentIngredientsInStationsAre.isEmpty)
+            && cleaningMode != .flush
+    }
+
+    /// 1:1 port of UIKit
+    /// `checkIfAnyDifferentStationsExistInSetUpStations()` —
+    /// `StationCleaningFlowViewModel+StationMapping.swift` L106-121:
+    ///
+    /// ```
+    /// if stationsOrigin == .setupStationsFlow || differentIngredientsInStationsAre.count > 0 {
+    ///     if differentIngredientsInStationsAre.count > 0 {
+    ///         onShowDifferentStationsAlert?(stationNameStrToDisplay, firstStationName)
+    ///     } else {
+    ///         if stationsOrigin == .setupStationsFlow {
+    ///             onShowContinueSetupAlert?()
+    ///         } else {
+    ///             onShowPerishableCleanedAlert?()
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Outer guard keeps the function a no-op when there's nothing
+    /// to surface (control-center entry with no dirty / perishable
+    /// stations) — exactly the user-reported bug:
+    /// "every time I click Clean from control center it says
+    ///  Perishable Ingredients Cleaned".
+    ///
+    /// The third branch (`perishableCleaned`) is practically
+    /// unreachable in UIKit — it requires the outer guard to pass
+    /// AND the inner count check to fail AND we're not in setup
+    /// flow, which the `shouldCheckDifferentStationsAfterRemove`
+    /// gate above prevents. We keep it for byte-for-byte parity
+    /// (if UIKit would show it in some edge case, so should we).
+    func checkIfAnyDifferentStationsExistInSetUpStations() {
+        guard stationsOrigin == .recipeCrafting
+            || !differentIngredientsInStationsAre.isEmpty
+        else { return }
+
+        if let next = differentIngredientsInStationsAre.first {
+            pendingDifferentStationAlert = DifferentStationAlertPayload(
+                // UIKit: "Station " + "\(firstStation)?".uppercased()
+                stationNamesDisplay: "Station \(next.station.rawValue.uppercased())?",
+                targetStation: next.station
+            )
+        } else if stationsOrigin == .recipeCrafting {
+            shouldShowContinueSetupAlert = true
+        } else {
+            shouldShowPerishableCleanedAlert = true
+        }
     }
 
     /// Ports UIKit `MixlistsUpdateClass().getStationsHere { … }` wrapping
@@ -2897,35 +3445,59 @@ final class StationCleaningFlowViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard let self else { return }
-            // Capture perishable state BEFORE we mutate the station —
-            // UIKit's `onShowPerishableCleanedAlert` callback fires
-            // when the cleaned station was flagged perishable, and it
-            // needs the pre-reset state to make the decision.
-            let cleanedWasPerishable = self.stations.first(
-                where: { $0.station == self.selectedStation }
-            )?.isPerishable == true
             if self.cleaningMode == .flush {
                 self.cleaningMode = .clean
                 self.currentFlow = .pourCleaningSolution
                 // UIKit calls `updateStation(stationName:)` after flush
                 // completes to persist the zeroed quantity server-side.
+                // Note: UIKit does NOT remove the station from
+                // `differentIngredientsInStationsAre` on flush — only on
+                // the final clean cycle. We preserve that ordering so
+                // the next alert-check fires AFTER the user pours
+                // cleaning solution and the full clean wraps up.
                 Task { [ble] in
                     await self.persistFlushComplete(ble: ble)
                 }
             } else {
                 self.currentFlow = .cleaningComplete
-                // UIKit calls `removeStation(stationName:)` after full
-                // clean completes so the station goes back to empty.
+                // UIKit `transitionToFlow(.cleaningComplete)`
+                // (StationCleaningFlowViewModel.swift L170-179) wipes
+                // `arrStations[idx]` SYNCHRONOUSLY the moment the flow
+                // transitions — the UI table flips to "—" immediately.
+                // We must do two things IN ORDER here, before any
+                // async work:
+                //   1. `removeStationFromDifferentIngredients()` —
+                //      reads the ingredient's category, so it MUST
+                //      run before we wipe the slot.
+                //   2. Snapshot `shouldCheck` gate now (UIKit
+                //      evaluates at callback time, but because
+                //      `cleaningMode` might flip during the async
+                //      PATCH we capture the current value).
+                //   3. Wipe the local slot synchronously so the UI
+                //      matches UIKit's immediate feedback.
+                //   4. Run the PATCH → checkIfAny pipeline async.
+                self.removeStationFromDifferentIngredients()
+                let shouldCheck = self.shouldCheckDifferentStationsAfterRemove()
+                if let idx = self.stations.firstIndex(where: {
+                    $0.station == self.selectedStation
+                }) {
+                    self.stations[idx].ingredientName = ""
+                    self.stations[idx].ingredientQuantity = 0
+                    self.stations[idx].isPerishable = false
+                }
                 Task { [ble] in
                     await self.persistCleanComplete(ble: ble)
-                }
-                // 1:1 port of UIKit `onShowPerishableCleanedAlert`:
-                // after a full clean on a station that was holding a
-                // perishable ingredient, the flow presents the
-                // "Perishable Ingredients Cleaned" alert and pops back
-                // to the Stations menu when the user dismisses it.
-                if cleanedWasPerishable {
-                    self.shouldShowPerishableCleanedAlert = true
+                    // Post-server check — UIKit equivalent:
+                    //   `if self.shouldCheckDifferentStationsAfterRemove() {
+                    //        self.checkIfAnyDifferentStationsExistInSetUpStations()
+                    //    }`
+                    // in `removeStation(…)`'s API callback
+                    // (`StationCleaningFlowViewModel.swift` L346-348).
+                    if shouldCheck {
+                        await MainActor.run {
+                            self.checkIfAnyDifferentStationsExistInSetUpStations()
+                        }
+                    }
                 }
             }
             self.progress = 1.0
@@ -2944,14 +3516,28 @@ final class StationCleaningFlowViewModel: ObservableObject {
         //   • flush mode → finish flush, transition to pourCleaningSolution,
         //                  persist the flush update on the server.
         //   • clean mode → finalize clean, transition to cleaningComplete,
-        //                  remove station on the server.
+        //                  remove station on the server + run the
+        //                  different-stations alert orchestration
+        //                  (matches UIKit's `removeStation` success path).
         if cleaningMode == .flush {
             cleaningMode = .clean
             currentFlow = .pourCleaningSolution
             Task { [ble] in await self.persistFlushComplete(ble: ble) }
         } else {
             currentFlow = .cleaningComplete
-            Task { [ble] in await self.persistCleanComplete(ble: ble) }
+            // UIKit ordering (see `scheduleCleanCompleteTransition`
+            // comment): prune the dirty list BEFORE wiping the
+            // station, then decide whether to run the post-check.
+            removeStationFromDifferentIngredients()
+            let shouldCheck = shouldCheckDifferentStationsAfterRemove()
+            Task { [ble] in
+                await self.persistCleanComplete(ble: ble)
+                if shouldCheck {
+                    await MainActor.run {
+                        self.checkIfAnyDifferentStationsExistInSetUpStations()
+                    }
+                }
+            }
         }
     }
 
@@ -3057,22 +3643,45 @@ final class StationCleaningFlowViewModel: ObservableObject {
     ///   • CLEAN → flip to `.cleaningComplete`, wipe the selected
     ///            station locally.
     private func finishSimulatedClean() {
+        if cleaningMode == .flush {
+            // Flush phase ends — zero the quantity but KEEP the
+            // ingredient name + category so the follow-up clean
+            // cycle still has meaningful context.
+            if let idx = stations.firstIndex(where: { $0.station == selectedStation }) {
+                stations[idx].ingredientQuantity = 0
+            }
+            cleaningMode = .clean
+            currentFlow = .pourCleaningSolution
+            processState = .idle
+            progress = 0
+            return
+        }
+        // CLEAN mode path — mirror the real-device order in
+        // `scheduleCleanCompleteTransition`:
+        //   1. Prune the dirty list FIRST (while `stations[idx]`
+        //      still holds the ingredient category so the match
+        //      hits).
+        //   2. Snapshot `shouldCheckDifferentStationsAfterRemove`
+        //      BEFORE mutating `cleaningMode`.
+        //   3. Wipe the station locally (equivalent to
+        //      `persistCleanComplete`'s post-PATCH reset).
+        //   4. Run `checkIfAny…` only if the snapshot said yes —
+        //      matching UIKit's callback-time gate.
+        removeStationFromDifferentIngredients()
+        let shouldCheck = shouldCheckDifferentStationsAfterRemove()
         if let idx = stations.firstIndex(where: { $0.station == selectedStation }) {
             stations[idx].ingredientQuantity = 0
             stations[idx].ingredientName = ""
             stations[idx].isPerishable = false
         }
-        if cleaningMode == .flush {
-            cleaningMode = .clean
-            currentFlow = .pourCleaningSolution
-            processState = .idle
-            progress = 0
-        } else {
-            currentFlow = .cleaningComplete
-            processState = .idle
-            progress = 1.0
+        currentFlow = .cleaningComplete
+        processState = .idle
+        progress = 1.0
+        if shouldCheck {
+            checkIfAnyDifferentStationsExistInSetUpStations()
         }
     }
+
 }
 
 /// Lightweight no-op fallback used by the demo simulator path when the
@@ -3158,13 +3767,14 @@ struct StationCleaningView: View {
                 )
                 .padding(.horizontal, 24)
 
-                // Progress ring — visible only during the dispensing phase.
-                if viewModel.processState == .dispensing
-                    || viewModel.currentFlow == .dispensingInProgress {
-                    progressRing
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 8)
-                }
+                // UIKit parity: `StationCleaningFlowViewController` has NO
+                // progress ring / percentage display. The dispensing phase
+                // is communicated purely through `progressMessageButton`
+                // text ("Flushing in progress…" / "Cleaning in progress")
+                // already rendered inside `StationSelectorCard` above.
+                // Earlier SwiftUI port showed a 180×180 circular progress
+                // at 0% that rotated in — that UI does not exist in UIKit
+                // and was misleading users about cycle completion.
 
                 // Inline 6-row station table (read-only; selection mirrors card).
                 VStack(spacing: 0) {
@@ -3172,7 +3782,16 @@ struct StationCleaningView: View {
                         StationCleaningFlowTableRow(
                             slot: slot,
                             isSelected: slot.station == viewModel.selectedStation,
-                            unit: env.preferences.measurementUnit
+                            unit: env.preferences.measurementUnit,
+                            // Paint the row red when this station is in
+                            // the dirty list (setup-flow mismatch OR
+                            // perishable-expired). UIKit's
+                            // `cellColorState(for:)` treats dirty-list
+                            // membership identically to `isPerishable`
+                            // — both take the `.perishable` branch and
+                            // render with `perishableColor`.
+                            isInDirtyList: viewModel.differentIngredientsInStationsAre
+                                .contains(where: { $0.station == slot.station })
                         )
                         .onTapGesture {
                             HapticService.light()
@@ -3215,6 +3834,39 @@ struct StationCleaningView: View {
         // Now: cache name once, retry briefly if empty, gate on
         // device-connected.
         .task {
+            // 1:1 port of UIKit data-hand-off from
+            // `RecipeCraftingClass+StationSetup.setupStationsAction` →
+            // `ControlCenterCoordinator.showStationCleaningFlow`. The
+            // Mixlist-detail flow publishes a `SetupStationsContext`
+            // on the router right before pushing `.stationCleaning`;
+            // we pick it up here, seed the VM with `.recipeCrafting`
+            // origin + the mapped stations + the pre-computed dirty
+            // list, and skip the "start fresh from server" path.
+            //
+            // `setupStationsContext` stays non-nil across the
+            // cleaning → stations-menu hop (UIKit preserves the
+            // payload on `StationsMenuVC` as well) — we only clear it
+            // once the user proceeds out of the stations menu to
+            // crafting, so the chain's integrity is owned by the
+            // downstream screen.
+            if let ctx = router.setupStationsContext {
+                viewModel.stationsOrigin = .recipeCrafting
+                viewModel.mappedIngredientArrayWithStations = ctx.mappedSlots
+                // Seed the dirty list from the pre-filtered array the
+                // setup flow handed us (setupStations() on
+                // MixlistsScreens.swift L1100-1102 merges
+                // `stationsToClean + perishableExpired`). We still
+                // refresh the 6-station snapshot from the server
+                // below so the local copies reflect current state.
+                viewModel.differentIngredientsInStationsAre = ctx.stationsToClean
+                // Select the FIRST dirty station so the alert's
+                // target + the UI's selected state agree (UIKit
+                // `viewModel.selectedStationName = differentIngredientsInStationsAre.first?.stationName`).
+                if let first = ctx.stationsToClean.first {
+                    viewModel.selectedStation = first.station
+                }
+            }
+
             var deviceName = ble.getConnectedDeviceName()
             var retries = 3
             while deviceName.isEmpty && retries > 0 && ble.isAnyDeviceConnected {
@@ -3224,6 +3876,24 @@ struct StationCleaningView: View {
             }
             guard !deviceName.isEmpty else { return }
             await viewModel.loadStations(deviceName: deviceName)
+
+            // 1:1 port of UIKit
+            // `viewModel.loadStations { ... viewModel.getDifferentIngredientsInMixlistIngredients() ...
+            //   viewModel.checkIfAnyDifferentStationsExistInSetUpStations() }`
+            // (`StationCleaningFlowViewModel.swift` L150-157):
+            // after the server GET returns the authoritative
+            // 6-station snapshot we (re)build the dirty list (setup
+            // mismatches + perishable-expired) and then run the
+            // alert-check pipeline. The function itself is a no-op
+            // when `differentIngredientsInStationsAre` is empty AND
+            // we're not in `.recipeCrafting` origin (the user-reported
+            // bug — "every time I click Clean from control center it
+            // says Perishable Ingredients Cleaned" — was caused by a
+            // previous eager implementation that bypassed that
+            // outer guard; the UIKit-faithful version now does the
+            // right thing without any caller-side gating).
+            viewModel.populateDifferentIngredientsInStations()
+            viewModel.checkIfAnyDifferentStationsExistInSetUpStations()
         }
         // Subscribe to BLE responses — drives the cleaning state machine
         // off real device events when a peripheral is connected.
@@ -3286,6 +3956,13 @@ struct StationCleaningView: View {
                 message: "",
                 primary: ConstantButtonsTitle.continueButtonTitle,
                 action: {
+                    // Clear any lingering setup context — the
+                    // perishable-cleaned flow ends here (pop back to
+                    // the presenting screen). If the user later
+                    // opens Station Menu from Control Center, the
+                    // task should treat it as `.controlCenter`
+                    // origin, not replay the setup flow.
+                    router.setupStationsContext = nil
                     // Dismiss the cleaning screen — routes back to the
                     // Stations menu which will pick up the refresh tick
                     // we've already posted in `onDisappear`.
@@ -3319,28 +3996,50 @@ struct StationCleaningView: View {
                 }
             )
         }
-    }
-
-    private var progressRing: some View {
-        ZStack {
-            Circle()
-                .stroke(Color("borderColor"), lineWidth: 10)
-                .frame(width: 180, height: 180)
-            Circle()
-                .trim(from: 0, to: viewModel.progress)
-                .stroke(Theme.Color.brand,
-                        style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .frame(width: 180, height: 180)
-                .animation(.linear(duration: 0.08), value: viewModel.progress)
-            VStack(spacing: 4) {
-                Text("\(Int(viewModel.progress * 100))%")
-                    .font(Theme.Font.bold(28))
-                    .foregroundStyle(Color("appBlackColor"))
-                Text(viewModel.cleaningMode == .flush ? "Flush" : "Clean")
-                    .font(Theme.Font.of(.caption1, .semibold))
-                    .foregroundStyle(Color("mediumLightGrayColor"))
-            }
+        // 1:1 port of UIKit
+        // `viewModel.onShowContinueSetupAlert = { [weak self] in
+        //     self.showCustomAlert(
+        //         continueButtonTitleStr: "Continue",
+        //         title: Constants.continueSetupStations,
+        //         stationsNameStr: ""
+        //     ) { _ in
+        //         let stationsMenuVc = ...instantiate...
+        //         stationsMenuVc.mixlist = viewModel.mixlist
+        //         stationsMenuVc.actualBaseAndMixerArrOfMixlist = ...
+        //         stationsMenuVc.mergedRecipeArrayFromBarBot = ...
+        //         stationsMenuVc.ingredientsArrayForSetUpStationsMapped = ...
+        //         stationsMenuVc.stationsOrigin = .stationsCleanScreen
+        //         self.navigationController?.pushViewController(stationsMenuVc, animated: true)
+        //     }
+        // }`
+        //
+        // Triggered after every dirty station has been cleaned in
+        // `.setupStationsFlow` origin — we show the "Continue to
+        // Station Setup" alert and, on Continue, replace the
+        // cleaning screen with the stations menu so the user can
+        // proceed to fill stations. The setup-stations context the
+        // mixlist-detail flow placed on the router stays non-nil
+        // across this hop so the stations menu reads the same
+        // mapped-ingredients payload UIKit's
+        // `stationsMenuVc.ingredientsArrayForSetUpStationsMapped`
+        // carried forward.
+        .onChange(of: viewModel.shouldShowContinueSetupAlert) { shouldShow in
+            guard shouldShow else { return }
+            viewModel.shouldShowContinueSetupAlert = false
+            env.alerts.show(
+                title: Constants.continueSetupStations,
+                message: "",
+                primary: ConstantButtonsTitle.continueButtonTitle,
+                action: {
+                    // Swap the cleaning screen for the stations
+                    // menu. UIKit pushes a new VC; in SwiftUI we
+                    // pop + push in one pass so the back stack
+                    // ends at MixlistDetail → StationsMenu rather
+                    // than MixlistDetail → Cleaning → StationsMenu.
+                    router.popTop()
+                    router.push(.stationsMenu)
+                }
+            )
         }
     }
 
@@ -3408,10 +4107,20 @@ struct StationCleaningView: View {
                 .buttonStyle(BounceButtonStyle())
             }
             if buttons.contains(.continue) {
-                actionButton(ConstantButtonsTitle.continueButtonTitle,
-                             color: Theme.Color.brand) {
+                // Continue CTA — brand-orange pill. Uses the
+                // dark-mode-aware `brandButtonLabel()` helper (same
+                // recipe as the Clean button + Recipe-page Craft
+                // button) so the gradient stays peach-tan in dark
+                // mode instead of collapsing to the asset's
+                // dark-appearance variant (near-black). Light mode is
+                // untouched.
+                Button {
+                    HapticService.light()
                     viewModel.tapContinueAfterPourSolution(ble: ble)
+                } label: {
+                    brandButtonLabel(ConstantButtonsTitle.continueButtonTitle)
                 }
+                .buttonStyle(BounceButtonStyle())
             }
             if buttons.contains(.pause) || buttons.contains(.stop) {
                 // UIKit stack tP9-r1-gEb: spacing=8, distribution=fillEqually
@@ -3424,9 +4133,24 @@ struct StationCleaningView: View {
                         }
                     }
                     if buttons.contains(.stop) {
-                        actionButton("Stop", color: Theme.Color.brand) {
+                        // Stop CTA — brand-orange pill. Same
+                        // dark-mode treatment as Continue (above)
+                        // and Clean so all three brand CTAs render
+                        // the same peach-tan gradient in both
+                        // appearances. Previously this routed
+                        // through the shared `actionButton(…,
+                        // color: .brand)` path which resolves the
+                        // brand-gradient colour assets, whose
+                        // dark-appearance variant is near-black —
+                        // making the Stop capsule disappear against
+                        // the dark backdrop.
+                        Button {
+                            HapticService.light()
                             viewModel.tapStop(ble: ble)
+                        } label: {
+                            brandButtonLabel("Stop")
                         }
+                        .buttonStyle(BounceButtonStyle())
                     }
                 }
             }
@@ -3485,10 +4209,18 @@ struct StationCleaningView: View {
         .buttonStyle(BounceButtonStyle())
     }
 
-    /// Dark-mode-aware "Clean" button — scoped strictly to the Clean
-    /// CTA (not the Continue / Stop brand buttons on the same
-    /// screen) per the product spec's "only the Clean button"
-    /// instruction.
+    /// Dark-mode-aware "Clean" button label. Delegates to the shared
+    /// `brandButtonLabel` helper so Clean / Continue / Stop all share
+    /// the same peach-tan gradient in dark mode (matching the Recipe
+    /// Craft button — `primaryOrangeButtonBackground` at
+    /// RecipesScreens.swift:1487).
+    private func cleanButtonLabel() -> some View {
+        brandButtonLabel("Clean")
+    }
+
+    /// Shared dark-mode-aware brand-orange pill. Backs all three
+    /// brand CTAs on this screen — Clean, Continue, Stop — so they
+    /// stay readable in dark mode.
     ///
     /// Recipe: inlined `brandCapsule(height: 45, cornerRadius: 22.5)`
     /// with a dark-mode gradient override. Light mode resolves
@@ -3496,8 +4228,10 @@ struct StationCleaningView: View {
     /// `brandGradientBottom` colour assets (bit-identical pixels).
     /// Dark mode hard-codes the LIGHT-mode brand-orange RGB so the
     /// capsule stays peach-tan instead of collapsing into the
-    /// asset's near-black dark-appearance variant.
-    private func cleanButtonLabel() -> some View {
+    /// asset's near-black dark-appearance variant — exactly how
+    /// `RecipesScreens.primaryOrangeButtonBackground` handles the
+    /// Recipe Craft button.
+    private func brandButtonLabel(_ title: String) -> some View {
         let height: CGFloat = 45
         let iOS26Available: Bool = {
             if #available(iOS 26.0, *) { return true } else { return false }
@@ -3517,7 +4251,7 @@ struct StationCleaningView: View {
                 SwiftUI.Color("brandGradientTop"),
                 SwiftUI.Color("brandGradientBottom")
             ]
-        return Text("Clean")
+        return Text(title)
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(SwiftUI.Color.black)
             .frame(maxWidth: .infinity)

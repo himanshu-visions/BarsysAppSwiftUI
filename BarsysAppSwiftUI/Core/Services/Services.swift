@@ -493,7 +493,14 @@ final class MockStorageService: StorageService {
             return mlRecipes.allSatisfy { recipe in
                 let nonGarnish = (recipe.ingredients ?? []).filter {
                     let p = ($0.category?.primary ?? "").lowercased()
-                    return p != "garnish" && p != "additional"
+                    // 1:1 port of UIKit `DBQueries.fetchMatchingRecipeLists` SQL
+// `WHERE LOWER(i.categoryPrimary) NOT IN ('garnish', 'additionals', 'additional')`.
+// UIKit excludes THREE variants — both singular `additional` AND
+// plural `additionals` — because recipe ingredient rows use
+// both tags historically. Previously this port excluded only
+// the two variants and admitted plural-`additionals` ingredients
+// as base/mixer, bloating Ready-to-Pour recipe counts.
+return p != "garnish" && p != "additional" && p != "additionals"
                 }
                 return nonGarnish.count <= 6
             }
@@ -508,7 +515,14 @@ final class MockStorageService: StorageService {
         let all = recipe.ingredients ?? []
         let baseAndMixer = all.filter {
             let p = ($0.category?.primary ?? "").lowercased()
-            return p != "garnish" && p != "additional"
+            // 1:1 port of UIKit `DBQueries.fetchMatchingRecipeLists` SQL
+// `WHERE LOWER(i.categoryPrimary) NOT IN ('garnish', 'additionals', 'additional')`.
+// UIKit excludes THREE variants — both singular `additional` AND
+// plural `additionals` — because recipe ingredient rows use
+// both tags historically. Previously this port excluded only
+// the two variants and admitted plural-`additionals` ingredients
+// as base/mixer, bloating Ready-to-Pour recipe counts.
+return p != "garnish" && p != "additional" && p != "additionals"
         }
         let garnish = all.filter {
             let p = ($0.category?.primary ?? "").lowercased()
@@ -529,7 +543,14 @@ final class MockStorageService: StorageService {
         return allRecipes().filter { recipe in
             let nonGarnish = (recipe.ingredients ?? []).filter {
                 let p = ($0.category?.primary ?? "").lowercased()
-                return p != "garnish" && p != "additional"
+                // 1:1 port of UIKit `DBQueries.fetchMatchingRecipeLists` SQL
+// `WHERE LOWER(i.categoryPrimary) NOT IN ('garnish', 'additionals', 'additional')`.
+// UIKit excludes THREE variants — both singular `additional` AND
+// plural `additionals` — because recipe ingredient rows use
+// both tags historically. Previously this port excluded only
+// the two variants and admitted plural-`additionals` ingredients
+// as base/mixer, bloating Ready-to-Pour recipe counts.
+return p != "garnish" && p != "additional" && p != "additionals"
             }
             guard !nonGarnish.isEmpty else { return false }
             return nonGarnish.allSatisfy { ing in
@@ -550,7 +571,14 @@ final class MockStorageService: StorageService {
             return mlRecipes.allSatisfy { recipe in
                 let nonGarnish = (recipe.ingredients ?? []).filter {
                     let p = ($0.category?.primary ?? "").lowercased()
-                    return p != "garnish" && p != "additional"
+                    // 1:1 port of UIKit `DBQueries.fetchMatchingRecipeLists` SQL
+// `WHERE LOWER(i.categoryPrimary) NOT IN ('garnish', 'additionals', 'additional')`.
+// UIKit excludes THREE variants — both singular `additional` AND
+// plural `additionals` — because recipe ingredient rows use
+// both tags historically. Previously this port excluded only
+// the two variants and admitted plural-`additionals` ingredients
+// as base/mixer, bloating Ready-to-Pour recipe counts.
+return p != "garnish" && p != "additional" && p != "additionals"
                 }
                 guard !nonGarnish.isEmpty else { return false }
                 return nonGarnish.allSatisfy { ing in

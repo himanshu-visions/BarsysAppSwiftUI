@@ -124,7 +124,28 @@ struct ReadyToPourView: View {
         .onAppear {
             guard !didLoad else { return }
             didLoad = true
-            Task { await loadData() }
+            // 1:1 port of UIKit
+            // `MixlistsUpdateClass.updateMixlists(controller:)` +
+            // `getBarsys360ReadyToPourRecipes { recipes in … }` chain
+            // that runs BEFORE `RecipesCoordinator.showReadyToPour(…)`
+            // pushes this screen (see
+            // `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients`
+            // L60-84 and the analogous calls from BarBot / My Bar
+            // entry points).
+            //
+            // Running the refresh inside THIS view's `.onAppear`
+            // rather than at every call site means every entry
+            // point (setup-stations Proceed, BarBot "Show my
+            // ready-to-pour", My Bar "Ready to Pour", tab switches)
+            // renders the latest recipes/mixlists without each
+            // call-site having to remember to refresh first. The
+            // internal 30-second throttle in `CatalogService.preload`
+            // makes this safe — rapid re-entries skip the network
+            // call and just re-read storage.
+            Task {
+                await env.catalog.preload()
+                await loadData()
+            }
         }
         // 1:1 with UIKit `ReadyToPourListViewController+Search.swift`
         // `getMixlists` (L67-85). When the Mixlists tab loads an empty
@@ -383,17 +404,34 @@ struct ReadyToPourView: View {
             return
         }
 
-        // Step 3: `allowedIngredients` from the currently-assigned
-        // stations only. UIKit's loop
-        // (MixlistsUpdateClass.swift L114-118) iterates every slot and
-        // uses a tautological guard `primary != nil || primary != ""`
-        // which is always true — harmless because empty slots have
-        // empty category pairs that no recipe ingredient matches.
-        // We take the cleaner route: skip slots with no assigned
-        // ingredient, which yields the exact same SQL-filter result
-        // but avoids pushing dummy `("","")` pairs downstream.
-        let allowed: [(primary: String, secondary: String)] = stations.compactMap { slot in
-            guard !slot.ingredientName.isEmpty else { return nil }
+        // Step 3: `allowedIngredients` — 1:1 with UIKit
+        // `MixlistsUpdateClass.getBarsys360ReadyToPourRecipes` L114-118:
+        //
+        // ```
+        // for (pairIndex, ingredient) in AppNavigationState.shared.stationArray.enumerated() {
+        //     if (ingredient.category.primary != nil || ingredient.category.primary != "") &&
+        //        (ingredient.category.secondary != nil || ingredient.category.secondary != "") {
+        //         allowedIngredients.append((
+        //             primary: ingredient.category.primary?.lowercased(),
+        //             secondary: ingredient.category.secondary?.lowercased()
+        //         ))
+        //     }
+        // }
+        // ```
+        //
+        // The guard `primary != nil || primary != ""` is tautologically
+        // true for every station (nil → second clause true; non-nil →
+        // first clause true), so UIKit ALWAYS pushes 6 entries into
+        // `allowedIngredients` — including empty slots as
+        // `("", "")` pairs. The previous SwiftUI port skipped empty
+        // slots which made Ready-to-Pour STRICTER than UIKit and
+        // hid legacy / user-created recipes whose ingredients have
+        // blank categories (a blank-category recipe ingredient
+        // matches an empty-station `("","")` pair in UIKit).
+        //
+        // Include ALL stations so the SQL filter sees the same
+        // permissive allow-list UIKit produces.
+        let allowed: [(primary: String, secondary: String)] = stations.map { slot in
             let p = (slot.category?.primary ?? "").lowercased()
             let s = (slot.category?.secondary ?? "").lowercased()
             return (primary: p, secondary: s)
@@ -445,6 +483,125 @@ struct ReadyToPourView: View {
                                     source: .recipeCrafting)
             return
         }
+        // 1:1 port of UIKit
+        // `ReadyToPourListViewController+Actions.swift` →
+        // `RecipeCraftingClass.craftRecipeFromRecipeListing(...)` →
+        // `checkBarsys360Craftability` preflight for Barsys 360
+        // (same validation chain as Recipe Page + BarBot). Without
+        // this, tapping Craft on a Ready-to-Pour row when a
+        // station happens to be mid-refill, perishable-expired,
+        // or missing the ingredient pushes CraftingView and
+        // surfaces the error inside — UIKit catches it here
+        // BEFORE pushing.
+        if ble.isBarsys360Connected() {
+            Task { @MainActor in
+                await validateAndPushBarsys360Craft(recipe)
+            }
+            return
+        }
+        // Coaster / Shaker: 5 ml clamp handled inside CraftingViewModel,
+        // go straight to the crafting screen.
+        router.push(.crafting(recipe.id))
+    }
+
+    /// Ports the Barsys-360 branch of UIKit
+    /// `RecipeCraftingClass.craftRecipeFromRecipeListing` +
+    /// `craft360RecipeForUpdatedQuantity` preflight: fetch live
+    /// stations, validate every base/mixer ingredient has a matching
+    /// station with sufficient quantity, block on expired perishables,
+    /// only then push `.crafting`.
+    @MainActor
+    private func validateAndPushBarsys360Craft(_ recipe: Recipe) async {
+        let deviceName = ble.getConnectedDeviceName()
+        guard !deviceName.isEmpty else {
+            env.alerts.show(title: Constants.deviceNotConnected)
+            return
+        }
+        env.loading.show("Checking stations…")
+        let freshStations = await StationsAPIService.loadStations(deviceName: deviceName)
+        env.loading.hide()
+
+        // Extract base/mixer (non-garnish, non-additional), unique by
+        // lowercased name — matches UIKit
+        // `RecipePageViewModel+DataLoading.swift` L27 +
+        // `.unique(by: { $0.name.lowercased() })`.
+        let rawBaseAndMixer = (recipe.ingredients ?? []).filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            // Matches UIKit `fetchMatchingRecipeLists` SQL filter:
+            // `NOT IN ('garnish', 'additionals', 'additional')` —
+            // both plural and singular `additional*` variants are
+            // excluded from base/mixer.
+            return p != "garnish" && p != "additional" && p != "additionals"
+        }
+        var seen = Set<String>()
+        var baseAndMixer: [Ingredient] = []
+        for ing in rawBaseAndMixer {
+            let key = ing.name.lowercased()
+            if key.isEmpty { continue }
+            if seen.insert(key).inserted { baseAndMixer.append(ing) }
+        }
+
+        // 5 ml minimum — UIKit fires `lowIngredientQty` alert when any
+        // base/mixer falls below the threshold.
+        for ing in baseAndMixer {
+            if (ing.quantity ?? 0) < 5.0 {
+                env.alerts.show(title: Constants.lowIngredientQty)
+                return
+            }
+        }
+
+        // All-6-empty guard.
+        let emptyCount = freshStations.filter {
+            $0.ingredientName.isEmpty || $0.ingredientName == Constants.emptyDoubleDash
+        }.count
+        if emptyCount == 6 {
+            env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+            return
+        }
+
+        // Per-ingredient match + quantity check.
+        for ing in baseAndMixer {
+            let rp = (ing.category?.primary ?? "").lowercased()
+            let rs = (ing.category?.secondary ?? "").lowercased()
+            let matching = freshStations.first { slot in
+                let sp = (slot.category?.primary ?? "").lowercased()
+                let ss = (slot.category?.secondary ?? "").lowercased()
+                return !sp.isEmpty && sp == rp && ss == rs
+            }
+            guard let station = matching else {
+                env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+                return
+            }
+            if !station.ingredientName.isEmpty,
+               station.ingredientQuantity < (ing.quantity ?? 0) {
+                env.alerts.show(title: Constants.insufficientIngredientQuantityFor360)
+                return
+            }
+        }
+
+        // Perishable-expired guard — UIKit
+        // `ReadyToPourListViewController.viewWillAppear` L297-305
+        // shows the same popup when stations are perishable-expired.
+        // Mirror here so the craft button honours it too.
+        // `isPerishableExpired` = raw perishable flag AND updated_at
+        // older than 24h. Matches UIKit `getPerishableArray`.
+        let expired = freshStations.filter { $0.isPerishableExpired }
+        if !expired.isEmpty {
+            env.alerts.show(
+                title: Constants.perishableDescriptionTitle,
+                primaryTitle: Constants.cleanAlertTitle,
+                secondaryTitle: Constants.okayButtonTitle,
+                onPrimary: {
+                    router.setupStationsContext = nil
+                    router.push(.stationCleaning)
+                },
+                onSecondary: {
+                    // UIKit "Okay" is a no-op — stay on Ready to Pour.
+                }
+            )
+            return
+        }
+
         router.push(.crafting(recipe.id))
     }
 }

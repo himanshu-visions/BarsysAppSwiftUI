@@ -93,7 +93,8 @@ struct BarBotRecipeElement: Codable, Identifiable, Hashable {
     var baseAndMixerIngredientNamesJoined: String {
         let baseAndMixer = (ingredients ?? []).filter { ing in
             guard let primary = ing.category?.primary?.lowercased() else { return false }
-            return primary != "garnish" && primary != "additional"
+            // UIKit SQL: NOT IN ('garnish','additionals','additional').
+            return primary != "garnish" && primary != "additional" && primary != "additionals"
         }
         var seen = Set<String>()
         let uniqueNames = baseAndMixer.compactMap { ing -> String? in
@@ -2869,11 +2870,160 @@ struct BarBotCraftView: View {
                                     source: .recipeCrafting)
             return
         }
-        // Present BarBotCraftingView as a full-screen cover over the
-        // BarBot chat — mirrors UIKit
-        // `BarBotCoordinator.showBarBotCrafting(...)` which uses
-        // `.overFullScreen` + `FadeZoomTransitioningDelegate`.
+        // 1:1 port of UIKit
+        // `MainBarBotCell+Actions.craftAction(recipeToCraft:)` validation
+        // chain for the Barsys 360 path (L57-147). UIKit runs the
+        // whole pipeline BEFORE presenting BarBotCraftingViewController:
+        //   1. getStationsHere → server GET
+        //   2. All-6-empty guard → ingredientDoesNotExistInStation alert
+        //   3. 5 ml minimum → lowIngredientQty alert
+        //   4. Per-ingredient primary+secondary match vs stations →
+        //      ingredientDoesNotExistInStation alert if missing
+        //   5. Per-ingredient qty check (station.qty < recipe.qty) →
+        //      insufficientIngredientQuantityFor360 alert
+        //   6. Perishable-expired guard → perishableDescriptionTitle
+        //      Clean/Okay confirm (Clean routes to cleaning flow)
+        //   7. Only after ALL checks pass → present crafting
+        //
+        // Without this, BarBot crafting silently opened the dispensing
+        // screen and the firmware either dispensed wrong ingredients or
+        // timed out waiting for a station that didn't exist —
+        // user-reported regression.
+        //
+        // Coaster / Shaker path (UIKit L39-55): skips station matching
+        // but STILL enforces the 5 ml minimum before presenting.
         HapticService.light()
+        if ble.isBarsys360Connected() {
+            Task { @MainActor in
+                await validateAndPresentBarsys360Craft(recipe)
+            }
+            return
+        }
+        // Coaster / Shaker path — only the 5 ml minimum enforcement.
+        let baseAndMixer = recipe.ingredients?.filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            // UIKit SQL: NOT IN ('garnish','additionals','additional').
+            return p != "garnish" && p != "additional" && p != "additionals"
+        } ?? []
+        for ing in baseAndMixer {
+            if (ing.quantity ?? 0) < 5.0 {
+                env.alerts.show(title: Constants.lowIngredientQty)
+                return
+            }
+        }
+        craftingRecipe = recipe
+    }
+
+    /// Ports the Barsys-360 branch of UIKit's
+    /// `craftAction(recipeToCraft:)` (MainBarBotCell+Actions L57-147).
+    /// Fetches live stations, runs the full validation chain, then
+    /// either surfaces the matching alert or sets
+    /// `craftingRecipe` to present the crafting modal.
+    @MainActor
+    private func validateAndPresentBarsys360Craft(_ recipe: BarBotRecipeElement) async {
+        // Step 1 — getStationsHere. Show a loader while the PATCH
+        // round-trips (UIKit uses `getStationsHere` which internally
+        // shows a "Loading Stations" glass loader).
+        let deviceName = ble.getConnectedDeviceName()
+        guard !deviceName.isEmpty else {
+            env.alerts.show(title: Constants.deviceNotConnected)
+            return
+        }
+        env.loading.show("Loading Stations")
+        let stations = await StationsAPIService.loadStations(deviceName: deviceName)
+        env.loading.hide()
+
+        // Step 2 — all-6-empty guard. UIKit L62-70: if every station
+        // has no ingredient, there's literally nothing to craft with.
+        let emptyCount = stations.filter {
+            $0.ingredientName.isEmpty || $0.ingredientName == Constants.emptyDoubleDash
+        }.count
+        if emptyCount == 6 {
+            env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+            return
+        }
+
+        // Step 3 — base/mixer filtering + 5 ml minimum enforcement.
+        // Matches UIKit L18-29 (filter primary != "garnish" AND !=
+        // "additional", unique-by-name, clamp < 5ml to 5ml).
+        let baseAndMixerRaw = recipe.ingredients?.filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            // UIKit SQL: NOT IN ('garnish','additionals','additional').
+            return p != "garnish" && p != "additional" && p != "additionals"
+        } ?? []
+        var seen = Set<String>()
+        var baseAndMixer: [BarBotIngredient] = []
+        for ing in baseAndMixerRaw {
+            let key = (ing.name ?? "").lowercased()
+            if key.isEmpty { continue }
+            if seen.insert(key).inserted { baseAndMixer.append(ing) }
+        }
+        for ing in baseAndMixer {
+            if (ing.quantity ?? 0) < 5.0 {
+                env.alerts.show(title: Constants.lowIngredientQty)
+                return
+            }
+        }
+
+        // Step 4 & 5 — per-ingredient primary+secondary match against
+        // the fetched stations, with a quantity check inside the match.
+        // UIKit L97-124 exactly: if no station has this ingredient's
+        // primary+secondary → `ingredientDoesNotExistInStation`;
+        // if station has it but quantity is too low →
+        // `insufficientIngredientQuantityFor360`.
+        for ing in baseAndMixer {
+            let rp = (ing.category?.primary ?? "").lowercased()
+            let rs = (ing.category?.secondary ?? "").lowercased()
+            let matching = stations.first { slot in
+                let sp = (slot.category?.primary ?? "").lowercased()
+                let ss = (slot.category?.secondary ?? "").lowercased()
+                return !sp.isEmpty && sp == rp && ss == rs
+            }
+            guard let station = matching else {
+                env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+                return
+            }
+            if !station.ingredientName.isEmpty,
+               station.ingredientQuantity < (ing.quantity ?? 0) {
+                env.alerts.show(title: Constants.insufficientIngredientQuantityFor360)
+                return
+            }
+        }
+
+        // Step 6 — perishable-expired guard. UIKit L127-139:
+        // `getPerishableArrayFromIngredientsArr(arrStations)` walks the
+        // WHOLE station array (not just matched ones) and returns any
+        // station whose `perishable == true` AND whose `updatedAt` is
+        // older than 24 h. SwiftUI `StationSlot.isPerishable` is
+        // already the processed "expired" flag (see
+        // `StationsAPIService.isExpired`), so a simple filter is the
+        // equivalent.
+        // Expired-perishable check — raw flag AND updated_at >24h ago.
+        // Matches UIKit `BleCommandBuilder.getPerishableArray`.
+        let expiredPerishables = stations.filter { $0.isPerishableExpired }
+        if !expiredPerishables.isEmpty {
+            env.alerts.show(
+                title: Constants.perishableDescriptionTitle,
+                primaryTitle: Constants.cleanAlertTitle,
+                secondaryTitle: Constants.okayButtonTitle,
+                onPrimary: {
+                    // Clean path — UIKit routes to station cleaning
+                    // flow WITHOUT setup context (it's control-center
+                    // origin for the BarBot craft perishable branch).
+                    router.setupStationsContext = nil
+                    router.push(.stationCleaning, in: .barBot)
+                },
+                onSecondary: {
+                    // Okay path — dismiss, user retains option to
+                    // try again later. DO NOT proceed to dispense
+                    // (UIKit's `okayAction` closure is an explicit
+                    // `return`, not a craft kickoff).
+                }
+            )
+            return
+        }
+
+        // Step 7 — everything clear, present the crafting cover.
         craftingRecipe = recipe
     }
 
@@ -4073,7 +4223,8 @@ struct BarBotCraftingView: View {
     private var mainIngredients: [BarBotIngredient] {
         recipe.normalizedIngredients.filter { ing in
             let primary = (ing.category?.primary ?? "").lowercased()
-            return primary != "garnish" && primary != "additional"
+            // UIKit SQL: NOT IN ('garnish','additionals','additional').
+            return primary != "garnish" && primary != "additional" && primary != "additionals"
         }
     }
 

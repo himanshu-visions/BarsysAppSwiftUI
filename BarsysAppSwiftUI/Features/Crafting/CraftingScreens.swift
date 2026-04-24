@@ -272,7 +272,8 @@ final class CraftingViewModel: ObservableObject {
         // UIKit split (RecipePageViewModel+DataLoading.swift L37-40).
         let baseAndMixer = allIngredients.filter { ing in
             let p = (ing.category?.primary ?? "").lowercased()
-            return p != "garnish" && p != "additional"
+            // Matches UIKit SQL exclusion: garnish, additionals, additional.
+            return p != "garnish" && p != "additional" && p != "additionals"
         }
         // `.unique(by: name.lowercased())` dedup — UIKit applies this
         // to garnish / additional (L29-30, L39-40) so repeat entries
@@ -449,7 +450,10 @@ final class CraftingViewModel: ObservableObject {
         // L79-89 + `performBarsys360CraftCheck` L91-99. UIKit skips the
         // prompt when `isSpeakEasyCase` because the remote operator —
         // not the app user — decides cleaning.
-        let perishableStations = stations.filter { $0.isPerishable }
+        // Use `isPerishableExpired` = raw flag AND updated_at > 24h
+        // ago. Matches UIKit `BleCommandBuilder.getPerishableArray(from:)`
+        // used by `craft360RecipeForUpdatedQuantity` perishable guard.
+        let perishableStations = stations.filter { $0.isPerishableExpired }
         let isSpeakEasy = AppStateManager.shared.isSpeakEasyCase
         if !perishableStations.isEmpty && !isSpeakEasy {
             pendingCraftCommand = command
