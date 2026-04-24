@@ -460,17 +460,29 @@ struct LoadingOverlayModifier: ViewModifier {
                             AnimatedGIFView(assetName: "BarsysLoader")
                                 .frame(width: 60, height: 60)
 
-                            if !state.message.isEmpty {
-                                // UIKit message label: AppFontClass.font(.subheadline, weight: .medium)
-                                // = SF Pro Display Medium 15pt, color .loaderTextColor,
-                                // centered, 2-line max.
-                                Text(state.message)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(Theme.Color.loaderText)
-                                    .multilineTextAlignment(.center)
-                                    .lineLimit(2)
-                                    .padding(.horizontal, 16)
-                            }
+                            // UIKit message label (UIViewController+GlassLoader.swift L89-96):
+                            //   font      = AppFontClass.font(.subheadline, weight: .medium)
+                            //               → SFProDisplay-Medium 15pt (NOT system SF)
+                            //   textColor = .loaderTextColor (#333333 light / #D1D1D6 dark)
+                            //   alignment = .center, numberOfLines = 2
+                            //   frame     = (x: padded.minX, width: padded.width=166,
+                            //                height: labelHeight=34) — FIXED height even
+                            //                when message is empty, so the GIF always
+                            //                sits at y=23 from the card's top (startY
+                            //                calc in UIKit L65-66 uses `total = gifSize
+                            //                + spacing + labelHeight = 104` regardless
+                            //                of message length).
+                            // Rendering the Text unconditionally with a fixed 34pt
+                            // height keeps the GIF position stable for "" vs multi-line
+                            // messages — matches UIKit's layout byte-for-byte.
+                            Text(state.message)
+                                .font(Theme.Font.of(.subheadline, .medium))
+                                .foregroundStyle(Theme.Color.loaderText)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 34)
+                                .padding(.horizontal, 16)
                         }
                         .frame(width: 200, height: 150)
                         .background(loaderCardBackground)
