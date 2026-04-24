@@ -290,6 +290,21 @@ final class AppRouter: ObservableObject {
     /// `RecipePageViewController.showUnsavedChangesAlertForBack`.
     @Published var unsavedChangesConfirmPopup: BarsysPopup? = nil
 
+    /// Live open-drag progress (0…1) for the BarBot history drawer.
+    /// Driven by the `ScreenEdgePanGesture(.openFromLeftEdge)` inside
+    /// BarBotCraftView. Hoisted to the router so `MainTabView` can
+    /// mount `BarBotHistorySideMenuOverlay` at the tab-view-above
+    /// z-layer (matching `SideMenuOverlay`) while the drag gesture
+    /// itself stays inside `BarBotCraftView` where the finger lands.
+    @Published var historyOpenDragProgress: CGFloat = 0
+
+    /// Live close-drag progress (0…1) for the BarBot history drawer.
+    /// Updated by the leftward pan inside
+    /// `BarBotHistorySideMenuOverlay` itself (now mounted on
+    /// `MainTabView`). See `historyOpenDragProgress` for the hoisting
+    /// rationale.
+    @Published var historyCloseDragProgress: CGFloat = 0
+
     /// Closure the `unsavedChangesConfirmPopup` runs on the "Discard"
     /// action — carries the captured tab-switch target so the
     /// confirmation pop can complete the navigation the user intended.

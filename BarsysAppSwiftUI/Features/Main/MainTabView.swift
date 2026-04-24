@@ -35,6 +35,15 @@ struct MainTabView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
 
+    /// Shared BarBot view model used by the `BarBotHistorySideMenuOverlay`
+    /// mounted at this level (so the drawer renders above the tab bar
+    /// like the right-side `SideMenuOverlay`). `BarBotCraftView` owns
+    /// its own `@StateObject` VM for its chat state — this instance
+    /// here just backs the history drawer's session list, which is
+    /// fetched on appear and doesn't need to share state with the
+    /// chat view's in-flight messages.
+    @StateObject private var barBotHistoryVM = BarBotViewModel()
+
     /// SwiftUI color-scheme env — read so the 4th tab's selected-state
     /// image can swap between `newHomeSelectedTab` (light) and
     /// `newHomeSelectedTabDark` (dark) at runtime. We re-call
@@ -278,7 +287,34 @@ struct MainTabView: View {
             }
 
             SideMenuOverlay()
+
+            // BarBot history drawer — mounted HERE at the MainTabView
+            // ZStack level (sibling of `SideMenuOverlay`) so it renders
+            // ABOVE the tab-bar z-layer, exactly like the right-side
+            // menu. Previously this lived inside `BarBotCraftView` and
+            // sat BELOW the tab bar, which is why the tab bar appeared
+            // on top of the drawer. Drag progress is hoisted to the
+            // router (`historyOpenDragProgress` / `historyCloseDragProgress`)
+            // so the edge-pan gesture inside `BarBotCraftView` still
+            // drives the open animation while the overlay itself lives
+            // at the higher z-layer here.
+            if router.showBarBotHistory || router.historyOpenDragProgress > 0 {
+                BarBotHistorySideMenuOverlay(
+                    isPresented: $router.showBarBotHistory,
+                    vm: barBotHistoryVM,
+                    closeDragProgress: $router.historyCloseDragProgress,
+                    openDragProgress: router.historyOpenDragProgress,
+                    isFullyPresented: router.showBarBotHistory
+                )
+                .zIndex(10)
+                .transition(.asymmetric(
+                    insertion: .identity,
+                    removal: .move(edge: .leading)
+                ))
+            }
         }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85),
+                   value: router.showBarBotHistory)
         // Rating popup — shown on the full screen AFTER side menu dismisses.
         // 1:1 port of UIKit: dismissSideMenu(isAnimated: false) → then
         // showCustomAlertMultipleButtons on topViewController.

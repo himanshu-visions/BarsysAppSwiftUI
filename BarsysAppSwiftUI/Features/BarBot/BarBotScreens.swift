@@ -2301,8 +2301,13 @@ struct BarBotCraftView: View {
     //   • `historyCloseDragProgress` — 0…1, set during the CLOSE pan
     //     while `showHistory` is true. The panel renders at
     //     `-progress * panelWidth` so it slides off to the left.
-    @State private var historyOpenDragProgress: CGFloat = 0
-    @State private var historyCloseDragProgress: CGFloat = 0
+    // `historyOpenDragProgress` / `historyCloseDragProgress` now live
+    // on `AppRouter` so `MainTabView` can mount
+    // `BarBotHistorySideMenuOverlay` at the tab-view-above z-layer
+    // (matching the right-side `SideMenuOverlay`) and still observe
+    // the drag progress driven by the edge-pan gesture that remains
+    // here in `BarBotCraftView`. Keep these stubs as computed
+    // references so nothing else in this file needs to change shape.
     @State private var pendingHistoryOpen = false
 
     // BarBot crafting modal — 1:1 with UIKit
@@ -2490,15 +2495,22 @@ struct BarBotCraftView: View {
         // flat canvas HomeView (ChooseOptions) uses — making the glass
         // pill's `.regularMaterial` blur look identical across screens.
         .chooseOptionsStyleNavBar()
-        // UIKit `SideMenuManager.menuSlideIn` presents at
-        // `menuWidth = view.frame.width` which covers the ENTIRE screen —
-        // including the custom nav bar AND the bottom tab bar. In SwiftUI
-        // the toolbar + TabView chrome sit OUTSIDE the view body by
-        // default, so we have to hide both while history is open so the
-        // slide-in overlay actually feels like it's covering everything
-        // behind it.
-        .toolbar(showHistory ? .hidden : .visible, for: .navigationBar)
-        .toolbar(showHistory ? .hidden : .visible, for: .tabBar)
+        // IMPORTANT — the nav bar and tab bar now STAY VISIBLE while the
+        // BarBot history drawer is open. Previously both were toggled to
+        // `.hidden` via
+        //   `.toolbar(showHistory ? .hidden : .visible, for: .navigationBar)`
+        //   `.toolbar(showHistory ? .hidden : .visible, for: .tabBar)`
+        // to mimic the UIKit `SideMenuManager.menuSlideIn` which covers
+        // the entire screen. But the user asked for the SAME behaviour
+        // as the right-side menu (`SideMenuOverlay` in SideMenuView.swift)
+        // where the nav + tab bars remain on-screen the whole time so
+        // the drawer feels like it "slides between" the chrome rather
+        // than replacing it. Leaving both bars at their default
+        // `.visible` state by NOT emitting a conditional `.toolbar`
+        // modifier is the SwiftUI-idiomatic way to achieve that — the
+        // NavigationStack renders its nav bar and the TabView renders
+        // its tab bar as usual while the history panel sits above the
+        // content region between them.
         .onAppear { if viewModel.messages.isEmpty { viewModel.setupNewChat() } }
         // BarBot crafting modal — see `craftingRecipe` state var.
         .fullScreenCover(item: $craftingRecipe) { r in
@@ -2618,21 +2630,21 @@ struct BarBotCraftView: View {
                                     HapticService.light()
                                     viewModel.fetchSessions()
                                 }
-                                historyOpenDragProgress = progress
+                                router.historyOpenDragProgress = progress
                             },
                             onEnded: { committed, _ in
                                 if committed {
                                     withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                                        historyOpenDragProgress = 1
+                                        router.historyOpenDragProgress = 1
                                         router.showBarBotHistory = true
                                     }
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                                        historyOpenDragProgress = 0
+                                        router.historyOpenDragProgress = 0
                                         pendingHistoryOpen = false
                                     }
                                 } else {
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                        historyOpenDragProgress = 0
+                                        router.historyOpenDragProgress = 0
                                     }
                                     pendingHistoryOpen = false
                                 }
@@ -2656,7 +2668,7 @@ struct BarBotCraftView: View {
                             HapticService.light()
                             viewModel.fetchSessions()
                         }
-                        historyOpenDragProgress = progress
+                        router.historyOpenDragProgress = progress
                     },
                     onEnded: { committed, _ in
                         // SideMenuSwift commits when progress > 0.4 OR
@@ -2672,19 +2684,19 @@ struct BarBotCraftView: View {
                             // SideMenuManager mutex (right menu auto-dismiss)
                             // is enforced by `AppRouter.showBarBotHistory.didSet`.
                             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                                historyOpenDragProgress = 1
+                                router.historyOpenDragProgress = 1
                                 router.showBarBotHistory = true
                             }
                             // Reset the live progress AFTER the panel is
                             // marked visible, so the post-open layout reads
                             // dragOffset == 0 (panel at x = 0).
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                                historyOpenDragProgress = 0
+                                router.historyOpenDragProgress = 0
                                 pendingHistoryOpen = false
                             }
                         } else {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                historyOpenDragProgress = 0
+                                router.historyOpenDragProgress = 0
                             }
                             pendingHistoryOpen = false
                         }
@@ -2697,37 +2709,13 @@ struct BarBotCraftView: View {
                 }
             }
         }
-        // BarBot History overlay — ALWAYS-mounted while either the panel
-        // is presented OR the user is mid-drag opening it, so the live
-        // offset can render the panel at intermediate positions. Mirrors
-        // UIKit's continuous interactive presentation.
-        .overlay(alignment: .leading) {
-            if showHistory || historyOpenDragProgress > 0 {
-                BarBotHistorySideMenuOverlay(
-                    isPresented: $router.showBarBotHistory,
-                    vm: viewModel,
-                    closeDragProgress: $historyCloseDragProgress,
-                    openDragProgress: historyOpenDragProgress,
-                    isFullyPresented: showHistory
-                )
-                .zIndex(10)
-                // Asymmetric transition so the interactive open
-                // (driven by `panelOffsetX`) keeps owning the slide-IN
-                // motion, while the external dismiss (e.g. mutex flip
-                // when right side menu opens) gets a SwiftUI-driven
-                // slide-OUT to the leading edge — matching UIKit
-                // SideMenuSwift's `dismissDuration = 0.3` slide-off.
-                .transition(.asymmetric(
-                    insertion: .identity,
-                    removal: .move(edge: .leading)
-                ))
-            }
-        }
-        // Animate the conditional overlay's INSERT/REMOVE driven by
-        // `router.showBarBotHistory` flips. Necessary so the .transition
-        // above plays when the mutex auto-dismisses BarBot history while
-        // opening the right side menu.
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: router.showBarBotHistory)
+        // History overlay is now mounted on `MainTabView`'s ZStack
+        // (next to `SideMenuOverlay`) so it renders ABOVE the tab bar
+        // z-layer — matching the right-side menu's behaviour. This
+        // view only owns the edge-pan open gesture (above). The
+        // overlay reads `router.historyOpenDragProgress` and
+        // `router.historyCloseDragProgress` to stay in sync with the
+        // finger-driven animations started here.
     }
 
     @ToolbarContentBuilder
@@ -3168,10 +3156,19 @@ struct BarBotHistorySideMenuOverlay: View {
             ZStack {
                 BarBotHistoryView(vm: vm, dismiss: dismiss)
                     .frame(width: panelWidth)
-                    .background(
-                        Color("primaryBackgroundColor")
-                            .ignoresSafeArea(edges: [.top, .bottom])
-                    )
+                    // Background stays WITHIN the safe-area bounds —
+                    // previously it extended into `.top` and `.bottom`
+                    // via `.ignoresSafeArea(edges: [.top, .bottom])`,
+                    // which covered the BarBot nav bar at the top and
+                    // the app's tab bar at the bottom while the history
+                    // panel was open. By letting SwiftUI respect the
+                    // top/bottom safe areas, both bars now remain
+                    // visible behind the panel — matching the right-
+                    // side `SideMenuOverlay` panel (SideMenuView.swift)
+                    // which also never covers those bars, giving a
+                    // consistent "drawer sits between the nav and tab
+                    // bars" feel across both menus.
+                    .background(Color("primaryBackgroundColor"))
                     // Soft drop-shadow on the trailing edge of the panel,
                     // matching the SideMenuManager default.
                     .shadow(color: .black.opacity(0.18), radius: 8, x: 2, y: 0)
