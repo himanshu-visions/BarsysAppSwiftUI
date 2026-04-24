@@ -1595,9 +1595,44 @@ enum StationsAPIService {
                 "metric": Constants.mlText.uppercased(),
                 "quantity": quantityValue,
                 "ingredient_name": ingredientNameValue,
-                "is_perishable": slot.isPerishable,
-                "category": categoryDict
+                "is_perishable": slot.isPerishable
             ]
+            // Only include `category` when at least one of
+            // primary/secondary is non-empty. For filled stations we
+            // WANT the category present (that's how Ready-to-Pour
+            // matches recipes). For empty / dash slots, or slots
+            // whose local `category` wasn't populated yet, OMITTING
+            // the key is safer than sending
+            // `{primary:"", secondary:"", flavourTags:[]}` — the
+            // server treats empty-string category as "set to blank"
+            // and the next Ready-to-Pour load finds zero allow-list
+            // entries, so the screen renders empty. This is the
+            // exact regression the user reported: set up a station
+            // from SwiftUI → hit Proceed → RTP empty. UIKit's
+            // NSMutableDictionary emits the key unconditionally, but
+            // it ALWAYS has a real category on filled slots because
+            // its `mappedArray` pairs recipe ingredients with stations
+            // by category BEFORE building the dict; SwiftUI reaches
+            // this code with `viewModel.stations` that may not have
+            // been re-synced yet, so we defend here.
+            let primaryIsEmpty = (slot.category?.primary ?? "").isEmpty
+            let secondaryIsEmpty = (slot.category?.secondary ?? "").isEmpty
+            let hasAnyCategory = !primaryIsEmpty || !secondaryIsEmpty
+            if hasAnyCategory {
+                stationDict["category"] = categoryDict
+            } else if !ingredientNameValue.isEmpty {
+                // Non-empty ingredient BUT no local category — omit
+                // category entirely so the server keeps whatever it
+                // already has on file (avoids the "wipe" regression).
+                // If the server also has no category stored, this
+                // station simply won't match recipes — but that's a
+                // pre-existing state, not something this PATCH caused.
+            } else {
+                // Truly empty slot (no ingredient, no category) — send
+                // the empty category so the server can clear its
+                // stored value. Matches UIKit batch PATCH behaviour.
+                stationDict["category"] = categoryDict
+            }
             // UIKit stamps `updated_at` on every PATCH (current
             // nanosecond-format date). Required for perishable-expiry
             // parity: `isExpired(updated_at:, is_perishable:)` compares
@@ -2643,9 +2678,44 @@ struct StationsMenuView: View {
             return
         }
         env.loading.show("Saving stations…")
+
+        // Merge with fresh server state BEFORE building the PATCH so
+        // any station whose local `category` is empty (e.g. the user
+        // tapped "Add Ingredient" but the per-station PUT response
+        // hasn't been re-synced into `viewModel.stations` yet — or a
+        // slot that the user didn't touch at all) inherits the
+        // category the server already has on record. Without this
+        // merge, `patchAllStations` was sending
+        // `category: {primary:"", secondary:"", flavourTags:[]}` for
+        // any slot without a fresh local category, overwriting the
+        // server's good categories with blanks. Ready-to-Pour's
+        // downstream filter then found zero category pairs in the
+        // allow-list and rendered empty — the exact bug report.
+        let serverStations = await StationsAPIService.loadStations(deviceName: deviceName)
+        let serverByStation = Dictionary(uniqueKeysWithValues:
+            serverStations.map { ($0.station, $0) })
+        let merged: [StationSlot] = viewModel.stations.map { slot in
+            guard let server = serverByStation[slot.station] else { return slot }
+            var out = slot
+            // Category preserve: if local category is missing or has
+            // empty primary/secondary, fall back to server's.
+            let localHasCategory = (slot.category?.primary ?? "").isEmpty == false
+                || (slot.category?.secondary ?? "").isEmpty == false
+            if !localHasCategory {
+                out.category = server.category
+            }
+            // Preserve server's updatedAt when local didn't set one —
+            // UIKit keeps this stable across refill so the 24-hour
+            // perishable timer doesn't reset unnecessarily.
+            if (slot.updatedAt ?? "").isEmpty {
+                out.updatedAt = server.updatedAt
+            }
+            return out
+        }
+
         let ok = await StationsAPIService.patchAllStations(
             deviceName: deviceName,
-            stations: viewModel.stations
+            stations: merged
         )
         env.loading.hide()
         guard ok else {
