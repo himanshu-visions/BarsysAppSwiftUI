@@ -1729,6 +1729,13 @@ struct ChatMessageRow: View {
     let onRecipeTap: (BarBotRecipeElement) -> Void
     let onRecipeCraft: (BarBotRecipeElement) -> Void
     let onMixlistTap: (BarBotMixlistElement) -> Void
+    /// Drives the dark-mode inversion of the `barbotThinking` GIF. The
+    /// GIF ships as a DARK-inked "typing dots" animation on a
+    /// transparent background, designed for the light chat bubble. In
+    /// dark mode the ink blends into the dark surface and the dots
+    /// become invisible; inverting recolours them to near-white so
+    /// they read on the dark backdrop. Light mode is untouched.
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1818,8 +1825,16 @@ struct ChatMessageRow: View {
     private var loading: some View {
         HStack(alignment: .center, spacing: 0) {
             // GIF spinner — 35×35, scaleAspectFit.
+            // Dark-mode invert: the `barbotThinking` GIF is a dark-inked
+            // typing-dots animation on a transparent backdrop. It's
+            // perfect on the light chat canvas but disappears against
+            // the dark one. Reuse the existing `invertedInDarkMode`
+            // helper (defined in `LoginView.swift`) so the ink flips
+            // to near-white in dark mode only; light mode renders the
+            // original pixels byte-for-byte.
             AnimatedGIFView(assetName: "barbotThinking")
                 .frame(width: 35, height: 35)
+                .invertedInDarkMode(colorScheme == .dark)
 
             // "Barbot is thinking" label — leading = GIF.trailing + 7pt
             // (xib constraint `HIJ-Fe-el4`). System 12pt, grayBorderColor.

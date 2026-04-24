@@ -423,6 +423,14 @@ struct EmptyStateView: View {
 
 struct LoadingOverlayModifier: ViewModifier {
     @ObservedObject var state: LoadingState
+    /// Drives the dark-mode invert of the `BarsysLoader` GIF. The
+    /// spinner ships as a DARK-inked Barsys logo animation on a
+    /// transparent backdrop, tuned for the light glass card. Against
+    /// the dark glass card it visually disappears because the ink
+    /// blends into the darkened material. Inverting the GIF in dark
+    /// mode flips the ink to near-white so the spinner reads on
+    /// either theme. Light mode untouched.
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         content
@@ -459,6 +467,15 @@ struct LoadingOverlayModifier: ViewModifier {
                             // from UIKit so the animation is bit-identical.
                             AnimatedGIFView(assetName: "BarsysLoader")
                                 .frame(width: 60, height: 60)
+                                // Dark-mode invert — see the
+                                // @Environment declaration at the top
+                                // of this modifier for the rationale.
+                                // Reuses the `invertedInDarkMode`
+                                // helper from LoginView.swift so Login
+                                // / SignUp / Splash / BarBot / this
+                                // loader all flip their dark-ink GIF
+                                // assets via one consistent path.
+                                .invertedInDarkMode(colorScheme == .dark)
 
                             // UIKit message label (UIViewController+GlassLoader.swift L89-96):
                             //   font      = AppFontClass.font(.subheadline, weight: .medium)
