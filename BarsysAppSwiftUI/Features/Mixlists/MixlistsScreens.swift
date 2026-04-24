@@ -149,6 +149,34 @@ struct MixlistListView: View {
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        // 1:1 port of UIKit `MixlistViewController.viewDidLoad` +
+        // `viewWillAppear` staleness check:
+        //
+        //   if cacheMixlists.isEmpty || AppStateManager.shared.areCacheRecipesStale {
+        //       MixlistsUpdateClass().updateMixlists(trigger: .manual, ...)
+        //   }
+        //
+        // Without this `.task` the Cocktail Kits screen would appear
+        // empty any time the user navigated here before the app's
+        // bootstrap preload completed, or when the data was stale
+        // after an hour. `ExploreRecipesView` has the same task; the
+        // previous SwiftUI port was missing it on MixlistListView,
+        // so Cocktail Kits rendered "No results to display" forever
+        // until the user pulled to refresh.
+        //
+        // `refreshIfStale` is gated on a 1-hour `lastFetchTimestamp`
+        // (`AppStateManager.cacheExpirationInterval = 3600`); if the
+        // cache was populated by the bootstrap `preload()` call
+        // inside this window the task is a no-op. `refresh()` is
+        // called unconditionally when storage is empty so the first
+        // launch with zero cached mixlists always triggers a fetch.
+        .task {
+            if catalog.mixlists.isEmpty {
+                await catalog.refresh()
+            } else {
+                await catalog.refreshIfStale()
+            }
+        }
         .onAppear {
             // 1:1 with UIKit `MixlistViewController` L73 —
             //   TrackEventsClass().addBrazeCustomEventWithEventName(

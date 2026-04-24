@@ -2597,14 +2597,25 @@ struct StationsMenuView: View {
         await env.catalog.preload()
         env.loading.hide()
         router.push(.readyToPour)
-        // Setup-stations flow is COMPLETE — the PATCH persisted the
-        // mapped ingredients and we're handing off to Ready-to-Pour.
-        // Clear the router-level context so the NEXT entry into
-        // StationsMenu / StationCleaning (e.g. from Control Center)
-        // treats it as `.controlCenter` origin instead of reading
-        // leftover setup data and showing "Fill Stations" /
-        // "Continue to Station Setup" on a direct-entry screen.
-        router.setupStationsContext = nil
+        // IMPORTANT: don't clear `setupStationsContext` here.
+        //
+        // UIKit `RecipesCoordinator.showReadyToPour(…)` receives
+        // `mixlist: self.mixlist` + `recipes:` as parameters and
+        // assigns them to the pushed `ReadyToPourListViewController`
+        // BEFORE it appears. `ReadyToPourListViewModel.initialTabSetup`
+        // then sees `mixlist != nil` and selects the MIXLISTS tab;
+        // `reloadRecipesData` fetches the mixlist's recipes via
+        // `storage.fetchAllRecipesIdBase(for: mixlistId)` and
+        // populates `self.recipes` directly.
+        //
+        // The SwiftUI equivalent is for `ReadyToPourView.onAppear`
+        // to READ `router.setupStationsContext?.mixlist` (as a
+        // pre-selection signal) and then clear the context. Clearing
+        // before the view's `.onAppear` runs — which is what the
+        // previous port did — meant the ReadyToPour screen came up
+        // without the pre-selected mixlist and the user landed on
+        // the generic "Ready to Pour" list instead of the single-
+        // mixlist detail view UIKit shows.
     }
 }
 

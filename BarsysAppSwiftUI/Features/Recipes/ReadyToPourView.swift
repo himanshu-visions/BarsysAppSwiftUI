@@ -64,18 +64,74 @@ struct ReadyToPourView: View {
         return ""
     }
 
-    /// UIKit title: mixlist name when viewing a mixlist, "Ready To Pour" otherwise.
+    /// 1:1 port of UIKit title matrix
+    /// (`ReadyToPourListViewController.setupView` L184-204 +
+    /// `tabSelection(index:)` L24-63):
+    ///
+    ///   • On init, `mixlist != nil` → title = `mixlist.name`
+    ///     (the pre-selected mixlist from Setup-Stations).
+    ///   • Recipes tab + Barsys 360 connected (or SpeakEasy) →
+    ///     `Constants.readyToPourTitle` ("Ready to Pour").
+    ///   • Recipes tab + non-360 devices → `"Recipes"`.
+    ///   • Mixlists tab + `mixlists.count == 1` → single mixlist's
+    ///     name (UIKit auto-promotes that mixlist's recipes to the
+    ///     tab's body — no card list shown).
+    ///   • Mixlists tab + `mixlists.count > 1` → `"Mixlists"`
+    ///     (UIKit shows the card list; on drill-in, title flips
+    ///     to the drilled mixlist's name).
+    ///   • Mixlists tab + count == 0 → `"Mixlists"` (fallback).
     private var screenTitle: String {
+        // Drill-down (multi-mixlist state with a selected one) OR
+        // single-auto-select wins over the tab-level default.
         if let ml = selectedMixlist { return ml.displayName }
-        return Constants.readyToPourTitle
+        if selectedTab == .mixlists {
+            if mixlists.count == 1 {
+                return mixlists[0].displayName
+            }
+            return Constants.mixlistsTitle
+        }
+        // Recipes tab.
+        if ble.isBarsys360Connected() || AppStateManager.shared.isSpeakEasyCase {
+            return Constants.readyToPourTitle
+        }
+        return "Recipes"
     }
 
-    /// Recipes for display — if a mixlist is selected show its recipes,
-    /// otherwise show the matched ready-to-pour recipes.
-    private var displayRecipes: [Recipe] {
-        if let ml = selectedMixlist { return ml.recipes ?? [] }
-        return recipes
+    /// 1:1 port of UIKit `ReadyToPourListViewModel.numberOfMixlistRows`:
+    ///
+    /// ```
+    /// if mixlists.count > 1 && mixlist != nil {
+    ///     return mixlist?.recipes?.count ?? 0     // drilled-in
+    /// } else if mixlists.count == 1 {
+    ///     return mixlists[0].recipes?.count ?? 0  // auto-selected
+    /// } else {
+    ///     return mixlists.count                   // card list
+    /// }
+    /// ```
+    ///
+    /// Drives BOTH the row source (recipes vs mixlist cards) and
+    /// the correct "no data" empty-state copy.
+    ///
+    /// `recipesShownOnMixlistsTab` returns the recipe array to
+    /// render as rows; nil means "render mixlist cards instead".
+    private var recipesShownOnMixlistsTab: [Recipe]? {
+        if mixlists.count > 1, let selected = selectedMixlist {
+            return selected.recipes ?? []
+        }
+        if mixlists.count == 1 {
+            return mixlists[0].recipes ?? []
+        }
+        return nil
     }
+
+    /// Recipes to show on the Recipes tab. UIKit
+    /// `numberOfRecipeRows` = `recipes.count` directly; drill-down
+    /// into a mixlist only happens on the MIXLISTS tab. Previous
+    /// SwiftUI port collapsed both tabs through a shared
+    /// `displayRecipes` which broke the UIKit tab-independence
+    /// semantic — tapping the Mixlists tab on a drill-down also
+    /// flipped the Recipes tab's rows, which UIKit never does.
+    private var displayRecipes: [Recipe] { recipes }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -88,7 +144,18 @@ struct ReadyToPourView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
 
-            // Content area
+            // 1:1 port of UIKit
+            // `ReadyToPourListViewController+TableView.numberOfMixlistRows`
+            // + `cellForRowAt` matrix:
+            //
+            //   Recipes tab → rows = `recipes`.
+            //   Mixlists tab + count == 1 → rows = `mixlists[0].recipes`
+            //     (no card list; auto-drill-in to the lone mixlist).
+            //   Mixlists tab + count > 1 + drilled-in → rows =
+            //     `selectedMixlist.recipes`.
+            //   Mixlists tab + count > 1 + NOT drilled-in → rows =
+            //     mixlist CARDS.
+            //   Mixlists tab + count == 0 → empty-state label.
             if selectedTab == .recipes {
                 if displayRecipes.isEmpty {
                     noDataView(text: "No recipes available.\nTry adding ingredients to your Barsys 360 stations.")
@@ -96,12 +163,15 @@ struct ReadyToPourView: View {
                     recipesListView
                 }
             } else {
-                if selectedMixlist != nil {
-                    // Showing recipes within a selected mixlist
-                    if displayRecipes.isEmpty {
+                // Mixlists tab.
+                if let mlRecipes = recipesShownOnMixlistsTab {
+                    // Either `mixlists.count == 1` (auto-promote) or
+                    // `mixlists.count > 1 && selectedMixlist != nil`
+                    // (drill-down). Either way render as recipe rows.
+                    if mlRecipes.isEmpty {
                         noDataView(text: "No recipes in this mixlist.")
                     } else {
-                        recipesListView
+                        recipesListView(overrideRecipes: mlRecipes)
                     }
                 } else if mixlists.isEmpty {
                     noDataView(text: "No mixlists available.\nTry adding ingredients to your Barsys 360 stations.")
@@ -125,6 +195,39 @@ struct ReadyToPourView: View {
             guard !didLoad else { return }
             didLoad = true
             // 1:1 port of UIKit
+            // `RecipesCoordinator.showReadyToPour(…)` → assigns
+            // `readyToPourVc.mixlist = mixlist` BEFORE push, and
+            // `ReadyToPourListViewModel.initialTabSetup()`:
+            //
+            //   func initialTabSetup() {
+            //       if mixlist != nil {
+            //           tabSelectedIndex = 1        // MIXLISTS tab
+            //       } else {
+            //           tabSelectedIndex = 0        // RECIPES tab
+            //       }
+            //   }
+            //
+            // When the user comes from Setup Stations, the pushed
+            // mixlist is the ONLY one they care about — UIKit flips
+            // straight to the Mixlists tab, sets the screen title to
+            // the mixlist name (via the tab-switching code that reads
+            // `viewModel.mixlists[0].name` when `mixlists.count == 1`),
+            // and `reloadRecipesData` fetches that mixlist's recipes
+            // via `storage.fetchAllRecipesIdBase(for: mixlistId)`.
+            //
+            // SwiftUI equivalent: consume the pre-selected mixlist
+            // from `router.setupStationsContext.mixlist` here and
+            // set both `selectedMixlist` (title + recipe source) and
+            // `selectedTab = .mixlists` (matches UIKit
+            // `tabSelectedIndex = 1`). Then clear the context so
+            // subsequent Control-Center entries don't see stale
+            // setup data.
+            if let ctx = router.setupStationsContext {
+                selectedMixlist = ctx.mixlist
+                selectedTab = .mixlists
+                router.setupStationsContext = nil
+            }
+            // 1:1 port of UIKit
             // `MixlistsUpdateClass.updateMixlists(controller:)` +
             // `getBarsys360ReadyToPourRecipes { recipes in … }` chain
             // that runs BEFORE `RecipesCoordinator.showReadyToPour(…)`
@@ -145,6 +248,29 @@ struct ReadyToPourView: View {
             Task {
                 await env.catalog.preload()
                 await loadData()
+                // 1:1 port of UIKit
+                // `ReadyToPourListViewModel.reloadRecipesData()`
+                // single-mixlist branch (L223-233):
+                //
+                //   guard let mixlistId = mixlist?.id else { return }
+                //   storage.fetchAllRecipesIdBase(for: mixlistId) { fetched in
+                //       self.recipes = fetched
+                //       self.onRecipesReloaded?()
+                //   }
+                //
+                // After the catalog refresh lands, look the
+                // pre-selected mixlist up in the freshly-upserted
+                // storage so its `recipes` array is populated with
+                // the server's latest recipe payload — the initial
+                // `ctx.mixlist` value captured at setup-time may
+                // have been a stub with no nested `recipes`.
+                await MainActor.run {
+                    if let preselected = selectedMixlist,
+                       let fresh = env.storage.allMixlists()
+                        .first(where: { $0.id == preselected.id }) {
+                        selectedMixlist = fresh
+                    }
+                }
             }
         }
         // 1:1 with UIKit `ReadyToPourListViewController+Search.swift`
@@ -195,13 +321,22 @@ struct ReadyToPourView: View {
 
     // MARK: - Recipes list (MixlistDetailTableViewCell layout)
 
-    private var recipesListView: some View {
+    /// Renders the recipe-row list. `overrideRecipes` is used by the
+    /// Mixlists tab's auto-promote / drill-in branches so those rows
+    /// come from `mixlists[0].recipes` or `selectedMixlist.recipes`
+    /// — matching UIKit `cellForRowAt` + `numberOfMixlistRows` which
+    /// switches between `recipes`, `mixlist?.recipes`, and
+    /// `mixlists[0].recipes` based on the `(tab, mixlists.count,
+    /// mixlist != nil)` matrix.
+    @ViewBuilder
+    private func recipesListView(overrideRecipes: [Recipe]? = nil) -> some View {
         let cellWidth = UIScreen.main.bounds.width - 48
         let rowHeight = cellWidth / 2
+        let source = overrideRecipes ?? displayRecipes
 
-        return ScrollView {
+        ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(displayRecipes) { recipe in
+                ForEach(source) { recipe in
                     Button {
                         router.push(.recipeDetail(recipe.id))
                     } label: {
@@ -221,6 +356,12 @@ struct ReadyToPourView: View {
         }
     }
 
+    /// Computed-property shim so call-sites that referenced
+    /// `recipesListView` as a View (not a function) still work. The
+    /// function overload above handles the Mixlists-tab case with an
+    /// explicit override.
+    private var recipesListView: some View { recipesListView(overrideRecipes: nil) }
+
     // MARK: - Mixlists list (MixlistRowCell reuse)
 
     private var mixlistsListView: some View {
@@ -232,8 +373,25 @@ struct ReadyToPourView: View {
                 ForEach(mixlists) { mixlist in
                     Button {
                         HapticService.light()
+                        // 1:1 port of UIKit
+                        // `ReadyToPourListViewController+TableView.didSelectRowAt`
+                        // mixlists-tab branch (L310-330) when
+                        // `mixlists.count > 1 && mixlist == nil`:
+                        //
+                        //   viewModel.selectMixlist(at: indexPath.row)
+                        //   // mixlist = mixlists[row]; triggers
+                        //   // onMixlistNameChanged + reloadRecipesData
+                        //
+                        // User stays on the MIXLISTS tab — drill-down
+                        // renders the mixlist's recipes in the same
+                        // tab body. Previously this port flipped
+                        // `selectedTab = .recipes` on drill, which
+                        // broke UIKit's tab-independence: Mixlists
+                        // tap never changes to the Recipes tab.
                         selectedMixlist = mixlist
-                        selectedTab = .recipes
+                        // selectedTab stays on .mixlists; body
+                        // switches to recipe rows via
+                        // `recipesShownOnMixlistsTab`.
                     } label: {
                         MixlistRowForReadyToPour(
                             mixlist: mixlist,
@@ -271,6 +429,26 @@ struct ReadyToPourView: View {
             ForEach(ReadyToPourTab.allCases, id: \.self) { tab in
                 Button {
                     HapticService.light()
+                    // 1:1 port of UIKit
+                    // `ReadyToPourListViewModel.selectRecipesTab()`
+                    // + `didPressMixlistsButton` / `didPressRecipesButton`:
+                    //
+                    //   func selectRecipesTab() {
+                    //       if mixlist != nil && mixlists.count > 1 {
+                    //           mixlist = nil            // clear drill
+                    //       }
+                    //       tabSelectedIndex = 0
+                    //   }
+                    //
+                    // Tapping Recipes clears the multi-mixlist drill-
+                    // down (so user returns to the full Recipes list).
+                    // Tapping Mixlists clears the drill-down too so
+                    // the user lands back on the mixlist-card list
+                    // (or auto-promoted single mixlist, matching
+                    // UIKit's `numberOfMixlistRows` branch).
+                    if tab == .recipes && mixlists.count > 1 {
+                        selectedMixlist = nil
+                    }
                     if tab == .mixlists && selectedMixlist != nil {
                         selectedMixlist = nil
                     }
@@ -618,6 +796,19 @@ struct ReadyToPourRecipeRow: View {
     let onFavourite: () -> Void
     let onCraft: () -> Void
 
+    /// Reactive dark-mode awareness. UIKit
+    /// `PrimaryOrangeButton.makeOrangeStyle()` pins the brand gradient
+    /// to the LIGHT-mode peach-tan orange regardless of appearance —
+    /// the `brandGradientTop` / `brandGradientBottom` colour assets in
+    /// the SwiftUI port resolve to near-black in dark appearance, so
+    /// reading them directly turns the Craft pill into an invisible
+    /// dark blob on the dark Ready-to-Pour canvas. Same override
+    /// recipe used by `RecipesScreens.primaryOrangeButtonBackground`
+    /// (recipe detail Craft button) — hard-code the light-mode RGB
+    /// in dark mode so the capsule stays visible + consistent across
+    /// every craft entry point.
+    @Environment(\.colorScheme) private var colorScheme
+
     private var isFavourite: Bool { recipe.isFavourite ?? false }
 
     private var optimizedImageURL: URL? {
@@ -672,7 +863,19 @@ struct ReadyToPourRecipeRow: View {
                 } label: {
                     Text(Constants.craftTitle)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color("appBlackColor"))
+                        // Dark-mode override: same as
+                        // `RecipesScreens` Craft-button text at
+                        // line 1431 — hard-code `.black` when the
+                        // background is pinned to the light-mode
+                        // peach-tan gradient, because `appBlackColor`
+                        // asset resolves to near-white `#E5E5EA`
+                        // in dark mode which would render as
+                        // low-contrast white on the orange pill.
+                        // Light mode keeps `appBlackColor` for
+                        // bit-identical existing rendering.
+                        .foregroundStyle(colorScheme == .dark
+                                         ? Color.black
+                                         : Color("appBlackColor"))
                         .frame(maxWidth: .infinity)
                         .frame(height: 29)
                         .background(craftButtonBackground)
@@ -750,9 +953,30 @@ struct ReadyToPourRecipeRow: View {
     @ViewBuilder
     private var craftButtonBackground: some View {
         if #available(iOS 26.0, *) {
+            // Dark-mode-aware brand gradient. Light mode resolves
+            // through the existing `brandGradientTop` /
+            // `brandGradientBottom` colour assets (bit-identical
+            // pixels — light pass unchanged). Dark mode hard-codes
+            // the LIGHT-mode orange RGB so the capsule stays
+            // peach-tan instead of collapsing into the asset's
+            // near-black dark-appearance variant.
+            //
+            // Same treatment applied to the Recipe Page Craft button
+            // (RecipesScreens.swift `primaryOrangeButtonBackground`),
+            // the station-cleaning Clean / Continue / Stop buttons
+            // (ControlCenterScreens.swift `brandButtonLabel`), and
+            // now the Ready-to-Pour row Craft button — every brand
+            // CTA renders identically in dark mode.
             LinearGradient(
-                colors: [Color("brandGradientTop"),
-                         Color("brandGradientBottom")],
+                colors: colorScheme == .dark
+                    ? [
+                        Color(red: 0.980, green: 0.878, blue: 0.800),
+                        Color(red: 0.949, green: 0.761, blue: 0.631)
+                    ]
+                    : [
+                        Color("brandGradientTop"),
+                        Color("brandGradientBottom")
+                    ],
                 startPoint: .top,
                 endPoint: .bottom
             )

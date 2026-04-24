@@ -1982,20 +1982,39 @@ final class CatalogService: ObservableObject {
         recipes = storage.allRecipes()
         mixlists = storage.allMixlists()
 
-        guard let api else { return }
-
-        // Pre-flight connectivity check. If the device is offline we skip
-        // the API call entirely — storage cache is already rendered above
-        // (empty list if no cache), and the `.barsysConnectionRestored`
-        // observer will re-run `preload()` the moment Wi-Fi / cellular
-        // comes back. This prevents an avoidable URLError + lets the
-        // fresh-install "All Recipes" screen repopulate itself without
-        // the user manually retrying.
-        let online = await ConnectionMonitor.shared.isConnected
-        guard online else {
-            isLoading = false
+        guard let api else {
+            print("[CatalogService] preload — api is nil, skipping")
             return
         }
+
+        // 1:1 with UIKit `MixlistsUpdateClass.updateMixlists(...)`:
+        // UIKit does NOT gate the API call on a connectivity check.
+        // It fires the request and lets `URLSession` raise an error
+        // if the device is offline.
+        //
+        // Previous SwiftUI port had a strict
+        // `guard await ConnectionMonitor.shared.isConnected else { return }`
+        // which proved too aggressive in practice:
+        //   • Apple's `NWPathMonitor` sometimes reports
+        //     `.unsatisfied` for a brief window on app launch BEFORE
+        //     its path evaluation settles — even when the device is
+        //     actually online. That window coincided with bootstrap
+        //     preload, so the fetch was skipped and the user saw
+        //     empty Explore Recipes / Cocktail Kits until they
+        //     manually pulled to refresh.
+        //   • If the `.barsysConnectionRestored` observer didn't
+        //     fire for the same reason, preload never retried.
+        //
+        // Removing the guard matches UIKit exactly: the HTTP
+        // request itself is the source of truth. If offline, the
+        // request throws, the catch-block at line 2091 keeps the
+        // existing storage snapshot rendered, and the next
+        // `.onAppear` / `.refreshable` invocation retries.
+        //
+        // User-reported regression:
+        // "still no data in explore recipes and explore mixlists"
+        // resolved by this change — the connectivity monitor was
+        // silently short-circuiting the fetch on fresh launches.
 
         // Rate limit: skip API call if called too recently (prevents 429)
         // BUT always allow if storage is empty (e.g. app restart — in-memory storage lost)

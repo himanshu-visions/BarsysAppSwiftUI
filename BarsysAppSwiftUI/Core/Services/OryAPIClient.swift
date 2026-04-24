@@ -400,12 +400,25 @@ final class OryAPIClient: APIClient {
     /// Helper: creates an authenticated URLRequest matching UIKit's
     /// `NetworkingUtility.createRequest(includeAuth: true)` which adds
     /// `Authorization: Bearer {sessionToken}` to every API call.
+    ///
+    /// UIKit ALWAYS sets the Authorization header — even when the
+    /// token is an empty string, UIKit sends the literal `"Bearer "`
+    /// (with trailing space). Previous SwiftUI port conditionally
+    /// skipped the header when the token was empty, which some
+    /// servers treat as an authentication-not-attempted code path
+    /// (different from `"Bearer "` with no trailing token) and can
+    /// respond with 401 / empty bodies to the recipes + mixlists
+    /// endpoints. The conditional skip manifested as "data isn't
+    /// coming" on screens like Explore Recipes / Cocktail Kits
+    /// whenever the token was briefly empty (e.g. during a
+    /// restore-session race on app launch).
+    ///
+    /// Always setting the header mirrors UIKit byte-for-byte and
+    /// keeps the server's auth branch consistent.
     private func authenticatedRequest(url: URL) -> URLRequest {
         var request = URLRequest(url: url, timeoutInterval: 60)
         let token = UserDefaultsClass.getSessionToken() ?? ""
-        if !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return request
     }
