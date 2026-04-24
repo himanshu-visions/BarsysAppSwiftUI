@@ -1844,11 +1844,24 @@ final class StationsMenuViewModel: ObservableObject {
     /// the user toggles tabs / re-enters the station selector).
     @Published var isPouringPopUpShownOnce: Bool = false
 
-    func setIngredient(_ name: String, quantityMl: Double, isPerishable: Bool, at station: StationName) {
+    func setIngredient(_ name: String,
+                       quantityMl: Double,
+                       isPerishable: Bool,
+                       category: IngredientCategory? = nil,
+                       at station: StationName) {
         guard let idx = stations.firstIndex(where: { $0.station == station }) else { return }
         stations[idx].ingredientName = name
         stations[idx].ingredientQuantity = quantityMl
         stations[idx].isPerishable = isPerishable
+        // Write category locally too — without this, a tap on another
+        // station that re-reads `stations[idx].category` before the
+        // post-PATCH re-fetch completes would still see nil. Matches
+        // UIKit `StationsMenuViewController+IngredientDetection` L47-53
+        // which mutates `stationsArray[i].category` in place before the
+        // batch `patchAllStations` call.
+        if let cat = category {
+            stations[idx].category = cat
+        }
     }
 
     /// 1:1 port of UIKit `StationsMenuViewModel.updateSingleStation(...)`
@@ -1872,10 +1885,24 @@ final class StationsMenuViewModel: ObservableObject {
         deviceName: String,
         primaryCategory: String? = "",
         secondaryCategory: String? = "",
+        flavourTags: [String] = [],
         loadingService: LoadingState
     ) async {
+        // Build the category object locally too so
+        // `stations[idx].category` reflects the PATCH body — otherwise
+        // a subsequent tap on a different station would read the stale
+        // `nil` category before the post-PATCH re-fetch returns,
+        // producing an inconsistent UI. Matches UIKit L47-53 of
+        // `StationsMenuViewController+IngredientDetection`.
+        let localCategory = IngredientCategory(
+            primary: primaryCategory?.isEmpty == true ? nil : primaryCategory,
+            secondary: secondaryCategory?.isEmpty == true ? nil : secondaryCategory,
+            flavourTags: flavourTags
+        )
         setIngredient(name, quantityMl: quantityMl,
-                      isPerishable: isPerishable, at: station)
+                      isPerishable: isPerishable,
+                      category: localCategory,
+                      at: station)
         guard !deviceName.isEmpty else { return }
         loadingService.show("Updating Station")
         let body = StationsAPIService.StationUpdateBody(
@@ -1886,7 +1913,11 @@ final class StationsMenuViewModel: ObservableObject {
             category: StationsAPIService.StationUpdateBody.CategoryPayload(
                 primary: primaryCategory ?? "",
                 secondary: secondaryCategory ?? "",
-                flavour_tags: []
+                // UIKit `dictCategoryToSend["flavourTags"] = category.flavourTags ?? []`
+                // — pass the server-returned tags through so the Ready-
+                // to-Pour allow-list + recipe-match logic (which in some
+                // UIKit branches checks flavour overlap) keeps working.
+                flavour_tags: flavourTags
             ),
             updated_at: nil
         )
@@ -1961,6 +1992,19 @@ struct StationsMenuView: View {
     //   5. ViewModel calls `StationsServiceApi.updateStation(...)` PUT
     //      and refreshes via `loadStations(...)`.
     @State private var showImagePicker = false
+    /// Detected ingredients from the most recent photo upload, WITH
+    /// their server-assigned categories. The popup picker hands back
+    /// only the NAME string — we keep the full objects around so the
+    /// follow-up `persistIngredient` call can look the category back
+    /// up by name and send it to the station PATCH. UIKit flows the
+    /// same `StationIngredientFromImageModel` straight from
+    /// `UploadIngredientsImage.uploadImageAndGetIngredientsResponse`
+    /// into `ConfigurationStationBody` so `category` is always
+    /// populated; the SwiftUI port previously threw the detection
+    /// response away and sent `category: {primary:"", secondary:""}`,
+    /// which made every recipe fail the Ready-to-Pour allow-list
+    /// filter and the screen rendered empty.
+    @State private var detectedIngredients: [IngredientFromImage] = []
     @State private var imagePickerSource: UIImagePickerController.SourceType = .camera
     @State private var pickedImage: UIImage?
     @State private var popup: BarsysPopup?
@@ -2139,21 +2183,51 @@ struct StationsMenuView: View {
                               source: imagePickerSource)
                 .ignoresSafeArea()
         }
-        // When a photo is chosen, simulate the UIKit upload pipeline by
-        // showing the ingredient picker. The real
-        // `UploadIngredientsImage` POST is plugged in here in production
-        // — the picker just needs the resulting `[String]` of detected
-        // ingredient names.
+        // 1:1 port of UIKit
+        // `StationsMenuViewController.cameraDelegate` + `getStationsNotificationCame`:
+        // the picked image is POSTed to
+        // `UploadIngredientsImage.uploadImageAndGetIngredientsResponse`,
+        // the server returns `[StationIngredientFromImageModel]` WITH
+        // category (primary / secondary / flavourTags) + perishable
+        // fields populated, and ONLY base/mixer ingredients survive
+        // the filter. The detected objects are cached in
+        // `detectedIngredients` so the follow-up `onPickIngredient`
+        // call can reattach the category to the station PATCH — if
+        // we lost the category here, Ready-to-Pour would filter the
+        // user's recipes against empty allow-list categories and
+        // render empty (exactly the bug report).
         .onChange(of: pickedImage) { newImage in
-            guard newImage != nil else { return }
-            // Placeholder detection result; replaced by the live API
-            // call when the upload service is wired up.
-            let detected = ["Vodka", "Gin", "Tequila", "Rum", "Whiskey"]
-            popup = .multipleIngredients(
-                title: "Pick the detected ingredient",
-                ingredients: detected
-            )
+            guard let image = newImage,
+                  let data = image.jpegData(compressionQuality: 0.7) else { return }
             pickedImage = nil
+            Task { @MainActor in
+                env.loading.show("Detecting ingredient…")
+                defer { env.loading.hide() }
+                do {
+                    let detected = try await env.api.uploadIngredientImage(data)
+                    // Mirror UIKit `baseAndMixerIngredientsArrayFiltered`
+                    // (StationsMenuViewController+IngredientDetection
+                    // L72-78) — drop garnish / additional ingredients so
+                    // the user can't assign a lemon wedge or mint leaf
+                    // to a pump station.
+                    let filtered = detected.filter {
+                        let p = ($0.category?.primary ?? "").lowercased()
+                        return !p.isEmpty && p != "garnish" && p != "additional"
+                    }
+                    self.detectedIngredients = filtered
+                    let names = filtered.compactMap { $0.name }.filter { !$0.isEmpty }
+                    guard !names.isEmpty else {
+                        env.alerts.show(message: "No valid ingredients detected.")
+                        return
+                    }
+                    popup = .multipleIngredients(
+                        title: "Pick the detected ingredient",
+                        ingredients: names
+                    )
+                } catch {
+                    env.alerts.show(message: error.localizedDescription)
+                }
+            }
         }
         // Unified glass popup overlay (alerts, confirms, ingredient
         // chooser, manual-spinning, waiting, shaker-flat warning).
@@ -2163,21 +2237,34 @@ struct StationsMenuView: View {
             // after ingredient detection the controller fires a
             // NotificationCenter post → `updateSingleStation` which
             // 1. shows glass loader "Updating Station"
-            // 2. PUTs the station config
+            // 2. PUTs the station config WITH the server-returned
+            //    category (not an empty placeholder)
             // 3. refetches stations
             // 4. hides the loader
             //
             // We mirror that exactly so the SwiftUI callback has the
             // same visible feedback AND the same backend persistence
-            // — the previous port only mutated local state which meant
-            // the stations reverted on the next `loadStations` call.
+            // — the previous port threw away the detection category
+            // which meant every station landed with
+            // `category: {primary:"", secondary:""}`, breaking the
+            // Ready-to-Pour allow-list filter downstream.
+            let match = detectedIngredients.first {
+                ($0.name ?? "").lowercased() == ingredientName.lowercased()
+            }
+            let primary = match?.category?.primary ?? ""
+            let secondary = match?.category?.secondary ?? ""
+            let flavourTags = match?.category?.flavourTags ?? []
+            let isPerishable = match?.perishable ?? false
             Task { @MainActor in
                 await viewModel.persistIngredient(
                     ingredientName,
                     quantityMl: 30,
-                    isPerishable: false,
+                    isPerishable: isPerishable,
                     at: viewModel.selectedStation,
                     deviceName: ble.getConnectedDeviceName(),
+                    primaryCategory: primary,
+                    secondaryCategory: secondary,
+                    flavourTags: flavourTags,
                     loadingService: env.loading
                 )
                 env.alerts.show(
