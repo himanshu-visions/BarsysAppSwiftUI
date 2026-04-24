@@ -1010,10 +1010,30 @@ struct MixlistDetailView: View {
         let stations = await StationsAPIService.loadStations(deviceName: deviceName)
         env.loading.hide()
 
-        let ingredients = recipe.ingredients ?? []
-        // 4a: validate every recipe ingredient has a category-matched
+        // 1:1 with Recipe Page craft validation
+        // (`RecipesScreens.validateAndPushBarsys360Craft` L1825-1845)
+        // and UIKit `RecipePageViewModel.checkBarsys360Craftability`:
+        // ONLY base + mixer ingredients get matched against stations.
+        // Garnish and additional ingredients are display-only — they
+        // don't get poured from a station and almost always ship with
+        // blank or non-matching categories, so including them in the
+        // loop makes the validation incorrectly reject craftable
+        // recipes with the "Ingredient doesn't exist in station.
+        // Set up station first." alert.
+        //
+        // The previous mixlist-detail port iterated `recipe.ingredients`
+        // verbatim — meaning a recipe with, say, a lemon-wedge garnish
+        // whose category is `(garnish, "")` would fail station matching
+        // even though the Recipe Page's craft button for the SAME
+        // recipe passes. Matches UIKit `baseAndMixerIngredientsArr`
+        // used by both craft paths.
+        let baseAndMixer = (recipe.ingredients ?? []).filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional" && p != "additionals"
+        }
+        // 4a: validate every base/mixer ingredient has a category-matched
         // station with enough quantity.
-        for ing in ingredients {
+        for ing in baseAndMixer {
             let primary = (ing.category?.primary ?? "").lowercased()
             let secondary = (ing.category?.secondary ?? "").lowercased()
             let match = stations.first {
