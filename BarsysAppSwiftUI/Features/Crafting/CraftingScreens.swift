@@ -87,12 +87,32 @@ enum CraftingState: Equatable {
 
 /// Minimal shape we need at crafting time — 1:1 with the subset of
 /// `StationCleaningFlow` used by `CraftingViewModel` + `CraftingCell`.
+///
+/// `isPerishable` + `updatedAt` are carried alongside the pourable
+/// fields so the post-craft `updateQuantitiesOnBasedPouringCompletion`
+/// PATCH can reconstruct a FULL `StationSlot` without dropping the
+/// server-side metadata. The previous port rebuilt each slot with
+/// `isPerishable: false, category: nil, updatedAt: nil`, which wiped
+/// those fields on the server and caused Ready-to-Pour's category-
+/// match filter to return an empty list the next time the user hit
+/// "Make it again" (exact bug report — "make it again all ready to
+/// pour data got lost").
 struct CraftingIngredientRow: Identifiable, Hashable {
     let id = UUID()
     var station: StationName
     var ingredientName: String
     var ingredientQuantity: Double
     var category: IngredientCategory?
+    /// Mirror of `StationSlot.isPerishable` (raw server flag, NOT the
+    /// expired-computation). Preserved so the post-craft PATCH re-sends
+    /// the ORIGINAL perishable state — UIKit does the same via
+    /// `StationCleaningFlow.perishable`.
+    var isPerishable: Bool = false
+    /// Mirror of `StationSlot.updatedAt` — the server-owned ISO-8601
+    /// timestamp of the last station refill. Carried through so the
+    /// 24-hour perishable timer doesn't reset when we PATCH reduced
+    /// quantities after a pour.
+    var updatedAt: String? = nil
 }
 
 // MARK: - CraftingViewModel
@@ -402,11 +422,20 @@ final class CraftingViewModel: ObservableObject {
         // (primary + secondary) is REQUIRED for the command builder to
         // match recipe ingredients to stations.
         arrStations = stations.map {
+            // Preserve isPerishable + updatedAt alongside category so
+            // `updateQuantitiesOnBasedPouringCompletion` can PATCH the
+            // reduced quantities WITHOUT nuking those server-side
+            // fields. The previous port dropped them here (only
+            // carried station / name / quantity / category forward),
+            // and the post-craft PATCH was what broke Make-It-Again
+            // → Ready-to-Pour for Barsys 360.
             CraftingIngredientRow(
                 station: $0.station,
                 ingredientName: $0.ingredientName,
                 ingredientQuantity: $0.ingredientQuantity,
-                category: $0.category
+                category: $0.category,
+                isPerishable: $0.isPerishable,
+                updatedAt: $0.updatedAt
             )
         }
 
@@ -971,6 +1000,19 @@ final class CraftingViewModel: ObservableObject {
         // by station name (UIKit uses tag→StationName via
         // `StationHelper.getStationName(tag:)`, we already store the
         // station enum directly so the lookup is trivial).
+        //
+        // CRITICAL: preserve `category`, `isPerishable`, and
+        // `updatedAt` from the original row. `patchAllStations` writes
+        // `slot.category?.primary / secondary / flavourTags` and
+        // `slot.isPerishable` straight into the PATCH body — if we
+        // drop them here (the previous port emitted
+        // `isPerishable: false, category: nil`), the server overwrites
+        // its stored category fields with empty strings. The next
+        // time the user taps "Make it again" the Ready-to-Pour screen
+        // refetches stations, reads back empty categories, and the
+        // category-match filter returns zero recipes. Keeping these
+        // three fields pinned here is what restores Make-It-Again →
+        // RTP parity with UIKit.
         var updated: [StationSlot] = stations.map { row in
             var remaining = row.ingredientQuantity
             if let poured = pouredByStation[row.station] {
@@ -981,7 +1023,9 @@ final class CraftingViewModel: ObservableObject {
                 station: row.station,
                 ingredientName: row.ingredientName,
                 ingredientQuantity: remaining,
-                isPerishable: false
+                isPerishable: row.isPerishable,
+                category: row.category,
+                updatedAt: row.updatedAt
             )
         }
         // UIKit sorts by stationName.rawValue before building the dict
