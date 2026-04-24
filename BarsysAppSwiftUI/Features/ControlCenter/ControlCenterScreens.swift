@@ -1479,9 +1479,35 @@ enum StationsAPIService {
     /// `StationsServiceApi.updateAllStationsTogetherWithPatch`.
     /// Used by the Setup-Stations flow to commit all 6 stations in one
     /// shot before the user leaves the screen.
+    /// Which flow is driving the batch PATCH. Each flow has different
+    /// semantics for `quantity`, `is_perishable`, and which stations
+    /// should be included in the payload.
+    ///
+    /// • `.setupStations` — 1:1 with UIKit
+    ///   `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients`.
+    ///   UIKit iterates `mappedArray` which contains ONLY the
+    ///   user-mapped stations (the ones the recipe / mixlist used).
+    ///   Quantity is always `maximumQuantityDoubleMLFor360` (750.0) —
+    ///   the "reset to max on proceed" semantic. `is_perishable` comes
+    ///   from the recipe ingredient.
+    ///
+    /// • `.postCraft` — 1:1 with UIKit
+    ///   `CraftingViewModel+StationUpdate.updateQuantitiesOnBasedPouringCompletion`
+    ///   (L14-110). UIKit iterates ALL 6 stations — NOT just the ones
+    ///   that poured — and writes the REDUCED `ingredientQuantity`
+    ///   (after subtracting what was dispensed). `is_perishable` is
+    ///   hard-coded to `false` (UIKit L91). Empty stations still
+    ///   appear in the body with `""` name + `0`/null quantity so the
+    ///   server's `stations` object stays complete.
+    enum PatchFlow {
+        case setupStations
+        case postCraft
+    }
+
     @discardableResult
     static func patchAllStations(deviceName: String,
-                                 stations: [StationSlot]) async -> Bool {
+                                 stations: [StationSlot],
+                                 flow: PatchFlow = .setupStations) async -> Bool {
         guard !deviceName.isEmpty,
               let encoded = deviceName.addingPercentEncoding(
                 withAllowedCharacters: .urlPathAllowed),
@@ -1489,8 +1515,41 @@ enum StationsAPIService {
               let url = URL(string: "\(baseURL)devices/device-number/\(encoded)")
         else { return false }
 
+        // Flow-specific station selection:
+        //   • Setup flow: UIKit `mappedArray` contains only the
+        //     user-mapped stations. Include only slots that carry a
+        //     real ingredient name AND a non-empty category — dropping
+        //     empty slots keeps categories on untouched stations
+        //     intact. Fallback to "name-only" if categories haven't
+        //     been hydrated yet (pre-existing server state).
+        //   • Post-craft flow: UIKit writes ALL 6 stations regardless
+        //     of whether they poured, so the server's `stations`
+        //     object stays complete (ingredient names preserved,
+        //     reduced quantities rewritten). Never filter here.
+        let effectiveStations: [StationSlot]
+        switch flow {
+        case .setupStations:
+            let primary = stations.filter { slot in
+                let name = slot.ingredientName
+                let nameIsReal = !name.isEmpty && name != Constants.emptyDoubleDash
+                let hasCategory = !(slot.category?.primary ?? "").isEmpty
+                    || !(slot.category?.secondary ?? "").isEmpty
+                return nameIsReal && hasCategory
+            }
+            effectiveStations = primary.isEmpty
+                ? stations.filter { !$0.ingredientName.isEmpty && $0.ingredientName != Constants.emptyDoubleDash }
+                : primary
+        case .postCraft:
+            // 1:1 with UIKit L26 `for i in 0..<arrStations.count` — write every
+            // station. Skipping any slot here lets the server's copy drift
+            // out of sync and the user sees missing / outdated ingredients
+            // on the next visit to Control Center, which is exactly the
+            // "last ingredient got deleted after Drink Complete" regression
+            // the user reported.
+            effectiveStations = stations
+        }
         var stationsDict: [String: Any] = [:]
-        for slot in stations {
+        for slot in effectiveStations {
             // 1:1 port of UIKit
             // `StationsMenuViewModel+StationSetup.updateAllStationsWithRecipeIngredients(…)`
             // L15-55. UIKit builds each station dict with these six
@@ -1582,20 +1641,48 @@ enum StationsAPIService {
             } else if isEmpty {
                 quantityValue = "0.0"
             } else {
-                // UIKit's always-750.0 reset — NOT the slot's
-                // current quantity. Use the canonical constant
-                // (`NumericConstants.maximumQuantityIntMLFor360` →
-                // Double(750) → "750.0") so the bytes match
-                // byte-for-byte regardless of what the in-memory
-                // slot was carrying.
-                quantityValue = "\(Double(NumericConstants.maximumQuantityIntMLFor360))"
+                switch flow {
+                case .setupStations:
+                    // UIKit's always-750.0 reset — NOT the slot's
+                    // current quantity. Use the canonical constant
+                    // (`NumericConstants.maximumQuantityIntMLFor360` →
+                    // Double(750) → "750.0") so the bytes match
+                    // byte-for-byte regardless of what the in-memory
+                    // slot was carrying.
+                    quantityValue = "\(Double(NumericConstants.maximumQuantityIntMLFor360))"
+                case .postCraft:
+                    // 1:1 with UIKit `updateQuantitiesOnBasedPouringCompletion`
+                    // L69-88: write the REDUCED `ingredientQuantity`
+                    // (what's left after subtracting the last pour),
+                    // floored at 0 so negative values — which can
+                    // happen if the device reports a larger pour than
+                    // the stored quantity — don't land as negative
+                    // strings in the JSON body.
+                    let reduced = max(0, slot.ingredientQuantity)
+                    quantityValue = "\(reduced)"
+                }
+            }
+
+            // `is_perishable` semantics also differ by flow:
+            //   • Setup: carry forward whatever flag the slot has
+            //     (recipe ingredient perishable flag, or what the
+            //     server already stored). Matches UIKit L54
+            //     `isPerishable = mappedArray[i].perishable ?? false`.
+            //   • Post-craft: UIKit hard-codes `false` (L91 —
+            //     `stationNameDictToSave.setValue(false, forKey: "is_perishable")`).
+            //     SwiftUI mirrored that below so the two flows agree
+            //     with their UIKit counterparts byte-for-byte.
+            let isPerishableValue: Bool
+            switch flow {
+            case .setupStations: isPerishableValue = slot.isPerishable
+            case .postCraft:     isPerishableValue = false
             }
 
             var stationDict: [String: Any] = [
                 "metric": Constants.mlText.uppercased(),
                 "quantity": quantityValue,
                 "ingredient_name": ingredientNameValue,
-                "is_perishable": slot.isPerishable
+                "is_perishable": isPerishableValue
             ]
             // Only include `category` when at least one of
             // primary/secondary is non-empty. For filled stations we
@@ -1633,11 +1720,28 @@ enum StationsAPIService {
                 // stored value. Matches UIKit batch PATCH behaviour.
                 stationDict["category"] = categoryDict
             }
-            // UIKit stamps `updated_at` on every PATCH (current
-            // nanosecond-format date). Required for perishable-expiry
-            // parity: `isExpired(updated_at:, is_perishable:)` compares
-            // against this timestamp.
-            stationDict["updated_at"] = Self.formattedCurrentDate()
+            // `updated_at` semantics also diverge by flow:
+            //   • Setup: stamp a FRESH nanosecond-format timestamp so
+            //     the 24-hour perishable-expiry timer resets from the
+            //     user's latest refill. Matches UIKit L51
+            //     `setValue(getFormattedCurrentDate(), forKey: "updated_at")`.
+            //   • Post-craft: PRESERVE the slot's existing
+            //     `updatedAt`. UIKit L92
+            //     `setValue(arrStationsToUpdate[i].updatedAt, forKey: "updated_at")`
+            //     keeps the server-owned timestamp stable across a
+            //     pour so perishable expiry doesn't reset just because
+            //     the user finished a drink (which would wrongly extend
+            //     an already-aging ingredient by a full 24 hours).
+            switch flow {
+            case .setupStations:
+                stationDict["updated_at"] = Self.formattedCurrentDate()
+            case .postCraft:
+                // Null-safe: if the slot didn't carry an updated_at
+                // (fresh in-memory StationSlot), emit an empty string
+                // to match UIKit's `arrStationsToUpdate[i].updatedAt`
+                // which defaults to "" via the model's nil-coalesce.
+                stationDict["updated_at"] = slot.updatedAt ?? ""
+            }
             stationsDict[slot.station.rawValue] = stationDict
         }
         let body: [String: Any] = [
@@ -2751,7 +2855,16 @@ struct StationsMenuView: View {
         // refresh finishes after the push the user will see the
         // updated data without a manual refresh.
         env.loading.show("Updating…")
-        await env.catalog.preload()
+        // `force: true` bypasses the 30-second CatalogService throttle.
+        // Without it, a user who lands on Setup-Stations <30s after the
+        // app's boot-time preload gets their Proceed refresh silently
+        // skipped, and Ready-to-Pour then renders the stale pre-PATCH
+        // recipes/mixlists cache — so the allow-list filter finds zero
+        // recipes whose ingredients match the freshly-written stations
+        // and the screen is empty. 1:1 with UIKit
+        // `MixlistsUpdateClass.updateMixlists(...)` which has no
+        // throttle and always refetches on Proceed.
+        await env.catalog.preload(force: true)
         env.loading.hide()
         router.push(.readyToPour)
         // IMPORTANT: don't clear `setupStationsContext` here.

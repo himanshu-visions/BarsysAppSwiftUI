@@ -1032,9 +1032,22 @@ final class CraftingViewModel: ObservableObject {
         // so the payload order matches the server's expected A→F order.
         updated.sort { $0.station.rawValue < $1.station.rawValue }
 
+        // `flow: .postCraft` is CRITICAL — matches UIKit
+        // `updateQuantitiesOnBasedPouringCompletion` exactly:
+        //   • sends ALL 6 stations (empty ones included) so the
+        //     server's `stations` object stays complete and the last
+        //     filled slot doesn't disappear after a drink completes
+        //     (the exact regression the user reported);
+        //   • writes the REDUCED quantity (what's left after the pour)
+        //     instead of the setup-flow's 750ml reset;
+        //   • hard-codes `is_perishable: false` per UIKit L91;
+        //   • preserves each slot's server-stamped `updated_at` so
+        //     the 24-hour perishable timer doesn't reset just because
+        //     the user finished a drink.
         _ = await StationsAPIService.patchAllStations(
             deviceName: deviceName,
-            stations: updated
+            stations: updated,
+            flow: .postCraft
         )
     }
 

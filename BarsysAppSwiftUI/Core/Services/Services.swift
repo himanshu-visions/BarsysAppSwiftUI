@@ -1977,7 +1977,16 @@ final class CatalogService: ObservableObject {
     private var lastAPICallTime: Date = .distantPast
     private let minAPIInterval: TimeInterval = 30 // 30 seconds between fetches
 
-    func preload() async {
+    /// `force: true` bypasses the 30-second rate-limit gate below.
+    /// Used after a server-side mutation (e.g. Setup-Stations PATCH) so
+    /// Ready-to-Pour reads the RESHAPED recipe/mixlist set instead of the
+    /// stale pre-PATCH snapshot. UIKit's
+    /// `MixlistsUpdateClass.updateMixlists(...)` has no throttle at all,
+    /// so SwiftUI's throttle was silently skipping the second refresh
+    /// that the Setup → Proceed → RTP chain needs to land fresh data
+    /// before the filter runs. Default `false` preserves the original
+    /// rate-limiting for tab switches / pull-to-refresh.
+    func preload(force: Bool = false) async {
         // 1. Show cached data immediately
         recipes = storage.allRecipes()
         mixlists = storage.allMixlists()
@@ -2018,9 +2027,13 @@ final class CatalogService: ObservableObject {
 
         // Rate limit: skip API call if called too recently (prevents 429)
         // BUT always allow if storage is empty (e.g. app restart — in-memory storage lost)
+        // OR the caller set `force: true` (post-mutation refresh path —
+        // e.g. Setup-Stations Proceed → Ready-to-Pour needs the server's
+        // reshaped recipes/mixlists snapshot NOW, not the cached pre-PATCH
+        // copy). Matches UIKit `updateMixlists` which has no throttle.
         let storageIsEmpty = recipes.isEmpty && mixlists.isEmpty
         let elapsed = Date().timeIntervalSince(lastAPICallTime)
-        if elapsed < minAPIInterval && !storageIsEmpty {
+        if !force && elapsed < minAPIInterval && !storageIsEmpty {
             print("[CatalogService] Skipping API call — last fetch was \(Int(elapsed))s ago")
             return
         }
