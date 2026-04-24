@@ -20,6 +20,8 @@ import UIKit
 import ImageIO
 
 struct SplashView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         GeometryReader { geo in
             // UIKit constraint: height = view.height × 0.25
@@ -38,11 +40,26 @@ struct SplashView: View {
                     .frame(width: geo.size.width,
                            height: fullHeight * 0.25)
                     .clipped()
+                    // The GIF artwork is dark on a transparent background,
+                    // so it blends into the dark background. Invert only
+                    // in dark mode so light mode keeps the original GIF.
+                    .colorInvert(isActive: colorScheme == .dark)
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Barsys")
         .accessibilityAddTraits(.isImage)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func colorInvert(isActive: Bool) -> some View {
+        if isActive {
+            self.colorInvert()
+        } else {
+            self
+        }
     }
 }
 
