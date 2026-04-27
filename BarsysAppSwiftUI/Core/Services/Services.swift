@@ -2206,9 +2206,13 @@ struct AppAlertItem: Identifiable, Equatable {
 
     /// Mirrors UIKit `showCustomAlertMultipleButtons(isCloseButtonHidden:)`.
     /// When `true`, the cross / X dismiss button in the upper-right
-    /// corner is suppressed — used by success popups (e.g. "Your drink
-    /// has been added") where the only acceptable action is OK.
-    var hideClose: Bool = false
+    /// corner is suppressed. Defaults to `true` to mirror UIKit:
+    /// `showCustomAlert(...)`'s `isCloseButtonHidden: Bool = true`
+    /// default and the universal `isCloseButtonHidden: true` argument
+    /// every `showCustomAlertMultipleButtons` call site passes. Only
+    /// the three intentional instruction popups (pour-ingredients,
+    /// proceed-to-clean, unsaved-changes) override to `false`.
+    var hideClose: Bool = true
 
     /// Single-button presentation style.
     ///
@@ -2233,8 +2237,22 @@ struct AppAlertItem: Identifiable, Equatable {
 final class AlertQueue: ObservableObject {
     @Published var current: AppAlertItem?
 
-    func show(title: String = "Barsys", message: String = "", primary: String = "OK", action: (() -> Void)? = nil) {
-        current = AppAlertItem(title: title, message: message, primaryActionTitle: primary, primaryAction: action)
+    /// Single-button alert. `hideClose` defaults to `true` to mirror
+    /// UIKit `showCustomAlert(isCloseButtonHidden: Bool = true)` — the
+    /// two SwiftUI sites that need the X (pour-ingredients,
+    /// proceed-to-clean) override explicitly.
+    func show(title: String = "Barsys",
+              message: String = "",
+              primary: String = "OK",
+              action: (() -> Void)? = nil,
+              hideClose: Bool = true) {
+        current = AppAlertItem(
+            title: title,
+            message: message,
+            primaryActionTitle: primary,
+            primaryAction: action,
+            hideClose: hideClose
+        )
     }
 
     /// Two-button variant — 1:1 port of UIKit
@@ -2244,16 +2262,17 @@ final class AlertQueue: ObservableObject {
     /// action for decision alerts); `secondary` is the right-side
     /// neutral button.
     ///
-    /// `hideClose` maps to UIKit `isCloseButtonHidden` — callers like the
-    /// logout confirmation pass `true` so the user must tap Log out or
-    /// No (no escape hatch via the corner X).
+    /// `hideClose` maps to UIKit `isCloseButtonHidden`. Defaults to
+    /// `true` because every UIKit `showCustomAlertMultipleButtons` call
+    /// site passes `isCloseButtonHidden: true` (the only exceptions are
+    /// the three instruction popups that opt-in to `false`).
     func show(title: String,
               message: String = "",
               primaryTitle: String,
               secondaryTitle: String,
               onPrimary: (() -> Void)? = nil,
               onSecondary: (() -> Void)? = nil,
-              hideClose: Bool = false) {
+              hideClose: Bool = true) {
         current = AppAlertItem(
             title: title,
             message: message,

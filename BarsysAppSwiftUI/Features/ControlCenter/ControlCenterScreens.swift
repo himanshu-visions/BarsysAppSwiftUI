@@ -2247,7 +2247,13 @@ struct StationsMenuView: View {
                     env.alerts.show(
                         title: Constants.pourIngredientsIntoMachine,
                         message: "",
-                        primary: ConstantButtonsTitle.continueButtonTitle
+                        primary: ConstantButtonsTitle.continueButtonTitle,
+                        // UIKit `StationsMenuViewController.swift:273`
+                        // is one of two single-button alerts that show
+                        // the X (`isCloseButtonHidden: false`) so the
+                        // user can dismiss the pour instruction without
+                        // committing to the Continue path.
+                        hideClose: false
                     )
                 }
                 return
@@ -4308,7 +4314,12 @@ struct StationCleaningView: View {
                     viewModel.handleDifferentStationAlertContinue(
                         targetStation: alert.targetStation
                     )
-                }
+                },
+                // UIKit `StationCleaningFlowViewController.swift:142` is
+                // one of two single-button alerts that show the X
+                // (`isCloseButtonHidden: false`) so the user can back
+                // out of the proceed-to-clean instruction.
+                hideClose: false
             )
         }
         // 1:1 port of UIKit
