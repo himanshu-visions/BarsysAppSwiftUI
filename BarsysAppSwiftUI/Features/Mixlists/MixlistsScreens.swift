@@ -416,23 +416,35 @@ struct MixlistDetailView: View {
         let _ = favouritesRefreshTick
         // Reading `catalog.recipes` registers a dependency on the
         // catalog's `@Published` array so a connection-restored
-        // refetch re-renders this view.
-        let catalogRecipes = catalog.recipes
+        // re-fetch (`CatalogService.handleConnectionRestored()`) also
+        // re-renders this view. Discard binding — only the dependency
+        // matters; the actual lookup goes through `env.storage` first
+        // because `toggleFavorite` mutates the storage dictionary
+        // synchronously while `catalog.recipes` only updates after a
+        // full `preload()`.
+        let _ = catalog.recipes
 
         // Resolve recipe IDs via the mixlist's snapshot (preferred) or
-        // its bare `recipeIDs` list. Then look each one up in the
-        // freshest source available — catalog → storage → mixlist
-        // snapshot — so every read picks up the latest `isFavourite`
-        // flag (UIKit re-reads from SQLite after every like/unlike).
+        // its bare `recipeIDs` list.
         let ids: [RecipeID] = {
             if let cached = mixlist?.recipes, !cached.isEmpty {
                 return cached.map(\.id)
             }
             return mixlist?.recipeIDs ?? []
         }()
+        // Lookup order — **storage first** so the heart icon picks up
+        // the latest `isFavourite` flag the same render frame the user
+        // taps it. Falling back to `catalog.recipes` for the rare
+        // edge case where the recipe was published to catalog before
+        // storage caught up, and finally to the mixlist's cached
+        // snapshot (which has stale `isFavourite` but at least
+        // resolves the row's static fields like name / image).
+        // UIKit `BarsysRecipeTableViewCell.configure()` re-reads the
+        // SQLite row on every tableView reload — same idea, just
+        // through the storage dictionary instead of SQLite.
         return ids.compactMap { id in
-            catalogRecipes.first(where: { $0.id == id })
-                ?? env.storage.recipe(by: id)
+            env.storage.recipe(by: id)
+                ?? catalog.recipes.first(where: { $0.id == id })
                 ?? mixlist?.recipes?.first(where: { $0.id == id })
         }
     }

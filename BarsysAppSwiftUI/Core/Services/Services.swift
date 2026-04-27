@@ -360,6 +360,13 @@ final class MockStorageService: StorageService {
     // collection into UserDefaults — same pattern `MyDrinksCache` uses
     // for the My Drinks tab — so cold-launch offline keeps showing the
     // last fetched data, exactly like UIKit.
+    //
+    // ⚠ Keys are duplicated in `UserDefaultsClass.Keys.storageRecipesCache`
+    // / `storageMixlistsCache` / `storageFavoritesCache`. The duplication
+    // is intentional — `UserDefaultsClass.Keys` is `private` to that
+    // enum, so the two declarations keep the disk format wired in one
+    // direction and the `clearAll()` wipe wired in the other. Whenever
+    // either string changes, update both call sites together.
     private static let recipesCacheKey  = "barsys_storage_recipes"
     private static let mixlistsCacheKey = "barsys_storage_mixlists"
     private static let favsCacheKey     = "barsys_storage_favorites"

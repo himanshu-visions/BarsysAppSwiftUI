@@ -52,6 +52,16 @@ enum UserDefaultsClass {
         static let isManuallyDisconnected           = "kBarsysIsManuallyDisconnected"
         static let hasLaunchedBefore                = "hasLaunchedBefore"
         static let hasSeenTutorial                  = "hasSeenTutorial"
+
+        // Storage cache keys — JSON-encoded recipes / mixlists / favourites
+        // written by `MockStorageService.persistCache()`. Mirrors UIKit's
+        // SQLite tables (`cocktails_recipes`, `mixlists`,
+        // `favourite_recipes`). Listed here so `clearAll()` wipes them on
+        // logout / delete-account / session-expired — matches UIKit
+        // dropping the SQLite rows in those flows.
+        static let storageRecipesCache              = "barsys_storage_recipes"
+        static let storageMixlistsCache             = "barsys_storage_mixlists"
+        static let storageFavoritesCache            = "barsys_storage_favorites"
     }
 
     private static var defaults: UserDefaults { .standard }
@@ -200,7 +210,15 @@ enum UserDefaultsClass {
             Keys.lastConnectedDevice,
             Keys.updatedDataTimeStampForCacheRecipeData,
             Keys.isManuallyDisconnected,
-            Keys.hasSeenTutorial
+            Keys.hasSeenTutorial,
+            // Storage disk-cache keys — wipe alongside the rest so the
+            // next user / fresh login doesn't see the previous user's
+            // recipes / mixlists / favourites. UIKit drops the SQLite
+            // rows here (`DBManager.deleteAllData`); we drop the
+            // JSON-encoded equivalents.
+            Keys.storageRecipesCache,
+            Keys.storageMixlistsCache,
+            Keys.storageFavoritesCache
         ]
         for key in keys { defaults.removeObject(forKey: key) }
         defaults.synchronize()
