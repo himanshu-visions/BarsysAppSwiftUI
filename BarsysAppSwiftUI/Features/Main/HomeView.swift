@@ -102,11 +102,29 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            // Full-screen background matches storyboard `primaryBackgroundColor`.
-            Color("primaryBackgroundColor")
-                .ignoresSafeArea()
-
+        // 1:1 structure with `DevicePairedView`
+        // (ControlCenterScreens.swift:637-1008) — the Explore tab root the
+        // user flagged as the visual reference. That screen uses
+        // `ScrollView { VStack { … } }` + `.background(primaryBackgroundColor.ignoresSafeArea())`
+        // + `.navigationBarBackButtonHidden(true)` + `.chooseOptionsStyleNavBar()`.
+        //
+        // The crucial bit is the OUTER `ScrollView`. iOS 26's system
+        // toolbar Liquid Glass auto-wrap relies on having scrollable
+        // content underneath the nav bar to render the silvery-frosted
+        // pill the user sees on Explore / Device-Paired. With a static
+        // `VStack` (no ScrollView), the bar has no material to blur
+        // through, so iOS 26 falls back to a thinner, more transparent
+        // glass — which is exactly the "black transparent" right-pill
+        // the user reported.
+        //
+        // The screen previously hung the speakeasy card off a `Spacer()`
+        // so it sat at the bottom of the viewport. Inside a ScrollView
+        // a `Spacer()` collapses (the scroll view has unlimited
+        // vertical space), so the bottom card moves to a
+        // `safeAreaInset(edge: .bottom)` instead — same visual outcome
+        // (pinned to the bottom safe area, above the tab bar) AND the
+        // ScrollView still gets the iOS 26 nav-bar treatment.
+        ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
 
                 // ─── 1. "Hi {name}" greeting (lUD-VJ-a4r) ───
@@ -154,21 +172,26 @@ struct HomeView: View {
                 mainCard
                     .padding(.horizontal, 19)
                     .padding(.top, 16)
-
-                Spacer(minLength: 0)
-
-                // ─── 5. Speakeasy card (7Ge-fd-usS) ───
-                //
-                // `bottomConstraintMain` — set by UIKit viewDidLoad
-                // (L26-29) based on iOS version:
-                //   • iOS 26+ → 30pt bottom inset (tighter because
-                //     the custom tab bar is itself a glass pill)
-                //   • iOS <26 → 45pt bottom inset
-                speakeasyCard
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, speakeasyCardBottomInset)
+                    .padding(.bottom, 16)
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            // ─── 5. Speakeasy card (7Ge-fd-usS) ───
+            //
+            // Pinned to the bottom safe area instead of pushed down by a
+            // Spacer in a VStack — see body comment above for why the
+            // outer ScrollView is required.
+            //
+            // `bottomConstraintMain` — set by UIKit viewDidLoad
+            // (L26-29) based on iOS version:
+            //   • iOS 26+ → 30pt bottom inset (tighter because
+            //     the custom tab bar is itself a glass pill)
+            //   • iOS <26 → 45pt bottom inset
+            speakeasyCard
+                .padding(.horizontal, 24)
+                .padding(.bottom, speakeasyCardBottomInset)
+        }
+        .background(Color("primaryBackgroundColor").ignoresSafeArea())
         // System toolbar — 1:1 with PairYourDevice
         // (DeviceScreens.swift:68-95). iOS 26 auto-wraps each item in
         // its native Liquid Glass capsule/circle, which is exactly the
@@ -177,6 +200,14 @@ struct HomeView: View {
         // wrapping, which is why the right-nav pill looked duller than
         // PairYourDevice's.
         .navigationBarTitleDisplayMode(.inline)
+        // 1:1 with DevicePairedView (ControlCenterScreens.swift:960) —
+        // hides the auto-generated back button at the NavigationStack
+        // root. Without this, iOS 26 reserves layout space for a
+        // hidden back affordance and the toolbar bookkeeping renders
+        // the right-pill auto-glass with a thinner, "black transparent"
+        // material. Adding it makes the bar treat the toolbar layout
+        // identically to DevicePairedView.
+        .navigationBarBackButtonHidden(true)
         .toolbar {
             // Explore button — bare `imgExploreSmall` icon, 18×22.
             // iOS 26 toolbar wraps this in a Liquid Glass circle
