@@ -159,9 +159,15 @@ struct HomeView: View {
                     .accessibilityLabel("Welcome message")
 
                 // ─── 3. Description (Vky-cT-XzT) ───
+                // Tinted with `darkGrayColor` to match the "Welcome to
+                // Barsys AI," row directly above so the two-line intro
+                // copy reads as a single visual block instead of the
+                // previous two different greys (welcome = darkGrayColor,
+                // description = grayBorderColor — visibly different
+                // weights against the dark page in dark mode).
                 Text("Tap on Barbot to chat about drinks, customize recipes, save favorites, or get recommendations.")
                     .font(.system(size: 12))
-                    .foregroundStyle(Color("grayBorderColor"))
+                    .foregroundStyle(Color("darkGrayColor"))
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
