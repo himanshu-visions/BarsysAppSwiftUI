@@ -66,6 +66,12 @@ struct PreferencesView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 100)
                 .onChange(of: preferences.measurementUnit) { _ in
+                    // Light tap on every flip — matches the haptic
+                    // signature used elsewhere in the app for
+                    // selection-style controls (e.g. plus/minus
+                    // steppers in `RecipeIngredientRow` /
+                    // `EditIngredientRow`, toolbar back buttons).
+                    HapticService.light()
                     // 1:1 with UIKit `UnitPreferencesViewController`
                     // L112 — fires when the user flips the ml/oz
                     // segmented control:
