@@ -361,6 +361,17 @@ struct MixlistDetailView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    /// Observes `CatalogService` directly so the screen re-renders when
+    /// the catalog publishes new data — including the offline → online
+    /// rising edge handled by `CatalogService.handleConnectionRestored()`.
+    /// Without this binding, `MixlistDetailView` only reads through the
+    /// non-observable `env.storage`, so a fresh fetch triggered by the
+    /// `.barsysConnectionRestored` notification would update storage
+    /// silently and the user would still see the empty / stale state
+    /// they hit while offline. Reading `catalog.mixlists` /
+    /// `catalog.recipes` registers SwiftUI dependencies on the
+    /// `@Published` arrays so re-renders happen automatically.
+    @EnvironmentObject private var catalog: CatalogService
     /// Reactive theme awareness — used ONLY by the bottom
     /// "Setup Stations" primary-orange button to override the
     /// dark-appearance variant of the `brandGradientTop` /
@@ -386,22 +397,33 @@ struct MixlistDetailView: View {
 
     enum MixlistDetailTab: Int, CaseIterable { case recipes, ingredients }
 
-    private var mixlist: Mixlist? { env.storage.allMixlists().first { $0.id == mixlistID } }
+    /// Reads through `catalog.mixlists` (`@Published`) so a new mixlist
+    /// list arriving via `CatalogService.preload()` (fresh fetch,
+    /// connection-restored retry, pull-to-refresh) immediately
+    /// re-renders this screen. Falls back to `env.storage` for the
+    /// edge case where the catalog hasn't published yet but the
+    /// underlying storage already has the mixlist (covers the
+    /// `bootstrap → splash → screen mount` race).
+    private var mixlist: Mixlist? {
+        catalog.mixlists.first { $0.id == mixlistID }
+            ?? env.storage.allMixlists().first { $0.id == mixlistID }
+    }
 
     private var recipes: [Recipe] {
-        // Reading the tick in this computed property registers it as a
-        // dependency — SwiftUI re-runs `recipes` (and therefore the
-        // `MixlistDetailRecipeRow` ForEach) on every heart toggle.
+        // Reading the tick registers it as a dependency — SwiftUI
+        // re-runs `recipes` (and the `MixlistDetailRecipeRow` ForEach)
+        // on every heart toggle.
         let _ = favouritesRefreshTick
+        // Reading `catalog.recipes` registers a dependency on the
+        // catalog's `@Published` array so a connection-restored
+        // refetch re-renders this view.
+        let catalogRecipes = catalog.recipes
 
-        // Always look up via `env.storage.recipe(by:)` even when
-        // `mixlist?.recipes` is non-empty. The cached snapshot inside
-        // the mixlist is captured at mixlist load time and does NOT
-        // refresh when `storage.toggleFavorite` flips
-        // `recipes[id].isFavourite`. UIKit reloads from the SQLite
-        // table after every like/unlike, so the heart icon there
-        // tracks the latest `isFavouriteRecipe` flag — we mirror that
-        // by going through storage on every read.
+        // Resolve recipe IDs via the mixlist's snapshot (preferred) or
+        // its bare `recipeIDs` list. Then look each one up in the
+        // freshest source available — catalog → storage → mixlist
+        // snapshot — so every read picks up the latest `isFavourite`
+        // flag (UIKit re-reads from SQLite after every like/unlike).
         let ids: [RecipeID] = {
             if let cached = mixlist?.recipes, !cached.isEmpty {
                 return cached.map(\.id)
@@ -409,7 +431,9 @@ struct MixlistDetailView: View {
             return mixlist?.recipeIDs ?? []
         }()
         return ids.compactMap { id in
-            env.storage.recipe(by: id) ?? mixlist?.recipes?.first(where: { $0.id == id })
+            catalogRecipes.first(where: { $0.id == id })
+                ?? env.storage.recipe(by: id)
+                ?? mixlist?.recipes?.first(where: { $0.id == id })
         }
     }
 

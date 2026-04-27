@@ -299,6 +299,14 @@ protocol StorageService: AnyObject {
     func favorites() -> Set<RecipeID>
     func toggleFavorite(_ id: RecipeID)
 
+    /// Flush the in-memory dictionaries to disk so a cold launch
+    /// without network can rebuild the cached catalog. 1:1 with UIKit's
+    /// implicit SQLite persistence — UIKit writes every catalog row
+    /// when the API resolver completes; we mirror that with one
+    /// JSON-encoded write per collection. Default no-op so test doubles
+    /// don't have to implement persistence.
+    func persistCache()
+
     // MARK: - Ports of UIKit DBManager methods not yet in base protocol
 
     /// Ports `DBManager._fetchRecipeBySlug(bySlug:)` / `DBQueries.fetchRecipeBySlug`.
@@ -328,20 +336,85 @@ protocol StorageService: AnyObject {
     func readyToPourMixlists(allowedIngredients: [(primary: String, secondary: String)], barsys360Only: Bool) -> [Mixlist]
 }
 
+extension StorageService {
+    /// Default no-op so existing test doubles / future in-memory-only
+    /// implementations don't have to override `persistCache()`. The
+    /// disk-backed `MockStorageService` overrides this with a real
+    /// JSON write — see `MockStorageService.persistCache()`.
+    func persistCache() { /* no-op */ }
+}
+
 final class MockStorageService: StorageService {
     private var recipes: [RecipeID: Recipe]
     private var mixlists: [MixlistID: Mixlist]
     private var ingredients: [IngredientID: Ingredient]
     private var favs: Set<RecipeID>
 
-    /// Start with EMPTY storage. Real API data is fetched by CatalogService.preload()
-    /// on app launch and after login. No more SampleData mixing with real data.
-    /// UIKit also starts with empty DB — data comes from API → DBManager.insertToDatabase.
+    // MARK: - Disk-cache keys (1:1 with UIKit's SQLite tables)
+    //
+    // UIKit persists its catalog to SQLite via `DBManager.insertToDatabase`,
+    // which is why the legacy app keeps showing recipes / mixlists when
+    // launched offline. SwiftUI's `MockStorageService` was in-memory
+    // only, so a cold launch with no network rendered an empty Explore /
+    // Mixlists list. We mirror the SQLite cache by JSON-encoding each
+    // collection into UserDefaults — same pattern `MyDrinksCache` uses
+    // for the My Drinks tab — so cold-launch offline keeps showing the
+    // last fetched data, exactly like UIKit.
+    private static let recipesCacheKey  = "barsys_storage_recipes"
+    private static let mixlistsCacheKey = "barsys_storage_mixlists"
+    private static let favsCacheKey     = "barsys_storage_favorites"
+
+    /// Boots with whatever was on disk from the previous run so a
+    /// cold-launch with no internet still shows last-known data —
+    /// matches UIKit `DBManager.fetchAllRecipes()` returning the SQLite
+    /// rows even when the network is down. `CatalogService.preload()`
+    /// re-syncs from the API as soon as connectivity is available and
+    /// calls `persistCache()` so the disk copy stays current.
     init() {
         self.recipes = [:]
         self.mixlists = [:]
         self.ingredients = Dictionary(uniqueKeysWithValues: SampleData.ingredients.map { ($0.id, $0) })
         self.favs = []
+        loadCache()
+    }
+
+    /// JSON-decode the cached catalog into the in-memory dictionaries.
+    /// Failures are swallowed — a corrupt cache simply leaves storage
+    /// empty (the same state the previous in-memory-only build started
+    /// in), so subsequent API fetches still populate it.
+    private func loadCache() {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: Self.recipesCacheKey),
+           let decoded = try? JSONDecoder().decode([Recipe].self, from: data) {
+            for r in decoded { recipes[r.id] = r }
+        }
+        if let data = defaults.data(forKey: Self.mixlistsCacheKey),
+           let decoded = try? JSONDecoder().decode([Mixlist].self, from: data) {
+            for m in decoded { mixlists[m.id] = m }
+        }
+        if let data = defaults.data(forKey: Self.favsCacheKey),
+           let decoded = try? JSONDecoder().decode([RecipeID].self, from: data) {
+            favs = Set(decoded)
+        }
+    }
+
+    /// Encode the current in-memory dictionaries back to disk. Called
+    /// by `CatalogService.preload()` after a successful fetch + by
+    /// `toggleFavorite(_:)` so a heart-tap survives an app restart.
+    /// Cheap (<10ms for typical recipe counts) and synchronous — same
+    /// envelope `MyDrinksCache.save(_:)` uses for the My Drinks tab.
+    func persistCache() {
+        let encoder = JSONEncoder()
+        let defaults = UserDefaults.standard
+        if let data = try? encoder.encode(Array(recipes.values)) {
+            defaults.set(data, forKey: Self.recipesCacheKey)
+        }
+        if let data = try? encoder.encode(Array(mixlists.values)) {
+            defaults.set(data, forKey: Self.mixlistsCacheKey)
+        }
+        if let data = try? encoder.encode(Array(favs)) {
+            defaults.set(data, forKey: Self.favsCacheKey)
+        }
     }
 
     /// Ports DBManager.fetchAllRecipes() — returns all recipes with
@@ -466,6 +539,11 @@ final class MockStorageService: StorageService {
             r.favCreatedAt = isFav ? Int32(Date().timeIntervalSince1970) : 0
             recipes[id] = r
         }
+        // Persist immediately so the heart state survives an app
+        // restart even when the optimistic API call hasn't returned
+        // yet — matches UIKit's SQLite-backed `_updateFavouriteStatus`
+        // which commits the row inside the same transaction.
+        persistCache()
     }
 
     // MARK: - Extended DBManager ports
@@ -2120,6 +2198,13 @@ final class CatalogService: ObservableObject {
                 UserDefaults.standard.set(freshMixlists.count, forKey: "coreDataMixlistCount")
                 lastFetchTimestamp = Date()
             }
+
+            // 9. Persist the fresh catalog to disk (1:1 with UIKit's
+            //    `DBManager.insertToDatabase` finishing inside the
+            //    same flow). Lets the next cold launch render the
+            //    cached catalog while offline, exactly like UIKit
+            //    serves rows from SQLite when the network is down.
+            storage.persistCache()
         } catch {
             print("[CatalogService] API fetch failed: \(error)")
             // On failure, keep existing data (don't clear what we have)
