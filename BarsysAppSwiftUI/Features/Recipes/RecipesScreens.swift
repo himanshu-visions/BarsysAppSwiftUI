@@ -4067,6 +4067,7 @@ struct EditIngredientRow: View {
             HStack(spacing: 0) {
                 // Minus button — 30×30, `grayBorderColor` tint.
                 Button {
+                    HapticService.light()
                     adjust(by: -10)   // UIKit maxIncrementDecrementValueForMl
                 } label: {
                     Image("newMinus")
@@ -4117,6 +4118,7 @@ struct EditIngredientRow: View {
 
                 // Plus button — 30×30, `grayBorderColor` tint.
                 Button {
+                    HapticService.light()
                     adjust(by: +10)
                 } label: {
                     Image("newPlus")
