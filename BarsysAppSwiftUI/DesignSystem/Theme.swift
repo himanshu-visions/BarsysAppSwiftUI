@@ -1044,13 +1044,6 @@ private struct BarsysPopupCard: View {
     /// `MultipleIngredientsPopUpViewController`.
     let onClose: () -> Void
 
-    /// Reactive colour scheme — lets the filled primary button (e.g.
-    /// the "Start Pouring" pill on the Crafting ready-to-pour popup)
-    /// switch to a pure `PrimaryOrangeButton.makeOrangeStyle()` finish
-    /// in dark mode. Light mode keeps the UIKit 3-layer tinted-glass
-    /// recipe for pixel parity.
-    @Environment(\.colorScheme) private var colorScheme
-
     // Storyboard was 277pt but that pinned the two-button row to
     // 109.5pt per button — "No, stay in the app" touched the pill edges
     // with no breathing room. Widened by 30pt so each button gains
@@ -1357,66 +1350,65 @@ private struct BarsysPopupCard: View {
     /// `alertPopUpButtonBackgroundStyle(fillColor:)`
     /// (UIViewClass+GradientStyles.swift L24-48).
     ///
-    /// iOS 26 (3-layer recipe identical to `PrimaryOrangeButton.makeOrangeStyle()`):
-    ///   1. `applyCapsuleGradientStyle()` — CAGradientLayer
+    /// **What UIKit actually renders** (after tracing every line):
+    ///   1. `applyCapsuleGradientStyle()` inserts a CAGradientLayer with
     ///      vertical `brandGradientTop → brandGradientBottom`
     ///      (startPoint 0.5, 0.0 → endPoint 0.5, 1.0), capsule corner.
-    ///   2. `self.backgroundColor.withAlphaComponent(0.2)` — dim the
-    ///      fillColor to 20 % alpha over the gradient.
-    ///   3. `addGlassEffect(cornerRadius: height/2, effect: "clear")` —
-    ///      `UIGlassEffect(style: .clear)` glass pass on top.
+    ///   2. `self.backgroundColor = self.backgroundColor?.withAlphaComponent(0.2)`
+    ///      — sets the view's own backgroundColor to fillColor @ 20 % alpha.
+    ///   3. `addGlassEffect(cornerRadius: h/2, effect: "clear")` adds a
+    ///      `UIGlassEffect(style: .clear)` UIVisualEffectView **and ends
+    ///      with `backgroundColor = .clear`** (UIViewClass+GlassEffects.swift
+    ///      L66-67), which **wipes step 2 entirely**. The `.clear` glass
+    ///      style is essentially transparent — it adds a faint sheen but
+    ///      lets the gradient show through unchanged.
+    ///
+    /// So step 2 is dead code, and the `UIGlassEffect(.clear)` in step 3
+    /// is so transparent that the visible result is just the brand
+    /// gradient capsule. Mirrors what `PrimaryOrangeButton.makeOrangeStyle()`
+    /// renders for the Recipe Craft button — see
+    /// [RecipesScreens.swift `primaryOrangeButtonBackground`] which is
+    /// the same UIKit primitive (`applyCapsuleGradientStyle()`) and
+    /// renders as a pure gradient capsule with no material overlay.
+    ///
+    /// Two prior SwiftUI ports got this wrong:
+    ///   • First version stacked an `.ultraThinMaterial` Capsule on top
+    ///     for "glass". `.ultraThinMaterial` is much more opaque than
+    ///     `UIGlassEffect(.clear)`; it blurred the two-stop gradient
+    ///     into a single milky tone, hiding the peach → tan transition.
+    ///   • Earlier version also stacked the fillColor at 20 % alpha on
+    ///     top — UIKit clears that immediately, so the SwiftUI version
+    ///     was over-tinting the top of the button.
+    ///
+    /// Fix: just render the brand gradient capsule, matching what the
+    /// Recipe Craft button does. Dark mode hard-codes the light RGB
+    /// values like `primaryOrangeButtonBackground` does, so the asset's
+    /// dark variant (#3A2E26 → #4A3628) doesn't render as an invisible
+    /// near-black pill on the popup card.
     ///
     /// Pre-26: solid fillColor fill (UIKit L45:
     /// `layer.backgroundColor = fillColor.withAlphaComponent(1.0).cgColor`).
     @ViewBuilder
     private func alertFilledButtonBackground(_ colorName: String) -> some View {
         if #available(iOS 26.0, *) {
-            if colorScheme == .dark {
-                // DARK MODE — user asked for the "Start Pouring"
-                // confirmation button to render as a pure
-                // `PrimaryOrangeButton` / `makeOrangeStyle()` pill: just
-                // the vertical brand gradient on a capsule, without the
-                // 20% fillColor tint + clear-glass overlay that made the
-                // pill read muddy against the dark crafting canvas.
-                // Mirrors the Recipe page's `primaryOrangeButtonBackground`
-                // (RecipesScreens.swift L1320-1348) in dark mode.
-                Capsule(style: .continuous).fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.980, green: 0.878, blue: 0.800), // #FAE0CC
-                            Color(red: 0.949, green: 0.761, blue: 0.631)  // #F2C2A1
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+            Capsule(style: .continuous).fill(
+                LinearGradient(
+                    colors: [
+                        // Hard-coded light-mode RGB — matches
+                        // `primaryOrangeButtonBackground` on the Recipe
+                        // Craft button. The dynamic asset's dark variant
+                        // (#3A2E26 → #4A3628) would render as an
+                        // invisible near-black pill against the popup
+                        // card glass; UIKit's `makeOrangeStyle()`
+                        // implementation also keeps brand orange in
+                        // both appearances.
+                        SwiftUI.Color(red: 0.980, green: 0.878, blue: 0.800), // #FAE0CC
+                        SwiftUI.Color(red: 0.949, green: 0.761, blue: 0.631)  // #F2C2A1
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-            } else {
-                // LIGHT MODE — unchanged 3-layer UIKit recipe
-                // (`applyCapsuleGradientStyle` + 20% fillColor tint +
-                // clear-glass) so light-mode popups stay pixel-identical
-                // to the previous release.
-                ZStack {
-                    // Layer 1 — vertical brand gradient capsule
-                    //   (UIKit `applyCapsuleGradientStyle()` L63-90).
-                    Capsule(style: .continuous).fill(
-                        LinearGradient(
-                            colors: [
-                                SwiftUI.Color("brandGradientTop"),
-                                SwiftUI.Color("brandGradientBottom")
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    // Layer 2 — fillColor at 20% alpha over the gradient.
-                    Capsule(style: .continuous)
-                        .fill(SwiftUI.Color(colorName).opacity(0.2))
-                    // Layer 3 — `addGlassEffect(effect: "clear")` ≈ SwiftUI
-                    // `ultraThinMaterial` for the clear-glass sheen.
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-            }
+            )
         } else {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(SwiftUI.Color(colorName))
