@@ -2161,12 +2161,22 @@ struct RecipeIngredientRow: View {
                         // UIKit: `state.image = newMinus` with
                         // `tintColor = grayBorderColor`. Template render
                         // so the asset tints to match the UIKit grey.
+                        // Dark mode tints to pure white so the glyph
+                        // reads with high contrast against the dark
+                        // glass pill (the `grayBorderColor` asset
+                        // resolved to a near-invisible mid-grey on the
+                        // dark canvas). Light mode keeps the historical
+                        // `grayBorderColor` value bit-identical.
                         Image("newMinus")
                             .resizable()
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 24, height: 24)
-                            .foregroundStyle(Color("grayBorderColor"))
+                            .foregroundStyle(Color(UIColor { trait in
+                                trait.userInterfaceStyle == .dark
+                                    ? UIColor.white
+                                    : UIColor(named: "grayBorderColor") ?? .gray
+                            }))
                             .frame(width: 30, height: 30)
                     }
                     .buttonStyle(BounceButtonStyle())
@@ -2251,12 +2261,19 @@ struct RecipeIngredientRow: View {
                         HapticService.light()
                         onPlus()
                     } label: {
+                        // Dark mode → white; light mode → `grayBorderColor`
+                        // (bit-identical to the historical light pixels).
+                        // Same rationale as the minus button above.
                         Image("newPlus")
                             .resizable()
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 24, height: 24)
-                            .foregroundStyle(Color("grayBorderColor"))
+                            .foregroundStyle(Color(UIColor { trait in
+                                trait.userInterfaceStyle == .dark
+                                    ? UIColor.white
+                                    : UIColor(named: "grayBorderColor") ?? .gray
+                            }))
                             .frame(width: 30, height: 30)
                     }
                     .buttonStyle(BounceButtonStyle())
