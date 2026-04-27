@@ -38,62 +38,75 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Page title — "Units" 24pt, leading 24, top 18
-            Text("Units")
-                .font(.system(size: 24))
-                .foregroundStyle(Color("appBlackColor"))
-                .padding(.leading, 24)
-                .padding(.top, 18)
+        // Wrapped in `ScrollView` so iOS 26's nav-bar Liquid Glass
+        // auto-wrap has a scrollable surface to render against —
+        // matches the structural pattern that fixed the right-pill
+        // chrome on HomeView / Cocktail Kits / Pair Your Device, and
+        // mirrors MyBar / DevicePairedView / RecipeDetail (the
+        // reference screens whose right-pill renders correctly in
+        // dark mode). Without this, the system bar falls back to the
+        // thinner "black transparent" pill the user reported.
+        // The previous trailing `Spacer()` is gone because Spacer
+        // collapses inside a ScrollView; the content sits at the top
+        // of the viewport, identical to the previous bare-VStack
+        // layout (the Spacer was only padding visual emptiness, not
+        // anchoring anything).
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                // Page title — "Units" 24pt, leading 24, top 18
+                Text("Units")
+                    .font(.system(size: 24))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .padding(.leading, 24)
+                    .padding(.top, 18)
 
-            // Unit selection row — ports UIKit unitSegmentedControl
-            // UIKit: segmented control 72×32 on right, selectedSegmentTintColor = brandTanColor
-            HStack {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Units")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Color("appBlackColor"))
-                    Text("Your preferred measuring unit.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color("mediumGrayColor"))
+                // Unit selection row — ports UIKit unitSegmentedControl
+                // UIKit: segmented control 72×32 on right, selectedSegmentTintColor = brandTanColor
+                HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Units")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Color("appBlackColor"))
+                        Text("Your preferred measuring unit.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color("mediumGrayColor"))
+                    }
+                    Spacer()
+                    // Segmented control matching UIKit: brandTanColor selected tint
+                    Picker("", selection: $preferences.measurementUnit) {
+                        Text("ML").tag(MeasurementUnit.ml)
+                        Text("OZ").tag(MeasurementUnit.oz)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 100)
+                    .onChange(of: preferences.measurementUnit) { _ in
+                        // Light tap on every flip — matches the haptic
+                        // signature used elsewhere in the app for
+                        // selection-style controls (e.g. plus/minus
+                        // steppers in `RecipeIngredientRow` /
+                        // `EditIngredientRow`, toolbar back buttons).
+                        HapticService.light()
+                        // 1:1 with UIKit `UnitPreferencesViewController`
+                        // L112 — fires when the user flips the ml/oz
+                        // segmented control:
+                        //   TrackEventsClass().addBrazeCustomEventWithEventName(
+                        //       eventName: TrackEventName.changePrefrencesEvent.rawValue)
+                        env.analytics.track(TrackEventName.changePrefrencesEvent.rawValue)
+                    }
+                    .onAppear {
+                        // Match UIKit selectedSegmentTintColor = brandTanColor
+                        UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(named: "brandTanColor")
+                        UISegmentedControl.appearance().setTitleTextAttributes(
+                            [.foregroundColor: UIColor.black], for: .selected
+                        )
+                        UISegmentedControl.appearance().setTitleTextAttributes(
+                            [.foregroundColor: UIColor.black.withAlphaComponent(0.6)], for: .normal
+                        )
+                    }
                 }
-                Spacer()
-                // Segmented control matching UIKit: brandTanColor selected tint
-                Picker("", selection: $preferences.measurementUnit) {
-                    Text("ML").tag(MeasurementUnit.ml)
-                    Text("OZ").tag(MeasurementUnit.oz)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 100)
-                .onChange(of: preferences.measurementUnit) { _ in
-                    // Light tap on every flip — matches the haptic
-                    // signature used elsewhere in the app for
-                    // selection-style controls (e.g. plus/minus
-                    // steppers in `RecipeIngredientRow` /
-                    // `EditIngredientRow`, toolbar back buttons).
-                    HapticService.light()
-                    // 1:1 with UIKit `UnitPreferencesViewController`
-                    // L112 — fires when the user flips the ml/oz
-                    // segmented control:
-                    //   TrackEventsClass().addBrazeCustomEventWithEventName(
-                    //       eventName: TrackEventName.changePrefrencesEvent.rawValue)
-                    env.analytics.track(TrackEventName.changePrefrencesEvent.rawValue)
-                }
-                .onAppear {
-                    // Match UIKit selectedSegmentTintColor = brandTanColor
-                    UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(named: "brandTanColor")
-                    UISegmentedControl.appearance().setTitleTextAttributes(
-                        [.foregroundColor: UIColor.black], for: .selected
-                    )
-                    UISegmentedControl.appearance().setTitleTextAttributes(
-                        [.foregroundColor: UIColor.black.withAlphaComponent(0.6)], for: .normal
-                    )
-                }
+                .padding(.horizontal, 24)
+                .padding(.top, 28)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 28)
-
-            Spacer()
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
