@@ -865,10 +865,13 @@ import SwiftUI
 
 enum BarsysPopup: Equatable, Identifiable {
     /// Generic single-action alert ("OK" or custom title).
+    /// `isCloseHidden`: hides the close X button (UIKit
+    /// `AlertPopUpViewController.isCloseButtonHidden`).
     case alert(title: String,
                message: String?,
                primaryTitle: String = ConstantButtonsTitle.okButtonTitle,
-               isBlocking: Bool = false)
+               isBlocking: Bool = false,
+               isCloseHidden: Bool = false)
 
     /// Generic two-action confirm — mirrors UIKit `AlertPopUpHorizontalStackController`.
     ///
@@ -911,7 +914,7 @@ enum BarsysPopup: Equatable, Identifiable {
 
     var id: String {
         switch self {
-        case .alert(let t, _, _, _):                  return "alert-\(t)"
+        case .alert(let t, _, _, _, _):                return "alert-\(t)"
         case .confirm(let t, _, _, _, _, _, _):        return "confirm-\(t)"
         case .manualSpinning(let t, _):               return "manualSpin-\(t)"
         case .multipleIngredients(let t, _):          return "multi-\(t)"
@@ -922,10 +925,27 @@ enum BarsysPopup: Equatable, Identifiable {
 
     var isBlocking: Bool {
         switch self {
-        case .alert(_, _, _, let blocking):     return blocking
+        case .alert(_, _, _, let blocking, _):  return blocking
         case .manualSpinning, .waiting:         return true   // user must wait
         case .shakerFlatSurface:                return true
         case .confirm, .multipleIngredients:    return true
+        }
+    }
+
+    /// Whether the top-right X button is suppressed. Mirrors UIKit's
+    /// `isCloseButtonHidden` flag on `AlertPopUpViewController` /
+    /// `AlertPopUpHorizontalStackController`.
+    ///   • `.alert` / `.confirm` — caller-controlled via `isCloseHidden`.
+    ///   • `.manualSpinning` / `.multipleIngredients` — UIKit always
+    ///     showed an X (`btnClose`), so SwiftUI matches.
+    ///   • `.shakerFlatSurface` — UIKit had no X (uses Cancel Drink only).
+    ///   • `.waiting` — UIKit used a Cancel button instead of an X.
+    var hidesClose: Bool {
+        switch self {
+        case .alert(_, _, _, _, let isCloseHidden):           return isCloseHidden
+        case .confirm(_, _, _, _, _, _, let isCloseHidden):   return isCloseHidden
+        case .manualSpinning, .multipleIngredients:           return false
+        case .shakerFlatSurface, .waiting:                    return true
         }
     }
 }
@@ -976,7 +996,14 @@ private struct BarsysPopupModifier: ViewModifier {
                         onPickIngredient: { name in
                             popup = nil
                             onPickIngredient(name)
-                        }
+                        },
+                        // UIKit `crossButtonClicked(_:)` for every popup
+                        // (AlertPopUpViewController / Horizontal stack /
+                        // ManualStartSpining / MultipleIngredients): just
+                        // dismiss. Distinct from the secondary button so
+                        // callers can tell "user explicitly closed" from
+                        // "user picked Cancel" via `.onChange(of: popup)`.
+                        onClose: { popup = nil }
                     )
                     .transition(.scale.combined(with: .opacity))
                 }
@@ -994,6 +1021,12 @@ private struct BarsysPopupCard: View {
     let onPrimary: () -> Void
     let onSecondary: () -> Void
     let onPickIngredient: (String) -> Void
+    /// Top-right X button — fires when the user explicitly closes.
+    /// 1:1 with UIKit `crossButtonClicked(_:)` IBAction across
+    /// `AlertPopUpViewController`, `AlertPopUpHorizontalStackController`,
+    /// `ManualStartSpiningPopUpViewController`, and
+    /// `MultipleIngredientsPopUpViewController`.
+    let onClose: () -> Void
 
     /// Reactive colour scheme — lets the filled primary button (e.g.
     /// the "Start Pouring" pill on the Crafting ready-to-pour popup)
@@ -1042,7 +1075,7 @@ private struct BarsysPopupCard: View {
         // 14pt bottom ladder.
         VStack(alignment: .center, spacing: 0) {
             switch popup {
-            case .alert(let title, let message, let primaryTitle, _):
+            case .alert(let title, let message, let primaryTitle, _, _):
                 popupTitleBlock(title: title, message: message)
                 primaryButton(primaryTitle, action: onPrimary)
                     .padding(.top, 31) // UIKit title.bottom + 31
@@ -1148,6 +1181,35 @@ private struct BarsysPopupCard: View {
                     lineWidth: 1
                 )
         )
+        // Top-right close X — 1:1 with UIKit `btnClose` (top-right of
+        // every AlertPopUp / ManualSpinning / MultipleIngredients
+        // storyboard scene). Suppressed for `.shakerFlatSurface` and
+        // `.waiting` (UIKit didn't render an X for those), and gated
+        // by the caller-supplied `isCloseHidden` flag on `.alert` /
+        // `.confirm` (mirrors UIKit `isCloseButtonHidden`).
+        .overlay(alignment: .topTrailing) {
+            if !popup.hidesClose {
+                Button {
+                    HapticService.light()
+                    onClose()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color("appBlackColor"))
+                        .frame(width: 30, height: 30)
+                        .background(
+                            Circle().stroke(
+                                Color("craftButtonBorderColor"),
+                                lineWidth: 1
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+                .padding(.trailing, 8)
+                .accessibilityLabel("Close")
+            }
+        }
         .barsysShadow(.glass)
     }
 
