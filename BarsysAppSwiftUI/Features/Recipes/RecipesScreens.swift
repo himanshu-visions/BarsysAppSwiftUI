@@ -2759,7 +2759,13 @@ struct EditRecipeView: View {
             .shadow(color: .black.opacity(0.0525), radius: 12, x: 0, y: 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(edges: [.top, .bottom])
+        // Only ignore CONTAINER safe areas (status bar, home indicator)
+        // so the panel still extends edge-to-edge — but DO respect the
+        // keyboard safe area so the panel lifts above the keyboard
+        // when a quantity field is focused. Default `.all` regions
+        // (the previous behaviour) was eating the keyboard inset, which
+        // left focused fields hidden behind the keyboard.
+        .ignoresSafeArea(.container, edges: [.top, .bottom])
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
         // Keyboard accessory — ports UIKit
@@ -3089,20 +3095,32 @@ struct EditRecipeView: View {
     /// internally — EXACTLY like the UIKit table with its dynamic
     /// `tblDrinksHeightConstraints.constant`.
     private var ingredientsList: some View {
-        ScrollView(showsIndicators: false) {
-            // UIKit cell is 64pt tall (6pt top pad + 52pt inner glass +
-            // 6pt bottom pad) with no table separator, so adjacent rows
-            // have a 12pt gap. Matching that keeps the row rhythm
-            // identical to UIKit.
-            VStack(spacing: 12) {
-                ForEach($ingredients) { $ing in
-                    EditIngredientRow(
-                        ingredient: $ing,
-                        unit: env.preferences.measurementUnit,
-                        onDelete: {
-                            ingredients.removeAll { $0.id == ing.id }
-                        }
-                    )
+        // ScrollViewReader so a focused row inside the 150pt-clamped
+        // inner scroll can be brought into view when the keyboard
+        // appears — without it, fields in lower rows stay hidden
+        // behind the keyboard accessory bar.
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                // UIKit cell is 64pt tall (6pt top pad + 52pt inner glass +
+                // 6pt bottom pad) with no table separator, so adjacent rows
+                // have a 12pt gap. Matching that keeps the row rhythm
+                // identical to UIKit.
+                VStack(spacing: 12) {
+                    ForEach($ingredients) { $ing in
+                        EditIngredientRow(
+                            ingredient: $ing,
+                            unit: env.preferences.measurementUnit,
+                            onDelete: {
+                                ingredients.removeAll { $0.id == ing.id }
+                            },
+                            onFocus: {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    proxy.scrollTo(ing.id, anchor: .center)
+                                }
+                            }
+                        )
+                        .id(ing.id)
+                    }
                 }
             }
         }
@@ -3985,6 +4003,10 @@ struct EditIngredientRow: View {
     @Binding var ingredient: Ingredient
     let unit: MeasurementUnit
     let onDelete: () -> Void
+    /// Fired when the quantity field gains focus. The parent uses this
+    /// to scroll the ingredients ScrollView so the focused row stays
+    /// visible above the keyboard.
+    var onFocus: (() -> Void)? = nil
 
     @State private var editingText: String = ""
     @FocusState private var isFocused: Bool
@@ -4048,18 +4070,23 @@ struct EditIngredientRow: View {
                 }
                 .accessibilityLabel("Decrease \(ingredient.name)")
 
-                // Quantity field + unit — 70pt wide, both 11pt mediumLightGray.
-                HStack(spacing: 4) {
+                // Quantity field + unit — matches RecipeIngredientRow stepper:
+                // spacing 0 so the qty digits sit tight against the unit
+                // label, fixed 28pt qty width so columns line up across
+                // rows regardless of digit count, height pinned to 30pt.
+                HStack(spacing: 0) {
                     TextField("", text: $editingText)
                         .keyboardType(unit == .ml ? .numberPad : .decimalPad)
                         .multilineTextAlignment(.center)
                         .font(.system(size: 11))
                         .foregroundStyle(Color("mediumLightGrayColor"))
-                        .frame(width: 30)
+                        .frame(width: 28, height: 30)
                         .focused($isFocused)
                         .onChange(of: isFocused) { focused in
-                            if focused { editingText = displayQty }
-                            else { commitEdit() }
+                            if focused {
+                                editingText = displayQty
+                                onFocus?()
+                            } else { commitEdit() }
                         }
                         .onChange(of: editingText) { new in
                             if new.count > 5 { editingText = String(new.prefix(5)) }
@@ -4077,7 +4104,7 @@ struct EditIngredientRow: View {
                         .font(.system(size: 11))
                         .foregroundStyle(Color("mediumLightGrayColor"))
                 }
-                .frame(width: 70)
+                .frame(height: 30)
 
                 // Plus button — 30×30, `grayBorderColor` tint.
                 Button {
