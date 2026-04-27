@@ -1660,7 +1660,9 @@ struct RecipeDetailView: View {
                 primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
                 secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
                 isDestructive: false,
-                isCloseHidden: true
+                // UIKit `EditViewController.swift:353` shows the X here
+                // (`isCloseButtonHidden: false`).
+                isCloseHidden: false
             )
             // Tag the pending action so the Discard handler routes to
             // Favorites instead of starting a craft. Reuses the same
