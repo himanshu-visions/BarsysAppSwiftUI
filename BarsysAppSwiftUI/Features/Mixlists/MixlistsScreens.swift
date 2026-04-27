@@ -373,14 +373,44 @@ struct MixlistDetailView: View {
     @State private var selectedTab: MixlistDetailTab = .recipes
     @State private var showMoreSheet: Bool = false
 
+    /// Forces `recipes` to re-evaluate after a heart-toggle that goes
+    /// through `env.storage.toggleFavorite(_:)`. `MockStorageService`
+    /// is a plain class (not `ObservableObject`), so mutations don't
+    /// broadcast. Without this trigger the heart icon stays pinned to
+    /// its pre-toggle state because SwiftUI never re-runs the
+    /// `mixlist?.recipes` lookup. Same pattern as
+    /// `FavoritesView.favouritesRefreshTick` — UIKit
+    /// `MixlistDetailViewController` re-fetches the recipe array after
+    /// the success alert dismisses; this tick plays the same role.
+    @State private var favouritesRefreshTick: Int = 0
+
     enum MixlistDetailTab: Int, CaseIterable { case recipes, ingredients }
 
     private var mixlist: Mixlist? { env.storage.allMixlists().first { $0.id == mixlistID } }
 
     private var recipes: [Recipe] {
-        (mixlist?.recipes ?? []).isEmpty
-            ? mixlist?.recipeIDs.compactMap(env.storage.recipe(by:)) ?? []
-            : (mixlist?.recipes ?? [])
+        // Reading the tick in this computed property registers it as a
+        // dependency — SwiftUI re-runs `recipes` (and therefore the
+        // `MixlistDetailRecipeRow` ForEach) on every heart toggle.
+        let _ = favouritesRefreshTick
+
+        // Always look up via `env.storage.recipe(by:)` even when
+        // `mixlist?.recipes` is non-empty. The cached snapshot inside
+        // the mixlist is captured at mixlist load time and does NOT
+        // refresh when `storage.toggleFavorite` flips
+        // `recipes[id].isFavourite`. UIKit reloads from the SQLite
+        // table after every like/unlike, so the heart icon there
+        // tracks the latest `isFavouriteRecipe` flag — we mirror that
+        // by going through storage on every read.
+        let ids: [RecipeID] = {
+            if let cached = mixlist?.recipes, !cached.isEmpty {
+                return cached.map(\.id)
+            }
+            return mixlist?.recipeIDs ?? []
+        }()
+        return ids.compactMap { id in
+            env.storage.recipe(by: id) ?? mixlist?.recipes?.first(where: { $0.id == id })
+        }
     }
 
     /// 1:1 port of UIKit
@@ -1285,6 +1315,12 @@ struct MixlistDetailView: View {
         let wasFav = recipe.isFavourite ?? false
         let willBeFav = !wasFav
         env.storage.toggleFavorite(recipe.id)
+        // Force the `recipes` computed property to re-run so the heart
+        // icon swaps between `favIconRecipe` ↔ `favIconRecipeSelected`
+        // immediately. Without this bump, `MockStorageService` mutates
+        // silently (no `ObservableObject` broadcast) and the row keeps
+        // its pre-tap rendering until the screen is left and re-entered.
+        favouritesRefreshTick &+= 1
         // Fire-and-forget API call (1:1 UIKit: FavoriteRecipeApiService.likeUnlikeApi)
         Task {
             _ = try? await env.api.likeUnlike(
