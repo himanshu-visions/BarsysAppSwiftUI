@@ -2035,9 +2035,20 @@ struct RecipeIngredientRow: View {
                 .padding(.leading, 24)
 
             if !readOnly {
-                // Stepper cluster — 130pt wide, centered in the cell right
-                // half. Matches storyboard stack `NEL-QM-2aY`:
-                //   [ 30×30 minus btn ] [ 70×30 qty field + unit ] [ 30×30 plus btn ]
+                // Stepper cluster — matches storyboard stack `NEL-QM-2aY`:
+                //   [ 30×30 minus btn ] [ qty field + unit ] [ 30×30 plus btn ]
+                //
+                // Spacing tightened so the row reads as a compact stepper:
+                //   • outer HStack `spacing: 5` → 5pt between the minus
+                //     button and the quantity, and between the unit
+                //     label and the plus button.
+                //   • inner HStack `spacing: 0` → quantity touches the
+                //     "ml" / "oz" label with no horizontal gap.
+                //   • TextField pinned to a fixed 28pt width so the
+                //     column lines up across rows regardless of digit
+                //     count (replaces the storyboard's 70pt centring
+                //     container, which produced ~22pt visible gaps on
+                //     either side of the qty content).
                 HStack(spacing: 0) {
                     Button {
                         HapticService.light()
@@ -2057,8 +2068,8 @@ struct RecipeIngredientRow: View {
                     .buttonStyle(BounceButtonStyle())
                     .accessibilityLabel("Decrease \(ingredient.name)")
 
-                    // Quantity + unit — stackView inside a 70×30 container.
-                    HStack(spacing: 5) {
+                    // Quantity + unit cluster.
+                    HStack(spacing: 0) {
                         TextField("", text: $editingText)
                             .keyboardType(unit == .ml ? .numberPad : .decimalPad)
                             .multilineTextAlignment(.center)
@@ -2066,6 +2077,12 @@ struct RecipeIngredientRow: View {
                             // `mediumLightGrayColor`.
                             .font(.system(size: 11))
                             .foregroundStyle(Color("mediumLightGrayColor"))
+                            // Fixed quantity-field width so all rows
+                            // align under each other regardless of
+                            // digit count ("52" / "1.76" / "5"). Replaces
+                            // the 70pt centring container which spread
+                            // the qty + unit into the middle of the cell.
+                            .frame(width: 28, height: 30)
                             .focused($isFocused)
                             .onChange(of: isFocused) { focused in
                                 if focused {
@@ -2093,7 +2110,7 @@ struct RecipeIngredientRow: View {
                             .font(.system(size: 11))
                             .foregroundStyle(Color("mediumLightGrayColor"))
                     }
-                    .frame(width: 70, height: 30)
+                    .frame(height: 30)
 
                     Button {
                         HapticService.light()
@@ -2112,10 +2129,23 @@ struct RecipeIngredientRow: View {
                 }
                 .padding(.trailing, 24) // matches `Kzt-lz-F4P` trailing 24
             } else {
-                Text("\(displayText) \(unitLabel)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color("mediumLightGrayColor"))
-                    .padding(.trailing, 24)
+                // Read-only quantity + unit on the Recipe Page rows.
+                // Split into an HStack with 2pt spacing so the unit label
+                // sits tight against the quantity (UIKit storyboard has
+                // ≤2pt leading between the two labels). The previous
+                // "\(displayText) \(unitLabel)" rendered the literal
+                // space-character glyph (~3-4pt at 11pt system), which
+                // read as too wide a gap on the recipe-page ingredients
+                // and additional-ingredients tables.
+                HStack(spacing: 2) {
+                    Text(displayText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                    Text(unitLabel)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                }
+                .padding(.trailing, 24)
             }
         }
         // Total cell height ≈ 49 (storyboard `s3S-ze-LXL` frame h=49).
