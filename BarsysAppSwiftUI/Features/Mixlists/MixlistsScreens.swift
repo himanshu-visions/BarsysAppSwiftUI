@@ -79,49 +79,62 @@ struct MixlistListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Title — "Cocktail Kits" 24pt, appBlackColor
-            Text("Cocktail Kits")
-                .font(.system(size: 24))
-                .foregroundStyle(Color("appBlackColor"))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
+        // Title + search bar are now hosted INSIDE the outer ScrollView so
+        // there's a scrollable surface directly under the nav bar.
+        // MyBarView (correct, MyBarScreens.swift:567) and DevicePairedView
+        // (correct, ControlCenterScreens.swift:638) follow the same
+        // pattern; iOS 26's nav-bar Liquid Glass auto-wrap relies on
+        // having scrollable material under the bar to render the
+        // silvery-frosted right-pill the user sees on those screens.
+        // The previous layout had the Title + SearchBar as static
+        // VStack rows OUTSIDE the ScrollView, which left the bar with
+        // no material to blur through and produced the "black
+        // transparent" pill the user reported on Cocktail Kits.
+        ScrollView(showsIndicators: false) {
+            // Compute deterministic row geometry ONCE per layout so
+            // every row in the LazyVStack reports the same size on
+            // first render — eliminates the scroll-zoom artefact.
+            //   • Page horizontal padding: 24pt left + 24pt right = 48
+            //   • Cell width = screen width − 48
+            //   • Image (square) = 50% of cell width  ⇒  cell height
+            //     = cell width / 2.
+            let cellWidth = UIScreen.main.bounds.width - 48
+            let rowHeight = cellWidth / 2
 
-            // Search bar — uses shared `BarsysSearchBar` for 1:1 UIKit
-            // parity with `viewSearch` + `txtSearch` + `searchAndCloseButton`
-            // (Mixlist.storyboard scene `Q4y-Gs-Lbh`). Replaces the
-            // previous inline implementation which used SF Symbols
-            // instead of the `exploreSearch` / `crossIcon` assets, a
-            // 16pt placeholder font instead of 14pt, and a white
-            // background instead of the UIKit transparent container.
-            BarsysSearchBar(query: $query)
-                .padding(.horizontal, 24)
-                .padding(.top, 15)
+            VStack(spacing: 0) {
+                // Title — "Cocktail Kits" 24pt, appBlackColor
+                Text("Cocktail Kits")
+                    .font(.system(size: 24))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
 
-            // Mixlist list
-            if filtered.isEmpty {
-                Spacer()
-                Text("No results to display")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Color("mediumGrayColor"))
-                Spacer()
-            } else {
-                ScrollView {
+                // Search bar — uses shared `BarsysSearchBar` for 1:1 UIKit
+                // parity with `viewSearch` + `txtSearch` + `searchAndCloseButton`
+                // (Mixlist.storyboard scene `Q4y-Gs-Lbh`). Replaces the
+                // previous inline implementation which used SF Symbols
+                // instead of the `exploreSearch` / `crossIcon` assets, a
+                // 16pt placeholder font instead of 14pt, and a white
+                // background instead of the UIKit transparent container.
+                BarsysSearchBar(query: $query)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 15)
+
+                // Mixlist list
+                if filtered.isEmpty {
+                    Text("No results to display")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color("mediumGrayColor"))
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 80)
+                        .padding(.bottom, mixlistListBottomInset)
+                } else {
                     if catalog.isLoading && catalog.mixlists.isEmpty {
                         ProgressView("Loading cocktail kits...")
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
                     }
-                    // Compute deterministic row geometry ONCE per layout so
-                    // every row in the LazyVStack reports the same size on
-                    // first render — eliminates the scroll-zoom artefact.
-                    //   • Page horizontal padding: 24pt left + 24pt right = 48
-                    //   • Cell width = screen width − 48
-                    //   • Image (square) = 50% of cell width  ⇒  cell height
-                    //     = cell width / 2.
-                    let cellWidth = UIScreen.main.bounds.width - 48
-                    let rowHeight = cellWidth / 2
                     LazyVStack(spacing: 0) {
                         ForEach(filtered) { mixlist in
                             Button {
@@ -142,13 +155,18 @@ struct MixlistListView: View {
                     // (same scale as `MyBarView.bottomBarBottomInset`).
                     .padding(.bottom, mixlistListBottomInset)
                 }
-                .refreshable {
-                    await catalog.refresh()
-                }
             }
+        }
+        .refreshable {
+            await catalog.refresh()
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        // 1:1 with DevicePairedView (ControlCenterScreens.swift:960) —
+        // same toolbar bookkeeping as the reference screens so the
+        // right-pill auto-glass renders the silvery material instead
+        // of the thinner "black transparent" pill.
+        .navigationBarBackButtonHidden(true)
         // 1:1 port of UIKit `MixlistViewController.viewDidLoad` +
         // `viewWillAppear` staleness check:
         //

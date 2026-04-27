@@ -40,42 +40,66 @@ struct PairDeviceView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Pair your device")
-                    .font(.system(size: 24))
-                    .foregroundStyle(Color("appBlackColor"))
-                Text("Please select your device to be paired. Make sure that your Bluetooth is discoverable and your Barsys device is turned ON.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 24)
-            .padding(.top, 16)
-            .padding(.trailing, 24)
-
-            GeometryReader { geo in
-                let rowHeight = geo.size.height / 3
+        // Outer GeometryReader provides the available viewport size so the
+        // 3 device cards continue to share the remaining height equally
+        // (1:1 with the previous `geo.size.height / 3` distribution). The
+        // ScrollView inside is what gives iOS 26's nav-bar Liquid Glass
+        // auto-wrap a scrollable surface to render against — without it
+        // the right-pill rendered as the thinner "black transparent"
+        // material the user reported (same root cause as the HomeView
+        // and Cocktail Kits fixes; matches MyBar / DevicePairedView /
+        // RecipeDetail which all host their first content inside an
+        // outer ScrollView). `.frame(minHeight: outerGeo.size.height)`
+        // on the inner VStack keeps the layout identical to the old
+        // bare-VStack version: cards fill the viewport on tall screens,
+        // and the user can scroll on shorter ones.
+        GeometryReader { outerGeo in
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
-                    ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
-                        Button {
-                            HapticService.light()
-                            deviceTapped(device.kind)
-                        } label: {
-                            deviceCard(device: device)
-                        }
-                        .buttonStyle(.plain)
-                        .frame(height: rowHeight)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Pair your device")
+                            .font(.system(size: 24))
+                            .foregroundStyle(Color("appBlackColor"))
+                        Text("Please select your device to be paired. Make sure that your Bluetooth is discoverable and your Barsys device is turned ON.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 24)
+                    .padding(.top, 16)
+                    .padding(.trailing, 24)
+
+                    // Title block (Pair your device + description) renders
+                    // at ~100pt; the remaining viewport height is split
+                    // evenly across 3 device cards.
+                    let titleBlockHeight: CGFloat = 100
+                    let availableHeight = outerGeo.size.height
+                        - titleBlockHeight
+                        - pairDeviceBottomInset
+                    let rowHeight = max(140, availableHeight / 3)
+
+                    VStack(spacing: 0) {
+                        ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
+                            Button {
+                                HapticService.light()
+                                deviceTapped(device.kind)
+                            } label: {
+                                deviceCard(device: device)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(height: rowHeight)
+                        }
+                    }
+                    // Pre-iOS 26 the tab bar is opaque + hairline — without
+                    // this padding the third device card butts right up
+                    // against the tab bar top edge. iOS 26+ glass tab bar
+                    // blurs over content so no extra space needed. Same
+                    // branching pattern as every other tab-root screen.
+                    .padding(.bottom, pairDeviceBottomInset)
                 }
+                .frame(minHeight: outerGeo.size.height)
             }
-            // Pre-iOS 26 the tab bar is opaque + hairline — without
-            // this padding the third device card butts right up
-            // against the tab bar top edge. iOS 26+ glass tab bar
-            // blurs over content so no extra space needed. Same
-            // branching pattern as every other tab-root screen.
-            .padding(.bottom, pairDeviceBottomInset)
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
