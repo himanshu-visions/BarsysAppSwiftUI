@@ -219,11 +219,31 @@ struct FavoritesView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            tabsBar
-            searchBar
-            content
+        // tabsBar + searchBar + recipe rows are now hosted INSIDE the
+        // outer ScrollView — same structural pattern that fixed the
+        // right-pill chrome on HomeView / Cocktail Kits / Pair Your
+        // Device / Preferences. iOS 26's nav-bar Liquid Glass auto-wrap
+        // relies on having scrollable material directly under the bar
+        // to render the silvery-frosted right-pill the user sees on
+        // MyBar / DevicePairedView / RecipeDetail; without it the bar
+        // falls back to the thinner "black transparent" pill in dark
+        // mode.
+        //
+        // The inner ScrollView in `content` (rows-non-empty branch) is
+        // removed since nesting two ScrollViews would double-handle
+        // bounce / pagination. Pull-to-refresh, infinite-scroll
+        // pagination trigger, and bottom inset all stay intact — the
+        // refreshable now hangs off the outer ScrollView and the
+        // pagination `.onAppear` trigger on the last row still fires
+        // when the row scrolls into view.
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                tabsBar
+                searchBar
+                content
+            }
         }
+        .refreshable { await refresh() }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
@@ -493,15 +513,29 @@ struct FavoritesView: View {
 
     @ViewBuilder
     private var content: some View {
+        // Inner `ScrollView` was removed (the outer body-level
+        // ScrollView now scrolls everything) — see body comment for
+        // the iOS 26 right-pill rationale.
+        //
+        // Loading / empty states keep the ORIGINAL centred-in-viewport
+        // appearance by sizing the wrapper VStack to a viewport-sized
+        // minimum height (`UIScreen.main.bounds.height - 200` ≈
+        // available area after status bar + nav bar + tabs bar +
+        // search bar + tab bar). Inside that fixed height, the leading
+        // + trailing `Spacer()`s centre the indicator / "No results"
+        // text exactly as the previous `.frame(maxHeight: .infinity)`
+        // VStack layout did — so this is purely structural plumbing
+        // to satisfy iOS 26's nav-bar auto-glass requirement that the
+        // outer container be a ScrollView, with zero visual change to
+        // the loading / empty states.
         if isLoadingMyDrinks && selectedTab == .myDrinks && !myDrinksInitialLoadDone {
-            // Show loading state for initial My Drinks fetch
             VStack {
                 Spacer()
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle())
                 Spacer()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: UIScreen.main.bounds.height - 200)
         } else if rows.isEmpty {
             VStack {
                 Spacer()
@@ -525,76 +559,73 @@ struct FavoritesView: View {
                     .padding(.horizontal, 30)
                 Spacer()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: UIScreen.main.bounds.height - 200)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("No results message")
         } else {
             let cellWidth = UIScreen.main.bounds.width - 48
             let rowHeight = cellWidth / 2
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(rows) { recipe in
-                        BarsysRecipeRow(
-                            recipe: recipe,
-                            cellHeight: rowHeight,
-                            tab: selectedTab,
-                            isMoreMenuOpen: showMoreMenuFor == recipe.id,
-                            onTap: {
-                                showMoreMenuFor = nil
-                                router.push(.recipeDetail(recipe.id))
-                            },
-                            onFavourite: { toggleFavourite(recipe) },
-                            onMore: {
-                                showMoreMenuFor =
-                                    showMoreMenuFor == recipe.id ? nil : recipe.id
-                            },
-                            onEdit: {
-                                showMoreMenuFor = nil
-                                recipeToEdit = recipe
-                            },
-                            onDelete: {
-                                showMoreMenuFor = nil
-                                confirmDelete(recipe)
-                            }
-                        )
-                        // Pagination trigger — 1:1 port of UIKit
-                        // scrollViewDidEndDecelerating → shouldLoadMore.
-                        // When the last visible row appears, load more
-                        // if pagination has more pages available.
-                        .onAppear {
-                            if selectedTab == .myDrinks,
-                               recipe.id == rows.last?.id,
-                               canLoadMoreMyDrinks,
-                               !isLoadingMoreMyDrinks {
-                                loadMoreMyDrinks()
-                            }
+            LazyVStack(spacing: 0) {
+                ForEach(rows) { recipe in
+                    BarsysRecipeRow(
+                        recipe: recipe,
+                        cellHeight: rowHeight,
+                        tab: selectedTab,
+                        isMoreMenuOpen: showMoreMenuFor == recipe.id,
+                        onTap: {
+                            showMoreMenuFor = nil
+                            router.push(.recipeDetail(recipe.id))
+                        },
+                        onFavourite: { toggleFavourite(recipe) },
+                        onMore: {
+                            showMoreMenuFor =
+                                showMoreMenuFor == recipe.id ? nil : recipe.id
+                        },
+                        onEdit: {
+                            showMoreMenuFor = nil
+                            recipeToEdit = recipe
+                        },
+                        onDelete: {
+                            showMoreMenuFor = nil
+                            confirmDelete(recipe)
                         }
-                    }
-
-                    // Loading indicator at bottom during pagination
-                    if selectedTab == .myDrinks && isLoadingMoreMyDrinks {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                                .padding(.vertical, 16)
-                            Spacer()
+                    )
+                    // Pagination trigger — 1:1 port of UIKit
+                    // scrollViewDidEndDecelerating → shouldLoadMore.
+                    // When the last visible row appears, load more
+                    // if pagination has more pages available.
+                    .onAppear {
+                        if selectedTab == .myDrinks,
+                           recipe.id == rows.last?.id,
+                           canLoadMoreMyDrinks,
+                           !isLoadingMoreMyDrinks {
+                            loadMoreMyDrinks()
                         }
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 15)
-                // Pre-iOS 26 has a solid tab bar + hairline that sits
-                // on top of the scrollable content — the previous flat
-                // 20pt bottom meant the last recipe row was visually
-                // grazing the tab bar. iOS 26+ glass tab bar blurs over
-                // content so a smaller 12pt inset is enough. Mirrors
-                // the `bottomBarBottomInset` pattern used by MyBar /
-                // HomeView so all tab-root screens have consistent
-                // breathing room above the tab bar.
-                .padding(.bottom, favouritesBottomInset)
+
+                // Loading indicator at bottom during pagination
+                if selectedTab == .myDrinks && isLoadingMoreMyDrinks {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .padding(.vertical, 16)
+                        Spacer()
+                    }
+                }
             }
-            .refreshable { await refresh() }
+            .padding(.horizontal, 24)
+            .padding(.top, 15)
+            // Pre-iOS 26 has a solid tab bar + hairline that sits
+            // on top of the scrollable content — the previous flat
+            // 20pt bottom meant the last recipe row was visually
+            // grazing the tab bar. iOS 26+ glass tab bar blurs over
+            // content so a smaller 12pt inset is enough. Mirrors
+            // the `bottomBarBottomInset` pattern used by MyBar /
+            // HomeView so all tab-root screens have consistent
+            // breathing room above the tab bar.
+            .padding(.bottom, favouritesBottomInset)
             .accessibilityLabel("Favourites list")
         }
     }
