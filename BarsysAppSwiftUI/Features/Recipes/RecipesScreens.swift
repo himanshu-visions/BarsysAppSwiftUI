@@ -355,38 +355,63 @@ struct ExploreRecipesView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Title — "All Recipes" 24pt, appBlackColor, leading 24, top 58
-            Text("All Recipes")
-                .font(.system(size: 24))
-                .foregroundStyle(Color("appBlackColor"))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
+        // Title + search bar are now hosted INSIDE the outer ScrollView
+        // — same structural pattern that fixed the right-pill chrome
+        // on HomeView / Cocktail Kits / Pair Your Device / Preferences /
+        // Favorites. iOS 26's nav-bar Liquid Glass auto-wrap relies on
+        // having scrollable material directly under the bar to render
+        // the silvery-frosted right-pill the user sees on MyBar /
+        // DevicePairedView / RecipeDetail; without it the bar falls
+        // back to the thinner "black transparent" pill in dark mode.
+        //
+        // The inner ScrollView in the rows-non-empty branch is removed
+        // to avoid nested scrolling. Pull-to-refresh moves to the outer
+        // ScrollView. Loading / empty states preserve the original
+        // centred-in-viewport look via `frame(minHeight: …)` so the
+        // visual is unchanged.
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                // Title — "All Recipes" 24pt, appBlackColor, leading 24, top 58
+                Text("All Recipes")
+                    .font(.system(size: 24))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
 
-            // Search bar — 1:1 port of UIKit `viewSearch` + `txtSearch` +
-            // `searchAndCloseButton` from Mixlist.storyboard scene
-            // `Zsc-V0-6RG`. The previous inline implementation drifted
-            // from UIKit on several axes (system SF Symbols instead of
-            // the `exploreSearch` / `crossIcon` assets, 16pt placeholder
-            // font instead of 14pt, white backgroundColor instead of
-            // clear, a duplicate "×" button glued to the trailing edge).
-            // Factored into the shared `BarsysSearchBar` — same widget
-            // used by ExploreRecipes / Cocktail Kits / Favorites so
-            // every UIKit search bar is pixel-identical to UIKit.
-            BarsysSearchBar(query: $query)
-                .padding(.horizontal, 24)
-                .padding(.top, 15)
+                // Search bar — 1:1 port of UIKit `viewSearch` + `txtSearch` +
+                // `searchAndCloseButton` from Mixlist.storyboard scene
+                // `Zsc-V0-6RG`. The previous inline implementation drifted
+                // from UIKit on several axes (system SF Symbols instead of
+                // the `exploreSearch` / `crossIcon` assets, 16pt placeholder
+                // font instead of 14pt, white backgroundColor instead of
+                // clear, a duplicate "×" button glued to the trailing edge).
+                // Factored into the shared `BarsysSearchBar` — same widget
+                // used by ExploreRecipes / Cocktail Kits / Favorites so
+                // every UIKit search bar is pixel-identical to UIKit.
+                BarsysSearchBar(query: $query)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 15)
 
-            // Recipe list
-            if filtered.isEmpty {
-                Spacer()
-                Text("No results to display")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Color("mediumGrayColor"))
-                Spacer()
-            } else {
-                ScrollView {
+                // Recipe list
+                if filtered.isEmpty {
+                    // Loading / empty state preserves the original
+                    // centred-in-viewport appearance via Spacer +
+                    // content + Spacer inside a viewport-sized
+                    // minHeight frame. Spacer collapses inside the
+                    // outer ScrollView, so the explicit minHeight
+                    // gives the wrapper a stable height to centre
+                    // the text within — visually identical to the
+                    // previous `.frame(maxHeight: .infinity)` layout.
+                    VStack {
+                        Spacer()
+                        Text("No results to display")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Color("mediumGrayColor"))
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, minHeight: UIScreen.main.bounds.height - 200)
+                } else {
                     if catalog.isLoading && catalog.recipes.isEmpty {
                         ProgressView("Loading recipes...")
                             .frame(maxWidth: .infinity)
@@ -423,10 +448,10 @@ struct ExploreRecipesView: View {
                     // so the row sits visibly above the tab bar.
                     .padding(.bottom, exploreRecipesBottomInset)
                 }
-                .refreshable {
-                    await catalog.refresh()
-                }
             }
+        }
+        .refreshable {
+            await catalog.refresh()
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         // Ports ExploreRecipesViewController.viewDidLoad staleness check:
