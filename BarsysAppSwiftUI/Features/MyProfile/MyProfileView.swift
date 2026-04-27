@@ -301,8 +301,16 @@ final class MyProfileViewModel: ObservableObject {
                 errorDob = "You must be at least \(selectedCountry.age)+ years old to use this app."
             }
         }
-        return errorFullName == nil && errorEmail == nil &&
-               errorPhoneNumber == nil && errorDob == nil
+        let isValid = errorFullName == nil && errorEmail == nil &&
+                      errorPhoneNumber == nil && errorDob == nil
+        if !isValid {
+            // 1:1 with UIKit `MyProfileViewController.swift:195`:
+            // `HapticService.shared.error()` fires when validation
+            // surfaces any field error before the user sees the
+            // red underlines.
+            HapticService.error()
+        }
+        return isValid
     }
 
     static func isValidEmail(_ s: String) -> Bool {
@@ -484,9 +492,16 @@ final class MyProfileViewModel: ObservableObject {
             // successful PATCH so Braze re-syncs `firstName`, `email`,
             // `phoneNumber` for accurate IAM / push targeting.
             env.auth.syncBrazeProfile()
+            // 1:1 with UIKit `MyProfileViewController.swift:363`:
+            // `HapticService.shared.success()` fires after a successful
+            // profile PATCH, before the success alert is presented.
+            HapticService.success()
             env.alerts.show(message: Constants.profileUpdateMessage)
             return true
         } catch {
+            // Mirrors UIKit's error feedback when the profile API call
+            // throws (matches the OTP-failure path in LoginView).
+            HapticService.error()
             env.alerts.show(message: error.localizedDescription)
             return false
         }

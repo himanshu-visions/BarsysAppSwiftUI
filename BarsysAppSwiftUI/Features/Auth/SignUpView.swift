@@ -141,6 +141,15 @@ final class SignUpViewModel: ObservableObject {
         let emailStr = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedNumber = phone
 
+        // 1:1 with UIKit `SignUpViewController+FormValidation.swift:40`:
+        // a single error haptic fires when ANY validation rule fails.
+        // Encoded once via `defer` so each early-`return false` below
+        // doesn't need its own line — `validationFailed` is set to
+        // `true` whenever we exit before reaching the terminal
+        // `return true` on line below.
+        var validationFailed = true
+        defer { if validationFailed { HapticService.error() } }
+
         if fullNameStr.isEmpty {
             errorFullName = Constants.pleaseEnterFullName
             return false
@@ -176,6 +185,7 @@ final class SignUpViewModel: ObservableObject {
             alerts.show(message: Constants.acceptTermsAndConditions)
             return false
         }
+        validationFailed = false
         return true
     }
 

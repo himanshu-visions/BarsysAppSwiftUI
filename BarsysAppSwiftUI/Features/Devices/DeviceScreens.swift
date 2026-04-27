@@ -845,6 +845,9 @@ struct DeviceRenameView: View {
                 .padding(.top, Theme.Spacing.xl)
 
             PrimaryButton(title: "Save") {
+                // 1:1 with UIKit `DeviceRenameViewController.swift:107`:
+                // light tap on the Save / Verify button.
+                HapticService.light()
                 if let d = ble.connected.first(where: { $0.id == deviceID }) {
                     ble.rename(d, to: newName)
                 }
