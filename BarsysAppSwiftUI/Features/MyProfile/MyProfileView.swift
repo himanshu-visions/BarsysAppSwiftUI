@@ -755,6 +755,16 @@ struct MyProfileView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar { toolbarContent }
+        // Keyboard accessory — adds the [Cancel ✕, Done ✓] pair above
+        // the keyboard so the user can dismiss the email / name /
+        // phone fields. iOS 26 renders the `xmark` + `checkmark`
+        // glass icons; pre-26 falls back to "Cancel" + "Done" text.
+        // 1:1 with UIKit `ProfileViewController+Toolbar` which adds
+        // `addDoneCancelToolbar()` to every editable field. Without
+        // this the `emailAddress` keyboard has no Return-equivalent
+        // dismissal affordance and taps outside the field don't
+        // dismiss either.
+        .keyboardDoneCancelToolbar()
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()

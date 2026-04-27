@@ -520,16 +520,33 @@ struct LoadingOverlayModifier: ViewModifier {
     }
 
     /// `GlassEffectView.apply(to:)` (UIKit) — frosted card.
-    /// iOS 26+ → `.regularMaterial` (matches UIGlassEffect(style: .regular))
-    /// Pre-26  → `.thinMaterial` (matches UIBlurEffect(style: .systemMaterial))
+    /// iOS 26+ → `.ultraThinMaterial` for a clearer / more transparent
+    ///           glass look. UIKit uses `UIGlassEffect(style: .regular)`
+    ///           which on real-device iOS 26 renders noticeably more
+    ///           see-through than SwiftUI's `.regularMaterial` did, so
+    ///           dropping a step to `.ultraThinMaterial` brings the
+    ///           rendered alpha down to a UIKit-equivalent level (the
+    ///           "0.98 transparency" the user asked for) without
+    ///           completely dissolving the card. Pre-26 also drops to
+    ///           `.ultraThinMaterial` so the card looks visually
+    ///           consistent across iOS versions.
+    /// The pre-26 UIKit branch additionally layered a 20% white tint
+    /// over `UIBlurEffect(.systemMaterial)` (GlassEffectView.swift L63);
+    /// we reproduce that with a `Color.white.opacity(0.20)` overlay so
+    /// the card still reads as a frosted-white surface against busy
+    /// backgrounds, not as a near-invisible blur.
     @ViewBuilder
     private var loaderCardBackground: some View {
         if #available(iOS 26.0, *) {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.regularMaterial)
+                .fill(.ultraThinMaterial)
         } else {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.thinMaterial)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color.white.opacity(0.20))
+                )
         }
     }
 
