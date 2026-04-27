@@ -139,6 +139,10 @@ final class LoginViewModel: ObservableObject {
         let validation = validatePhone()
         guard validation.isValid else {
             phoneError = validation.errorMessage
+            // 1:1 with UIKit `LoginViewController.swift:158`:
+            // `HapticService.shared.error()` fires when the phone number
+            // fails validation before the alert is shown.
+            HapticService.error()
             alerts.show(message: validation.errorMessage ?? Constants.invalidPhoneNumber)
             return
         }
@@ -173,6 +177,9 @@ final class LoginViewModel: ObservableObject {
         } catch {
             analytics.track(TrackEventName.loginUnsuccessfulOTP.rawValue,
                             properties: ["phone_number": formattedPhone])
+            // Mirrors UIKit's `HapticService.shared.error()` on the
+            // OTP-send failure path before the network-error alert.
+            HapticService.error()
             alerts.show(message: error.localizedDescription)
         }
     }
@@ -182,6 +189,9 @@ final class LoginViewModel: ObservableObject {
                    analytics: AnalyticsService,
                    onSuccess: @escaping () -> Void) async {
         guard isOtpValid else {
+            // 1:1 with UIKit `LoginViewController+OTP.swift:86`:
+            // `HapticService.shared.error()` on invalid-OTP guard.
+            HapticService.error()
             alerts.show(message: Constants.invalidOTP)
             return
         }
@@ -192,12 +202,18 @@ final class LoginViewModel: ObservableObject {
         if isTestPhoneNumber() {
             if otp != Constants.testPhoneNumberOtp {
                 otp = ""
+                // Same UIKit error feedback as the real-OTP mismatch path.
+                HapticService.error()
                 alerts.show(message: Constants.invalidOTP)
                 return
             }
             try? await auth.verifyOtp(phone: formattedPhone, code: otp)
             analytics.track(TrackEventName.loginSuccessFul.rawValue,
                             properties: ["phone_number": formattedPhone])
+            // 1:1 with UIKit `AuthCoordinator.swift:60`:
+            // `HapticService.shared.success()` fires on login-complete
+            // before the coordinator advances.
+            HapticService.success()
             onSuccess()
             return
         }
@@ -206,11 +222,15 @@ final class LoginViewModel: ObservableObject {
             try await auth.verifyOtp(phone: formattedPhone, code: otp)
             analytics.track(TrackEventName.loginSuccessFul.rawValue,
                             properties: ["phone_number": formattedPhone])
+            // 1:1 with UIKit `AuthCoordinator.swift:60`.
+            HapticService.success()
             onSuccess()
         } catch {
             analytics.track(TrackEventName.loginUnsuccessfulOTP.rawValue,
                             properties: ["phone_number": formattedPhone])
             otp = ""
+            // Mirrors UIKit's error-haptic before the OTP-failure alert.
+            HapticService.error()
             alerts.show(message: error.localizedDescription)
         }
     }
