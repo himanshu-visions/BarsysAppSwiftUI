@@ -1105,9 +1105,8 @@ struct RecipeDetailView: View {
                 if !recipe.instructions.isEmpty {
                     instructionsSection(steps: recipe.instructions)
                 }
-                Color.clear.frame(height: 120) // room for the floating CTA
+                Color.clear.frame(height: 30) // bottom inset above the floating CTA
             }
-            .padding(.bottom, 16)
         }
         .safeAreaInset(edge: .bottom) { bottomActions(for: recipe) }
     }
