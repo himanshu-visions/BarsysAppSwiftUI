@@ -241,10 +241,7 @@ struct MixlistRowCell: View {
 
     private var optimizedImageURL: URL? {
         guard let raw = mixlist.image?.url, !raw.isEmpty else { return nil }
-        let optimized = raw
-            .replacingOccurrences(of: "https://storage.googleapis.com/barsys-images-production/",
-                                  with: "https://api.barsys.com/api/optimizeImage?fileUrl=https://media.barsys.com/")
-        return URL(string: optimized)
+        return raw.getImageUrl()
     }
 
     var body: some View {

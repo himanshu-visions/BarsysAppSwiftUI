@@ -973,11 +973,15 @@ struct BarsysRecipeRow: View {
     let onDelete: () -> Void
 
     private var optimizedImageURL: URL? {
+        // Match UIKit `BarsysRecipeTableViewCell` exactly:
+        //   imgStr = data.image?.url
+        //   imgUrl = imgStr?.getImageUrl()
+        //   sd_setImage(with: imgUrl, …)
+        // The helper percent-encodes the inner `fileUrl=…` query
+        // value of optimizeImage URLs; without it the row falls
+        // through to the `myDrink` placeholder.
         guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
-        let optimized = raw
-            .replacingOccurrences(of: "https://storage.googleapis.com/barsys-images-production/",
-                                  with: "https://api.barsys.com/api/optimizeImage?fileUrl=https://media.barsys.com/")
-        return URL(string: optimized)
+        return raw.getImageUrl()
     }
 
     private var isFavourite: Bool { recipe.isFavourite ?? false }

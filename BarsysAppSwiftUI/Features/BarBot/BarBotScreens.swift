@@ -1677,7 +1677,7 @@ struct BarBotMixlistCardView: View {
     @ViewBuilder private var image: some View {
         ZStack {
             Color("lightBorderGrayColor")
-            if let raw = mixlist.image?.url, let url = URL(string: raw) {
+            if let raw = mixlist.image?.url, let url = raw.getImageUrl() {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let img):

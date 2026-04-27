@@ -531,10 +531,7 @@ struct RecipeRowCell: View {
     /// Ports `getImageUrl()` URL optimization the UIKit cell pipes through.
     private var optimizedImageURL: URL? {
         guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
-        let optimized = raw
-            .replacingOccurrences(of: "https://storage.googleapis.com/barsys-images-production/",
-                                  with: "https://api.barsys.com/api/optimizeImage?fileUrl=https://media.barsys.com/")
-        return URL(string: optimized)
+        return raw.getImageUrl()
     }
 
     var body: some View {
@@ -2898,7 +2895,7 @@ struct EditRecipeView: View {
                 // a new image to replace it.
                 if let urlString = recipe.image?.url,
                    !urlString.isEmpty,
-                   let url = URL(string: urlString) {
+                   let url = urlString.getImageUrl() {
                     remoteImageURL = url
                 }
             }

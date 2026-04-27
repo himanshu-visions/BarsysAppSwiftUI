@@ -416,3 +416,72 @@ enum VideoURLConstants {
     static let barsysCoasterUrl  = "https://media.barsys.com/videos/Coaster_Instructiom_H.mp4"
     static let barsysShakerUrl   = "https://media.barsys.com/videos/Shaker_Instructiom_H.mp4"
 }
+
+// MARK: - String → image URL helper
+//
+// 1:1 port of UIKit `String.getImageUrl()`
+// (BarsysApp/Helpers/StringClass.swift L41-63), which every UIKit
+// recipe / mixlist cell pipes the raw `image.url` field through
+// before passing it to `sd_setImage(with:)`.
+//
+// Why a dedicated helper:
+//   The API returns image URLs in the optimizeImage proxy format —
+//   `https://api.barsys.com/api/optimizeImage?fileUrl=https://media.barsys.com/<path>`.
+//   The `fileUrl` query value itself contains `:` and `/` characters
+//   (and frequently spaces / unicode in the path) that MUST be
+//   percent-encoded to produce a valid `URL`. UIKit handles this
+//   by splitting the string at `fileUrl=` and re-attaching the
+//   value through `URLComponents` + `URLQueryItem`, which performs
+//   the encoding correctly.
+//
+//   The previous SwiftUI ports tried a naive
+//   `replacingOccurrences(of: "https://storage.googleapis.com/...",
+//                          with: "https://api.barsys.com/.../fileUrl=...")`
+//   string substitution. This is wrong on two counts:
+//     1. The server NO LONGER returns the `storage.googleapis.com`
+//        prefix — it returns the optimizeImage URL directly — so
+//        the substitution is a no-op and the unencoded URL is
+//        passed straight to `URL(string:)`.
+//     2. `URL(string:)` rejects (or silently corrupts) the
+//        unencoded `fileUrl=https://media.barsys.com/...` query
+//        value, leaving `AsyncImage` with a nil URL → row falls
+//        through to the `myDrink` placeholder so EVERY row in
+//        My Drinks / Explore / Mixlists / Crafting / Ready to Pour
+//        shows the placeholder instead of the recipe image.
+extension String {
+    /// Ports UIKit `String.getImageUrl()`. Returns a properly
+    /// percent-encoded `URL` for `optimizeImage?fileUrl=…` strings,
+    /// or `URL(string:)` for plain URLs without the proxy.
+    func getImageUrl() -> URL? {
+        // 1:1 with UIKit: prefer the percent-DECODED form of the
+        // string (so any pre-encoded characters are normalised
+        // before we re-encode the fileUrl value), and fall back to
+        // an encoded form if decoding fails.
+        let original = self.removingPercentEncoding?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? self
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+        guard let original = original else { return nil }
+
+        // Plain URL (no optimizeImage proxy) — pass straight through.
+        guard let fileURLRange = original.range(of: "fileUrl=") else {
+            return URL(string: original)
+        }
+
+        // Split the input at `fileUrl=`. The piece before it is
+        // the optimizeImage endpoint (already a valid URL prefix
+        // ending in `?`). The piece after it is the inner image
+        // URL value, which gets re-attached as a URLQueryItem so
+        // `:` / `/` / spaces / unicode in the path are properly
+        // percent-encoded.
+        let base = String(original[..<fileURLRange.lowerBound])
+        let fileUrlValue = String(original[fileURLRange.upperBound...])
+
+        var components = URLComponents(string: base)
+        components?.queryItems = [
+            URLQueryItem(name: "fileUrl", value: fileUrlValue)
+        ]
+        return components?.url
+    }
+}
