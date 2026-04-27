@@ -517,6 +517,8 @@ struct SignUpView: View {
                             error: viewModel.errorFullName,
                             keyboard: .default,
                             contentType: .name)
+                // 1:1 with UIKit `SignUpViewController+Accessibility.swift:20`.
+                .accessibilityLabel("Full name")
                 .onChange(of: viewModel.fullName) { newValue in
                     let clamped = viewModel.clampFullName(newValue)
                     if clamped != newValue { viewModel.fullName = clamped }
@@ -535,6 +537,9 @@ struct SignUpView: View {
                             error: viewModel.errorEmail,
                             keyboard: .emailAddress,
                             contentType: .emailAddress)
+                // 1:1 with UIKit `SignUpViewController+Accessibility.swift:21`.
+                .accessibilityLabel("Email address")
+                .accessibilityHint("Enter a valid email address")
                 .onChange(of: viewModel.email) { newValue in
                     let clamped = viewModel.clampEmail(newValue)
                     if clamped != newValue { viewModel.email = clamped }
@@ -550,6 +555,9 @@ struct SignUpView: View {
                 hideKeyboard()
                 showDatePicker = true
             }
+            // 1:1 with UIKit `SignUpViewController+Accessibility.swift:23`.
+            .accessibilityLabel("Date of birth")
+            .accessibilityHint("Tap to pick your date of birth")
 
             // Phone row (storyboard mirrors LoginViewController phone row)
             phoneRow

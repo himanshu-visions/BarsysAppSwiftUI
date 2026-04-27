@@ -321,6 +321,12 @@ struct OTPBoxField: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color("paleBlueGrayColor"), lineWidth: 1)
             )
+            // 1:1 with UIKit `AccessibilityHelper.swift:142` —
+            // `configureOTPFields()` sets each box's `accessibilityLabel`
+            // to "OTP digit N" so VoiceOver users can identify the
+            // current digit position.
+            .accessibilityLabel("OTP digit \(idx + 1)")
+            .accessibilityValue(isFilled ? value : "")
     }
 }
 

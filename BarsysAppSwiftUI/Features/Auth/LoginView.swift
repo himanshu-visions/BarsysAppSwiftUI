@@ -482,6 +482,10 @@ struct LoginView: View {
                     .font(.system(size: 18, weight: .light))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(height: 40)
+                    // 1:1 with UIKit `LoginViewController+Accessibility.swift:19-20`:
+                    // VoiceOver users hear the field's purpose + the OTP-flow hint.
+                    .accessibilityLabel("Phone number")
+                    .accessibilityHint("Enter your phone number to receive an OTP")
                     .onChange(of: viewModel.phone) { newValue in
                         // Re-implements the editing-while-OTP-shown rule from
                         // LoginViewController.textField(_:shouldChangeCharactersIn:)
