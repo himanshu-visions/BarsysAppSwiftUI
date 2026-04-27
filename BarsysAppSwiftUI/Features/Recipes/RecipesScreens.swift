@@ -2533,6 +2533,18 @@ private struct IngredientPicker: View {
 // SwiftUI presentation is a full navigation-stack screen so we use
 // `@Environment(\.dismiss)` instead of manual child-VC unwinding.
 
+/// Identifiable wrapper around `UIImagePickerController.SourceType` so
+/// it can drive `.sheet(item:)`. Mirrors `MyBarView.PickerPresentation`
+/// (MyBarScreens.swift L179-182). The `id` changes on every new
+/// presentation, forcing SwiftUI to rebuild the sheet body with the
+/// fresh `source` value — fixes the camera-first-tap race where the
+/// previous two-step `pickerSource = .camera; showPicker = true`
+/// pattern captured the stale default `.photoLibrary`.
+fileprivate struct EditRecipePickerPresentation: Identifiable, Equatable {
+    let id = UUID()
+    let source: UIImagePickerController.SourceType
+}
+
 struct EditRecipeView: View {
     let recipeID: RecipeID?
     /// When set, the EditRecipeView uses this recipe DIRECTLY as the
@@ -2596,11 +2608,20 @@ struct EditRecipeView: View {
     /// `showActionSheetForImagePicker()` invoked from
     /// `didPressAddImageButton` (EditViewController.swift L219-226).
     @State private var showAddImageActionSheet = false
-    /// Which source (camera or photo library) the user picked in the
-    /// action sheet — fed into the `BarBotImagePicker` sheet so the
-    /// correct `UIImagePickerController.sourceType` is used.
-    @State private var addImagePickerSource: UIImagePickerController.SourceType = .photoLibrary
-    @State private var showPhotoPicker = false
+    /// Identifiable wrapper that drives the recipe-image
+    /// `UIImagePickerController` sheet via `.sheet(item:)`.
+    ///
+    /// The previous two-step `addImagePickerSource = .camera;
+    /// showPhotoPicker = true` pattern raced on first tap: SwiftUI
+    /// coalesced the mutations into a single render pass and the
+    /// `.sheet(isPresented:)` body captured the STALE default
+    /// `.photoLibrary` source, opening Photos instead of the camera.
+    /// Same bug MyBarScreens.swift L165-182 documents and fixes via
+    /// `PickerPresentation` — porting that fix here so Camera works
+    /// on the very first tap. Subsequent presentations get a fresh
+    /// UUID, forcing SwiftUI to rebuild the sheet body with the new
+    /// source value every time.
+    @State private var recipeImagePicker: EditRecipePickerPresentation?
     @State private var nameHasError = false
     @State private var errorMessage: String?
     @State private var isSaving = false
@@ -2614,15 +2635,17 @@ struct EditRecipeView: View {
     //
     // SwiftUI mirrors the same finite-state machine:
     //   1. Tap → `showAddIngredientActionSheet` (Camera / Photos / Cancel).
-    //   2. Pick → `showAddIngredientPicker` opens the chosen source.
+    //   2. Pick → `ingredientImagePicker` opens the chosen source via
+    //      `.sheet(item:)` so the source value is captured atomically
+    //      (see `recipeImagePicker` doc above for the race-condition
+    //      rationale that motivated this pattern).
     //   3. After pick → `uploadAndProcessIngredient(image:)` runs the
     //      AI-detection request and either appends a row or surfaces
     //      one of the four UIKit error messages
     //      (Constants.ingredientUnableToAddError, ingredientCannotBeUsedHere,
     //      moreThanOneIngredientIdentified, hasSameIngredientInDrink).
     @State private var showAddIngredientActionSheet = false
-    @State private var showAddIngredientPicker = false
-    @State private var addIngredientPickerSource: UIImagePickerController.SourceType = .photoLibrary
+    @State private var ingredientImagePicker: EditRecipePickerPresentation?
     @State private var pickedIngredientImage: UIImage?
     @State private var isUploadingIngredient = false
 
@@ -2831,25 +2854,34 @@ struct EditRecipeView: View {
             isPresented: $showAddImageActionSheet,
             titleVisibility: .visible
         ) {
+            // Single atomic state mutation — replaces the old two-step
+            // `addImagePickerSource = …; showPhotoPicker = true` that
+            // raced on first tap and opened Photos when Camera was
+            // requested. See `recipeImagePicker` declaration for the
+            // SwiftUI race-condition rationale.
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Camera") {
-                    addImagePickerSource = .camera
-                    showPhotoPicker = true
+                    recipeImagePicker = EditRecipePickerPresentation(source: .camera)
                 }
             }
             Button("Photos") {
-                addImagePickerSource = .photoLibrary
-                showPhotoPicker = true
+                recipeImagePicker = EditRecipePickerPresentation(source: .photoLibrary)
             }
             Button("Cancel", role: .cancel) { }
         }
         // 1:1 with UIKit post-action-sheet flow: picking Camera or
         // Photos presents a `UIImagePickerController` with the
-        // corresponding `sourceType`. `BarBotImagePicker` is the same
-        // wrapper used by the Add Ingredient flow — `.camera` or
-        // `.photoLibrary` is routed through `addImagePickerSource`.
-        .sheet(isPresented: $showPhotoPicker) {
-            BarBotImagePicker(image: $selectedImage, source: addImagePickerSource)
+        // corresponding `sourceType`. `.fullScreenCover(item:)` is
+        // required (instead of `.sheet`) because SwiftUI's sheet uses
+        // `pageSheet` presentation on iOS 13+, which inset-crops the
+        // camera UI and HIDES the bottom capture button — UIKit
+        // presents `UIImagePickerController` with `.fullScreen` style
+        // (the default), so we mirror that here. Photo library works
+        // fine in fullScreenCover too. The `(item:)` variant rebuilds
+        // the body with the fresh `presentation.source` on every
+        // present, so Camera works on the very first tap.
+        .fullScreenCover(item: $recipeImagePicker) { presentation in
+            BarBotImagePicker(image: $selectedImage, source: presentation.source)
                 .ignoresSafeArea()
         }
         // 1:1 port of UIKit `showActionSheetForImagePicker(isImageCroppingDisabled: true)`
@@ -2860,24 +2892,31 @@ struct EditRecipeView: View {
             isPresented: $showAddIngredientActionSheet,
             titleVisibility: .visible
         ) {
+            // Atomic mutation — see `recipeImagePicker` doc above.
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Camera") {
-                    addIngredientPickerSource = .camera
-                    showAddIngredientPicker = true
+                    ingredientImagePicker = EditRecipePickerPresentation(source: .camera)
                 }
             }
             Button("Photos") {
-                addIngredientPickerSource = .photoLibrary
-                showAddIngredientPicker = true
+                ingredientImagePicker = EditRecipePickerPresentation(source: .photoLibrary)
             }
             Button(ConstantButtonsTitle.cancelButtonTitle, role: .cancel) { }
         }
         // Image picker for the AI ingredient detection flow. UIKit pipes
         // the chosen image through `uploadIngredientImage(...)` —
         // SwiftUI does the same via `uploadAndProcessIngredient(image:)`.
-        .sheet(isPresented: $showAddIngredientPicker) {
+        // `.fullScreenCover(item:)` for the same two reasons spelled
+        // out on the recipe-image picker above:
+        //   1. Camera needs full-screen presentation; SwiftUI's
+        //      `.sheet` uses `pageSheet` which crops the bottom and
+        //      hides the camera capture button.
+        //   2. `(item:)` rebuilds the body with the fresh
+        //      `presentation.source` on every present, so Camera
+        //      works on the very first tap.
+        .fullScreenCover(item: $ingredientImagePicker) { presentation in
             BarBotImagePicker(image: $pickedIngredientImage,
-                              source: addIngredientPickerSource)
+                              source: presentation.source)
                 .ignoresSafeArea()
         }
         .onChange(of: pickedIngredientImage) { newImage in
