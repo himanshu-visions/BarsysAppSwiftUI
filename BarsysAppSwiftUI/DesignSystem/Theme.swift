@@ -865,13 +865,15 @@ import SwiftUI
 
 enum BarsysPopup: Equatable, Identifiable {
     /// Generic single-action alert ("OK" or custom title).
-    /// `isCloseHidden`: hides the close X button (UIKit
-    /// `AlertPopUpViewController.isCloseButtonHidden`).
+    /// `isCloseHidden`: hides the close X button. Default is `true` to
+    /// mirror UIKit `showCustomAlert(isCloseButtonHidden: Bool = true)`
+    /// (UIViewController+Alerts.swift L10) — every default-arg caller
+    /// in UIKit relies on the X being suppressed for single-OK alerts.
     case alert(title: String,
                message: String?,
                primaryTitle: String = ConstantButtonsTitle.okButtonTitle,
                isBlocking: Bool = false,
-               isCloseHidden: Bool = false)
+               isCloseHidden: Bool = true)
 
     /// Generic two-action confirm — mirrors UIKit `AlertPopUpHorizontalStackController`.
     ///
@@ -884,6 +886,11 @@ enum BarsysPopup: Equatable, Identifiable {
     /// `primaryFillColor`: when set, fills the primary (right) button with this color
     ///   (e.g. `.segmentSelectionColor` for rating popup). `nil` = brand gradient.
     /// `isCloseHidden`: hides the close X button (UIKit `isCloseButtonHidden`).
+    /// Default `true` — every UIKit `showCustomAlertMultipleButtons` call
+    /// site passes `isCloseButtonHidden: true` except three intentional
+    /// instruction popups (StationsMenu pour-ingredients, station-cleaning
+    /// proceed-to-clean, EditRecipe unsaved-changes); those callers set
+    /// `isCloseHidden: false` explicitly.
     /// UIKit `showCustomAlertMultipleButtons` ALWAYS passes
     /// `cancelButtonColor: .segmentSelectionColor` — the primary (right)
     /// button is ALWAYS brand-gradient-filled. Default reflects this.
@@ -893,7 +900,7 @@ enum BarsysPopup: Equatable, Identifiable {
                  secondaryTitle: String = ConstantButtonsTitle.cancelButtonTitle,
                  isDestructive: Bool = false,
                  primaryFillColor: String? = "segmentSelectionColor",
-                 isCloseHidden: Bool = false)
+                 isCloseHidden: Bool = true)
 
     /// Manual-start spinning prompt for the Shaker — title +
     /// brand-spinner + "Cancel" footer button.
@@ -934,17 +941,26 @@ enum BarsysPopup: Equatable, Identifiable {
 
     /// Whether the top-right X button is suppressed. Mirrors UIKit's
     /// `isCloseButtonHidden` flag on `AlertPopUpViewController` /
-    /// `AlertPopUpHorizontalStackController`.
-    ///   • `.alert` / `.confirm` — caller-controlled via `isCloseHidden`.
-    ///   • `.manualSpinning` / `.multipleIngredients` — UIKit always
-    ///     showed an X (`btnClose`), so SwiftUI matches.
-    ///   • `.shakerFlatSurface` — UIKit had no X (uses Cancel Drink only).
-    ///   • `.waiting` — UIKit used a Cancel button instead of an X.
+    /// `AlertPopUpHorizontalStackController` and the storyboard
+    /// presence/absence of `btnClose` on the other popup VCs.
+    ///   • `.alert` / `.confirm` — caller-controlled via `isCloseHidden`
+    ///     (defaults to `true` to match UIKit's helpers).
+    ///   • `.manualSpinning` — UIKit shows the X (storyboard `btnClose`
+    ///     visible by default; tap = `closeButtonTapped` → BLE cancel
+    ///     + dismiss).
+    ///   • `.multipleIngredients` — UIKit hides the X. Both call sites
+    ///     (`MyBarViewController.swift:397`,
+    ///     `ScanIngredientsViewController.swift:303`) explicitly pass
+    ///     `isCloseButtonHidden: true`.
+    ///   • `.shakerFlatSurface` — storyboard has no `btnClose` at all.
+    ///   • `.waiting` — storyboard uses a `btnCancel` (bottom button),
+    ///     not a top-right X.
     var hidesClose: Bool {
         switch self {
         case .alert(_, _, _, _, let isCloseHidden):           return isCloseHidden
         case .confirm(_, _, _, _, _, _, let isCloseHidden):   return isCloseHidden
-        case .manualSpinning, .multipleIngredients:           return false
+        case .manualSpinning:                                 return false
+        case .multipleIngredients:                            return true
         case .shakerFlatSurface, .waiting:                    return true
         }
     }

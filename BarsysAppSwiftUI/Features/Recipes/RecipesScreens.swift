@@ -722,7 +722,11 @@ struct RecipeDetailView: View {
                                 primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
                                 secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
                                 isDestructive: false,
-                                isCloseHidden: true
+                                // UIKit `EditViewController.swift:353` is one
+                                // of the only three confirm sites that show
+                                // the X (`isCloseButtonHidden: false`); X-tap
+                                // dismisses without picking a side.
+                                isCloseHidden: false
                             )
                             // Don't pop — user must confirm via Discard.
                         } else {
@@ -1406,7 +1410,9 @@ struct RecipeDetailView: View {
                         primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
                         secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
                         isDestructive: false,
-                        isCloseHidden: true
+                        // UIKit `EditViewController.swift:353` shows the X
+                        // here (`isCloseButtonHidden: false`).
+                        isCloseHidden: false
                     )
                 } else {
                     craft(recipe)
