@@ -1012,7 +1012,17 @@ private struct AlertPopupButtonStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .font(.system(size: 12))                          // .caption1 = 12pt
-            .foregroundStyle(Color("appBlackColor"))          // black title
+            // 1:1 with UIKit `AlertPopUp.storyboard` — both `btnContinue`
+            // and `btnCancel` define `<color key="titleColor" white="0.0"
+            // alpha="1" colorSpace="custom" customColorSpace=
+            // "genericGamma22GrayColorSpace"/>`, i.e. **static black** in
+            // BOTH light and dark mode (it's a hard-coded color, not a
+            // dynamic asset). Using `Color("appBlackColor")` here would
+            // adapt to near-white in dark mode and break parity with
+            // UIKit, which keeps the title BLACK on both the orange
+            // gradient (right) and the gray-glass capsule (left) in
+            // every appearance.
+            .foregroundStyle(SwiftUI.Color.black)
             .lineLimit(1)
             .minimumScaleFactor(0.85)                          // gracefully shrink
                                                                // if a longer title
@@ -1030,32 +1040,87 @@ private struct AlertPopupButtonStyle: ViewModifier {
     @ViewBuilder
     private var buttonBackground: some View {
         if let fill {
-            // FILLED variant — UIKit `alertPopUpButtonBackgroundStyle`
-            // with non-nil fillColor. Solid fill on both iOS versions.
-            // UIKit iOS 26 path layers a `.clear` glass effect on top
-            // (UIViewClass+GradientStyles.swift L141-162) so the tint
-            // reads as a wet-glass pill rather than a flat fill. The
-            // glassHighlight overlay gives us that sheen cleanly.
-            ZStack {
+            // FILLED variant — 1:1 port of UIKit
+            // `alertPopUpButtonBackgroundStyle(fillColor:)`
+            // (UIViewClass+GradientStyles.swift L24-48):
+            //   1. `applyCapsuleGradientStyle()` inserts a CAGradientLayer
+            //      with vertical `brandGradientTop → brandGradientBottom`
+            //      (#FAE0CC → #F2C2A1).
+            //   2. `self.backgroundColor.withAlphaComponent(0.2)` —
+            //      wiped on the next line by `addGlassEffect`, so this
+            //      is dead code visually.
+            //   3. `addGlassEffect(effect: "clear")` adds a near-
+            //      transparent `UIGlassEffect(style: .clear)` view that
+            //      ends with `backgroundColor = .clear`. The clear glass
+            //      adds a faint sheen but the gradient reads through it
+            //      unchanged — letting the two-stop peach→tan transition
+            //      stay clearly visible.
+            //
+            // Mirrors `BarsysPopupCard.alertFilledButtonBackground` in
+            // Theme.swift so the LOGOUT / rate-app / Yes please! popups
+            // all render an identical primary pill.
+            //
+            // Hard-coded light-mode RGB matches `primaryOrangeButtonBackground`
+            // (RecipesScreens.swift) — UIKit's `makeOrangeStyle()` keeps
+            // brand orange in both appearances; the dynamic asset's dark
+            // variant would render as an invisible near-black pill.
+            //
+            // The `_ = fill` discard preserves the bordered/filled
+            // dispatch (callers pass non-nil fill to choose this branch)
+            // without applying it as the dim tint UIKit clears.
+            let _ = fill
+            if #available(iOS 26.0, *) {
+                // Vertical brand gradient capsule, hard-coded light
+                // RGB so dark mode renders the same peach → tan pill
+                // (matches `primaryOrangeButtonBackground` on the Recipe
+                // Craft button and `BarsysPopupCard.alertFilledButtonBackground`
+                // on `.confirm` popups). No `UIVisualEffectView`-backed
+                // overlay — the previous attempt blocked the LEFT
+                // button's tap gesture, and a pure SwiftUI Capsule
+                // fill never interferes with hit testing.
+                buttonShape.fill(
+                    LinearGradient(
+                        colors: [
+                            SwiftUI.Color(red: 0.980, green: 0.878, blue: 0.800), // #FAE0CC
+                            SwiftUI.Color(red: 0.949, green: 0.761, blue: 0.631)  // #F2C2A1
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+            } else {
+                // Pre-26 — UIKit L45: solid fillColor at full alpha.
                 buttonShape.fill(fill)
-                if #available(iOS 26.0, *) {
-                    buttonShape
-                        .fill(Theme.Gradient.glassHighlight)
-                        .opacity(0.35)
-                        .blendMode(.plusLighter)
-                        .allowsHitTesting(false)
-                }
             }
         } else if #available(iOS 26.0, *) {
-            // iOS 26 BORDERED variant — user asked that the LEFT capsule
-            // button in popups render identically in dark mode to how
-            // it renders in light mode. Adaptive `.regularMaterial`
-            // flipped the fill to a muddy dark pill in dark mode.
-            // Replace with an explicit white tint + the same grey wash
-            // so BOTH modes read as the bright pill from the storyboard.
+            // BORDERED variant on iOS 26+ — IDENTICAL approach to
+            // `BarsysPopupCard.alertSecondaryButtonBackground` in
+            // Theme.swift, which renders the "No, stay in the app"
+            // button on the rate-app `.confirm` popup correctly in
+            // both light and dark mode.
+            //
+            // Two SwiftUI Capsule fills (no UIViewRepresentable):
+            //   1. white @ 85 % — the bright base that keeps the pill
+            //      reading as a light glass capsule in both modes.
+            //   2. cancelButtonGray @ 15 % — the subtle gray wash
+            //      mirroring UIKit `addGlassEffect(tintColor:
+            //      .cancelButtonGray)` (UIViewClass+GradientStyles.swift
+            //      L92-110, body of `applyCancelCapsuleGradientBorderStyle`).
+            //
+            // Why not a real `UIGlassEffect` here? The previous attempt
+            // wrapped a `UIVisualEffectView` in `.background(...)`. Even
+            // with `isUserInteractionEnabled = false` and SwiftUI's
+            // `.allowsHitTesting(false)`, the representable was
+            // intercepting the Button's tap. SwiftUI Capsule fills are
+            // pure shape primitives that never touch hit testing, so
+            // the "No" button stays tappable while still rendering the
+            // intended bright pill — same recipe + same caller-perceived
+            // behaviour as the working "No, stay in the app" button.
             ZStack {
-                buttonShape.fill(SwiftUI.Color.white.opacity(0.85))
-                buttonShape.fill(Theme.Color.cancelButtonGray.opacity(0.15))
+                Capsule(style: .continuous)
+                    .fill(SwiftUI.Color.white.opacity(0.85))
+                Capsule(style: .continuous)
+                    .fill(Theme.Color.cancelButtonGray.opacity(0.15))
             }
         } else {
             // Pre-26 BORDERED variant — UIKit
@@ -1072,10 +1137,17 @@ private struct AlertPopupButtonStyle: ViewModifier {
             // No border on filled buttons (UIKit only sets fill).
             EmptyView()
         } else if #available(iOS 26.0, *) {
-            // iOS 26 cancel-capsule border gradient — same 8-stop
-            // alternating white / cancelBorderGray sheen UIKit applies
-            // via `applyCancelCapsuleGradientBorderStyle(borderColors:)`
-            // (UIViewClass+GradientStyles.swift L92-110).
+            // iOS 26 BORDERED — IDENTICAL stroke to
+            // `BarsysPopupCard.alertSecondaryButtonBorder` in Theme.swift
+            // (the "No, stay in the app" button). 6-stop white@0.95 ↔
+            // cancelBorderGray@0.9 sheen at 1.5pt — the same etched-glass
+            // edge `BarsysGlassPanelBackground` puts on the popup card
+            // itself. UIKit's `applyCancelCapsuleGradientBorderStyle`
+            // technically ignores its border params at runtime, but the
+            // SwiftUI port has carried this stroke since launch as the
+            // visual signature of the alert popup's neutral pill — and
+            // matching the working "No, stay in the app" button means
+            // matching this border too.
             buttonShape
                 .stroke(
                     LinearGradient(
@@ -1093,7 +1165,8 @@ private struct AlertPopupButtonStyle: ViewModifier {
                     lineWidth: 1.5
                 )
         } else {
-            // Pre-26 — plain 1pt craftButtonBorderColor stroke.
+            // Pre-26 — plain 1pt craftButtonBorderColor stroke
+            // (UIKit `makeBorder(1, .craftButtonBorderColor)`).
             buttonShape.stroke(Theme.Color.craftButtonBorder, lineWidth: 1)
         }
     }

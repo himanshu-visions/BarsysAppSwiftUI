@@ -1391,17 +1391,23 @@ private struct BarsysPopupCard: View {
     @ViewBuilder
     private func alertFilledButtonBackground(_ colorName: String) -> some View {
         if #available(iOS 26.0, *) {
+            // Vertical brand gradient capsule (matches UIKit
+            // `applyCapsuleGradientStyle`). Hard-coded light-mode RGB
+            // mirrors `primaryOrangeButtonBackground` on the Recipe
+            // Craft button — UIKit's `makeOrangeStyle()` keeps brand
+            // orange in both appearances; the dynamic asset's dark
+            // variant would otherwise render as an invisible
+            // near-black pill against the popup-card glass.
+            //
+            // No `UIVisualEffectView`-backed overlay — wrapping a
+            // `UIVisualEffectView` in `.background(...)` blocked the
+            // adjacent secondary button's tap gesture even with
+            // `isUserInteractionEnabled = false`. A pure SwiftUI
+            // Capsule fill never participates in hit testing, so the
+            // popup buttons stay reliably tappable.
             Capsule(style: .continuous).fill(
                 LinearGradient(
                     colors: [
-                        // Hard-coded light-mode RGB — matches
-                        // `primaryOrangeButtonBackground` on the Recipe
-                        // Craft button. The dynamic asset's dark variant
-                        // (#3A2E26 → #4A3628) would render as an
-                        // invisible near-black pill against the popup
-                        // card glass; UIKit's `makeOrangeStyle()`
-                        // implementation also keeps brand orange in
-                        // both appearances.
                         SwiftUI.Color(red: 0.980, green: 0.878, blue: 0.800), // #FAE0CC
                         SwiftUI.Color(red: 0.949, green: 0.761, blue: 0.631)  // #F2C2A1
                     ],

@@ -155,6 +155,89 @@ struct NavigationBackActionInterceptor: UIViewRepresentable {
     }
 }
 
+/// Real-glass background for popup buttons — wraps `UIGlassEffect`
+/// directly (iOS 26+) so SwiftUI buttons can render the same translucent
+/// material UIKit uses via `addGlassEffect(...)` rather than the
+/// approximate SwiftUI Materials. Pre-26 falls back to a `UIBlurEffect`
+/// pairing analogous to UIKit's pre-26 path.
+///
+/// Two presets used by the alert popups:
+///   • `.clear`   — for the FILLED (right) button's clear-glass sheen
+///                  on top of the brand gradient (UIKit
+///                  `addGlassEffect(effect: "clear")`).
+///   • `.regular` + `tintColor` — for the BORDERED (left) button's
+///                  glass-with-cancelButtonGray fill (UIKit
+///                  `addGlassEffect(tintColor: cancelButtonGray)`
+///                  inside `applyCancelCapsuleGradientBorderStyle`).
+///
+/// Mirrors `BarsysGlassPanelBackground` — same UIVisualEffectView
+/// approach, just exposed as a button-friendly variant.
+struct BarsysGlassButtonBackground: UIViewRepresentable {
+    enum Style { case regular, clear }
+
+    var style: Style = .regular
+    /// Optional `UIGlassEffect.tintColor` — passed straight through to
+    /// the iOS 26+ glass material. `nil` keeps the glass un-tinted.
+    var tintUIColor: UIColor? = nil
+    /// When set, the wrapper view (and the `UIVisualEffectView` inside)
+    /// adopt this appearance instead of the system one. Used by the
+    /// LEFT alert "No / Cancel" button so the glass + tint don't
+    /// darken under system dark mode — the storyboard pill is meant
+    /// to read as the same light-glass capsule in both appearances.
+    var overrideUserInterfaceStyle: UIUserInterfaceStyle? = nil
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .clear
+        container.isUserInteractionEnabled = false
+        container.clipsToBounds = true
+        if let overrideStyle = overrideUserInterfaceStyle {
+            container.overrideUserInterfaceStyle = overrideStyle
+        }
+
+        let blurView: UIVisualEffectView
+        if #available(iOS 26.0, *) {
+            let glassStyle: UIGlassEffect.Style
+            switch style {
+            case .regular: glassStyle = .regular
+            case .clear:   glassStyle = .clear
+            }
+            let glassEffect = UIGlassEffect(style: glassStyle)
+            if let tintUIColor { glassEffect.tintColor = tintUIColor }
+            glassEffect.isInteractive = true
+            blurView = UIVisualEffectView(effect: glassEffect)
+        } else {
+            // Pre-26 fallback — `.systemMaterial` for `.regular`,
+            // `.systemUltraThinMaterial` for `.clear`. Tints aren't
+            // supported by UIBlurEffect natively; the caller is
+            // expected to layer a tint Color in SwiftUI on top.
+            let blurStyle: UIBlurEffect.Style = (style == .clear)
+                ? .systemUltraThinMaterial
+                : .systemMaterial
+            blurView = UIVisualEffectView(effect: UIBlurEffect(style: blurStyle))
+        }
+        blurView.frame = container.bounds
+        blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        blurView.isUserInteractionEnabled = false
+        blurView.backgroundColor = .clear
+        if let overrideStyle = overrideUserInterfaceStyle {
+            blurView.overrideUserInterfaceStyle = overrideStyle
+        }
+        container.addSubview(blurView)
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // Keep the override in sync if the caller flips it at runtime.
+        if let overrideStyle = overrideUserInterfaceStyle {
+            uiView.overrideUserInterfaceStyle = overrideStyle
+            for sub in uiView.subviews {
+                sub.overrideUserInterfaceStyle = overrideStyle
+            }
+        }
+    }
+}
+
 struct BarsysGlassPanelBackground: UIViewRepresentable {
     /// Optional translucent white overlay on top of the blur.
     /// Default 0.0 keeps the panel as pure glass to match the UIKit
