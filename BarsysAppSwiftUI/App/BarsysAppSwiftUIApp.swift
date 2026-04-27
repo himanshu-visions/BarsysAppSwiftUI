@@ -73,8 +73,6 @@ struct RootView: View {
                 SplashView()
             case .auth:
                 AuthFlowView()
-            case .tutorial:
-                TutorialView()
             case .main:
                 MainTabView()
             }
@@ -93,8 +91,7 @@ struct RootView: View {
             configureSessionExpirationHandler()
 
             await env.bootstrap()
-            router.handleBootstrap(authenticated: env.auth.isAuthenticated,
-                                    hasSeenTutorial: env.preferences.hasSeenTutorial)
+            router.handleBootstrap(authenticated: env.auth.isAuthenticated)
         }
     }
 
@@ -127,11 +124,10 @@ struct RootView: View {
                 UserDefaultsClass.removeLastConnectedDevice()
                 UserDefaultsClass.removeLastConnectedDeviceTime()
                 UserDefaultsClass.clearAll()
-                // Reset the in-memory `@Published` tutorial flag — see
-                // SideMenuView.performLogout for the full rationale;
-                // `clearAll()` wipes the UserDefaults key but NOT
-                // `PreferencesService`'s cached @Published value, so
-                // the next login would skip Tutorial without this.
+                // Reset the in-memory `@Published` tutorial flag so it
+                // tracks the just-cleared UserDefaults key. Kept for
+                // parity, no longer affects post-login routing — see
+                // SideMenuView.performLogout.
                 env.preferences.hasSeenTutorial = false
                 UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForCacheRecipeData")
                 UserDefaults.standard.removeObject(forKey: "updatedDataTimeStampForMixlistData")

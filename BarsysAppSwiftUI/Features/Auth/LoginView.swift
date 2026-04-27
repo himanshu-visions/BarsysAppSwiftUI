@@ -586,7 +586,7 @@ struct LoginView: View {
                     // Fetch data then navigate — Task needed because onSuccess is sync
                     Task {
                         await env.onLoginSuccessAsync()
-                        router.didLogin(hasSeenTutorial: env.preferences.hasSeenTutorial)
+                        router.didLogin()
                     }
                 }
             } else {

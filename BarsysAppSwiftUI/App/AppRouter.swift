@@ -19,7 +19,6 @@ import SwiftUI
 enum RootScreen: Equatable {
     case splash
     case auth
-    case tutorial
     case main
 }
 
@@ -448,21 +447,11 @@ final class AppRouter: ObservableObject {
 
     // MARK: - Root transitions
 
-    func handleBootstrap(authenticated: Bool, hasSeenTutorial: Bool) {
-        if !authenticated {
-            rootScreen = .auth
-        } else if !hasSeenTutorial {
-            rootScreen = .tutorial
-        } else {
-            rootScreen = .main
-        }
+    func handleBootstrap(authenticated: Bool) {
+        rootScreen = authenticated ? .main : .auth
     }
 
-    func didLogin(hasSeenTutorial: Bool) {
-        rootScreen = hasSeenTutorial ? .main : .tutorial
-    }
-
-    func didFinishTutorial() {
+    func didLogin() {
         rootScreen = .main
     }
 

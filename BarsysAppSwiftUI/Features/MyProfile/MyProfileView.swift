@@ -590,10 +590,9 @@ final class MyProfileViewModel: ObservableObject {
             UserDefaultsClass.removeLastConnectedDeviceTime()
             UserDefaultsClass.clearAll()
 
-            // Force-reset the `PreferencesService` in-memory tutorial
-            // flag. See SideMenuView.performLogout — without this the
-            // next sign-in after a delete would skip Tutorial and
-            // drop the user straight into Home/Control Center.
+            // Reset the in-memory tutorial flag so it tracks the just-
+            // cleared UserDefaults key. See SideMenuView.performLogout
+            // — kept for parity, no longer affects post-login routing.
             env.preferences.hasSeenTutorial = false
 
             // Cache timestamps aren't covered by `clearAll` — strip

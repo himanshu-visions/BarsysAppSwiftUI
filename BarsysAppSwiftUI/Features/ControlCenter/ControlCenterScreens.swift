@@ -178,10 +178,8 @@ struct ControlCenterView: View {
         // 1:1 with UIKit `present(tutorialVc, animated: true)` from
         // `ControlCenterViewController` L202: device-specific tutorial
         // video, modal full-screen, dismisses via the X button or the
-        // close callback. The TutorialView's `onDismiss` initializer
-        // routes the close back through this `showTutorialPlayer` flag
-        // (instead of `router.didFinishTutorial()` which is reserved
-        // for the first-launch onboarding flow).
+        // close callback. The TutorialView's `onDismiss` closure
+        // routes the close back through this `showTutorialPlayer` flag.
         .fullScreenCover(isPresented: $showTutorialPlayer) {
             TutorialView(
                 videoURL: tutorialVideoURL,

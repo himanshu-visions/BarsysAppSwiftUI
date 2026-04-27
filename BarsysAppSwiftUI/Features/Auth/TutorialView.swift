@@ -32,14 +32,13 @@ import SwiftUI
 import AVKit
 
 struct TutorialView: View {
-    @EnvironmentObject private var env: AppEnvironment
-    @EnvironmentObject private var router: AppRouter
     @Environment(\.dismiss) private var dismiss
 
-    /// Optional dismiss callback used when the screen is presented
-    /// modally (Control Center → Tutorial). When nil, falls back to
-    /// `router.didFinishTutorial()` for the first-launch onboarding flow.
-    private let onDismiss: (() -> Void)?
+    /// Dismiss callback fired when the user closes the tutorial. Always
+    /// provided — `TutorialView` is only shown modally from the
+    /// device-pairing flow (1:1 with UIKit, which never auto-presents
+    /// a tutorial after login).
+    private let onDismiss: () -> Void
 
     /// Video URL — defaults to the Barsys 360 instruction video.
     /// Caller can override per-device (Coaster / Shaker).
@@ -54,18 +53,11 @@ struct TutorialView: View {
     /// (including the auto-pause/resume on app backgrounding).
     private var isPlaying: Bool { playerHolder.isPlaying }
 
-    /// First-launch onboarding init — uses default Barsys 360 URL,
-    /// dismissal routes through `router.didFinishTutorial()` to swap
-    /// the root screen out to `.main`.
-    init() {
-        self.videoURL = URL(string: VideoURLConstants.barsys360VideoUrl)
-        self.onDismiss = nil
-    }
-
     /// Modal-presentation init — used by Control Center → Tutorial menu
-    /// item. The caller passes a device-specific URL and a dismiss
-    /// closure that hides the cover.
-    /// 1:1 with UIKit `tutorialVc.videoURL = URL(string: ...)` in
+    /// item and the Explore screen device-paired tutorial card. The
+    /// caller passes a device-specific URL and a dismiss closure that
+    /// hides the cover. 1:1 with UIKit
+    /// `tutorialVc.videoURL = URL(string: ...)` in
     /// `ControlCenterViewController` L195-197.
     init(videoURL: URL?, onDismiss: @escaping () -> Void) {
         self.videoURL = videoURL ?? URL(string: VideoURLConstants.barsys360VideoUrl)
@@ -218,15 +210,11 @@ struct TutorialView: View {
         }
     }
 
-    /// Routes the dismissal: modal cover (Control Center) uses the
-    /// closure; first-launch tutorial advances the root screen.
+    /// Dismisses the modal tutorial cover. 1:1 with UIKit `dismiss(animated:)`
+    /// in `TutorialViewController.dismissAction(_:)` — the post-login
+    /// onboarding tutorial that UIKit never had stays absent here too.
     private func finishTutorial() {
-        if let onDismiss {
-            onDismiss()
-        } else {
-            env.preferences.hasSeenTutorial = true
-            router.didFinishTutorial()
-        }
+        onDismiss()
     }
 }
 
