@@ -700,6 +700,12 @@ struct BarsysAlertOverlay: View {
                         //              with 8pt CORNER (alertPopupButtonBackgroundStyle
                         //              passes BarsysCornerRadius.small)
                         //   Pre-26  → `makeBorder(1, .craftButtonBorderColor)`
+                        //
+                        // Uses `BounceButtonStyle()` to mirror the working
+                        // "No, stay in the app" button on the rate-app
+                        // `.confirm` popup (`alertBorderedButton` in
+                        // Theme.swift) — same style class, same hit-test
+                        // semantics.
                         Button {
                             HapticService.light()
                             item.secondaryAction?()
@@ -708,7 +714,7 @@ struct BarsysAlertOverlay: View {
                             Text(secondaryTitle)
                                 .modifier(AlertPopupButtonStyle(fill: nil))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(BounceButtonStyle())
 
                         // RIGHT — primary / tinted button. UIKit:
                         //   alertPopUpButtonBackgroundStyle(cornerRadius: 8,
@@ -722,7 +728,7 @@ struct BarsysAlertOverlay: View {
                             Text(item.primaryActionTitle)
                                 .modifier(AlertPopupButtonStyle(fill: Theme.Color.segmentSelection))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(BounceButtonStyle())
                     }
                 } else if item.singlePrimaryStyle == .popup {
                     // 1:1 UIKit `AlertPopUpHorizontalStackController` SINGLE
@@ -1035,6 +1041,13 @@ private struct AlertPopupButtonStyle: ViewModifier {
             .background(buttonBackground)
             .overlay(buttonBorder)
             .clipShape(buttonShape)
+            // Explicit hit-test region — guarantees the entire pill
+            // accepts taps even when the visible content (Text) is
+            // narrower than the 45pt frame. Without this, SwiftUI
+            // sometimes constrains the Button's tap region to the
+            // intrinsic content, which left the LEFT "No" pill
+            // partially unreachable along its trailing edge.
+            .contentShape(buttonShape)
     }
 
     @ViewBuilder
