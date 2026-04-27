@@ -1060,8 +1060,13 @@ struct RecipeDetailView: View {
 
                 // ADDITIONAL INGREDIENTS (n) — shown directly below
                 // the main ingredients table (matches UIKit storyboard).
+                // Extra 10pt top breathing room between the main
+                // ingredients table and the "ADDITIONAL INGREDIENTS"
+                // header so the section reads as visually separated
+                // rather than glued to the row above it.
                 if !additionalIngredients.isEmpty {
                     additionalSection
+                        .padding(.top, 10)
                 }
 
                 // Bh4-Tv-YEG (details stack `7Yu-k8-WvF`) — the UIKit
