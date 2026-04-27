@@ -1605,11 +1605,11 @@ struct RecipeDetailView: View {
             .buttonStyle(BounceButtonStyle())
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
+        .padding(.top, 10)
         // Bottom offset between the action pills and the physical
         // bottom edge:
-        //   • 30pt when keyboard is closed — resting visual offset
-        //     above the home indicator.
+        //   • 10pt when keyboard is closed — symmetric resting offset
+        //     matching the 10pt top inset inside the glass container.
         //   • 100pt when keyboard is open — lifts the bar up so it
         //     reads as floating clear of the keyboard accessory
         //     toolbar instead of glued to the bottom edge.
@@ -1617,7 +1617,7 @@ struct RecipeDetailView: View {
         // wired below at the safeAreaInset call site, so the bar
         // animates between the two values whenever a quantity field
         // is focused or dismissed.
-        .padding(.bottom, isKeyboardVisible ? 100 : 30)
+        .padding(.bottom, isKeyboardVisible ? 100 : 10)
         .animation(.easeInOut(duration: 0.25), value: isKeyboardVisible)
         .background(bottomContainerBackground)
     }
