@@ -2767,7 +2767,16 @@ struct EditRecipeView: View {
         // left focused fields hidden behind the keyboard.
         .ignoresSafeArea(.container, edges: [.top, .bottom])
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarHidden(true)
+        // Hide ONLY the navigation bar — the modern API
+        // `toolbar(.hidden, for: .navigationBar)` is scoped to the
+        // navigation bar and leaves other toolbar item groups (notably
+        // `ToolbarItemGroup(placement: .keyboard)` from
+        // `keyboardDoneToolbar()` below) intact. The deprecated
+        // `.navigationBarHidden(true)` previously used here also
+        // suppressed the keyboard accessory toolbar on iOS 16+, so
+        // the Done button never appeared above the numberPad keyboard
+        // when a quantity field was focused.
+        .toolbar(.hidden, for: .navigationBar)
         // Keyboard accessory — ports UIKit
         // `EditViewController+TableView.swift` L23:
         // `cell.textFieldQuantity.addDoneToolbar()`.
