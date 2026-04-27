@@ -707,6 +707,22 @@ struct RecipeDetailView: View {
     /// explicitly updates the button title after the API callback.
     @State private var localIsFavourite: Bool = false
 
+    /// Live keyboard height (0 while the keyboard is dismissed). Drives
+    /// two layout adjustments on this screen so the user can keep
+    /// scrolling and editing while a quantity field is focused:
+    ///   1. The floating Save / Craft bar's bottom padding switches
+    ///      from 30pt (resting offset above the home indicator) to
+    ///      100pt while `keyboardHeight > 0`.
+    ///   2. The bottom buffer inside the ScrollView's VStack grows by
+    ///      `keyboardHeight` so the user can scroll the Crafting
+    ///      Instructions section all the way above the keyboard. Without
+    ///      this, `.ignoresSafeArea(.keyboard, edges: .bottom)` (which
+    ///      keeps the bar pinned) also stops the ScrollView from
+    ///      auto-insetting its content for the keyboard, so the last
+    ///      sections used to sit forever behind the keyboard.
+    @State private var keyboardHeight: CGFloat = 0
+    private var isKeyboardVisible: Bool { keyboardHeight > 0 }
+
     private var recipe: Recipe? { env.storage.recipe(by: recipeID) }
 
     // Splits ingredients exactly like `RecipePageViewModel+DataLoading`:
@@ -1105,10 +1121,64 @@ struct RecipeDetailView: View {
                 if !recipe.instructions.isEmpty {
                     instructionsSection(steps: recipe.instructions)
                 }
-                Color.clear.frame(height: 30) // bottom inset above the floating CTA
+                // Bottom buffer grows by the live keyboard height so
+                // the Crafting Instructions section can scroll all the
+                // way above the keyboard while a quantity field is
+                // focused. `.ignoresSafeArea(.keyboard)` on the outer
+                // compound view stops the ScrollView from auto-
+                // insetting itself, so we add the inset manually here.
+                Color.clear.frame(
+                    height: 30 + 70.0// keyboard height
+                )
             }
         }
-        .safeAreaInset(edge: .bottom) { bottomActions(for: recipe) }
+        .safeAreaInset(edge: .bottom) {
+            bottomActions(for: recipe)
+        }
+        // Keep the floating "Save to My Drinks" + "Craft" bar pinned to
+        // the physical bottom edge when the quantity-field keyboard
+        // appears. SwiftUI's default behaviour grows the bottom safe
+        // area by the keyboard height, which pushes everything in the
+        // safe-area inset (the CTA bar) up with it. Putting
+        // `.ignoresSafeArea(.keyboard, edges: .bottom)` on the inset's
+        // content alone is NOT enough — the inset wraps the content in
+        // its own region and the region itself respects the keyboard.
+        // Applying the modifier to the WHOLE compound view (ScrollView
+        // + safeAreaInset) instructs SwiftUI to compute layout against
+        // the non-keyboard bottom safe area, so the CTA stays fixed
+        // 30pt above the home-indicator and the keyboard slides up
+        // OVER the recipe rows — same behaviour as UIKit's
+        // `RecipePageViewController`.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        // Track the live keyboard height so `bottomActions(...)`'s
+        // bottom padding (30 ↔ 100pt) and the ScrollView's bottom
+        // buffer (`keyboardHeight + 30`) both react in lock-step.
+        // Subscribing at the parent-view level keeps the observers
+        // registered across body re-evaluations.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillShowNotification
+            )
+        ) { notification in
+            if let frame = notification.userInfo?[
+                UIResponder.keyboardFrameEndUserInfoKey
+            ] as? CGRect {
+                keyboardHeight = frame.height
+            } else {
+                // Fallback when userInfo is missing — assume a
+                // typical iPhone numberPad height. Better than 0
+                // because the bottom buffer would otherwise leave
+                // content behind the keyboard.
+                keyboardHeight = 290
+            }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillHideNotification
+            )
+        ) { _ in
+            keyboardHeight = 0
+        }
     }
 
     // MARK: - Hero
@@ -1536,7 +1606,19 @@ struct RecipeDetailView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
-        .padding(.bottom, 12)
+        // Bottom offset between the action pills and the physical
+        // bottom edge:
+        //   • 30pt when keyboard is closed — resting visual offset
+        //     above the home indicator.
+        //   • 100pt when keyboard is open — lifts the bar up so it
+        //     reads as floating clear of the keyboard accessory
+        //     toolbar instead of glued to the bottom edge.
+        // Toggled by the keyboard show/hide notification observers
+        // wired below at the safeAreaInset call site, so the bar
+        // animates between the two values whenever a quantity field
+        // is focused or dismissed.
+        .padding(.bottom, isKeyboardVisible ? 100 : 30)
+        .animation(.easeInOut(duration: 0.25), value: isKeyboardVisible)
         .background(bottomContainerBackground)
     }
 
@@ -2095,14 +2177,45 @@ struct RecipeIngredientRow: View {
                                 // 5-char limit (UIKit `shouldAllowCharacterChange`).
                                 if new.count > 5 { editingText = String(new.prefix(5)) }
                             }
-                            // Re-sync editingText when parent mutates quantity
-                            // (via +/- or unit toggle) — mirrors UIKit's
-                            // `tblIngredient.reloadData()` after each tap.
-                            .onChange(of: ingredient.quantity) { _ in
-                                if !isFocused { editingText = displayText }
+                            // Re-sync editingText whenever the parent
+                            // mutates the bound `ingredient.quantity` —
+                            // mirrors UIKit
+                            // `RecipePageViewController+Helpers.swift`
+                            // L65 (`tblIngredient.reloadRows(...)`) and
+                            // L412 (`tblIngredient.reloadData()` after
+                            // plus/minus). UIKit reloads the whole cell
+                            // on every change, which always rewrites
+                            // `cell.ingredientQuantityTextField.text =
+                            // displayData.quantityText` — even while
+                            // the field is the first responder.
+                            //
+                            // Use the `newValue` from the change
+                            // parameter directly instead of going
+                            // through `displayText`. `displayText`
+                            // reads `self.ingredient.quantity`, which
+                            // can briefly lag behind the actual change
+                            // because SwiftUI sometimes invokes the
+                            // `.onChange` closure before the captured
+                            // `self` snapshot is replaced. That stale
+                            // read was leaving the field showing the
+                            // PREVIOUS value (e.g. type 22 + Done →
+                            // field still showed 30) until the user
+                            // re-tapped the field. Reformatting from
+                            // `newValue` removes the dependency on the
+                            // stale snapshot.
+                            .onChange(of: ingredient.quantity) { newValue in
+                                let q = newValue ?? 0
+                                switch unit {
+                                case .ml: editingText = String(format: "%.0f", q)
+                                case .oz: editingText = String(format: "%.2f", q / 29.5735)
+                                }
                             }
-                            .onChange(of: unit) { _ in
-                                if !isFocused { editingText = displayText }
+                            .onChange(of: unit) { newUnit in
+                                let q = ingredient.quantity ?? 0
+                                switch newUnit {
+                                case .ml: editingText = String(format: "%.0f", q)
+                                case .oz: editingText = String(format: "%.2f", q / 29.5735)
+                                }
                             }
                         Text(unitLabel)
                             // Storyboard `Q8p-KS-sM8` — system 11pt,
@@ -2212,7 +2325,20 @@ struct RecipeIngredientRow: View {
         let ml: Double = (unit == .oz) ? v * 29.5735 : v
         let clamped = max(5, min(750, ml))
         onEdit(clamped)
-        editingText = displayText
+        // Show the clamped value RIGHT AWAY in the field. Previously
+        // this line set `editingText = displayText`, which reads from
+        // `ingredient.quantity` — but at this point the parent's
+        // `onEdit(...)` mutation has only just been scheduled, so
+        // `ingredient` still holds the OLD value and the field would
+        // briefly snap back to the previous quantity (e.g. type 30,
+        // press Done → field shows 20). Re-formatting `clamped`
+        // directly bypasses the stale snapshot and matches UIKit's
+        // `EditViewModel.validateAndUpdateQuantity(...)` which writes
+        // the validated value back to the cell synchronously.
+        switch unit {
+        case .ml: editingText = String(format: "%.0f", clamped)
+        case .oz: editingText = String(format: "%.2f", clamped / 29.5735)
+        }
     }
 }
 
