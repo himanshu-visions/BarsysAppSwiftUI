@@ -223,7 +223,6 @@ struct CountryPickerView: View {
             .navigationTitle("Country")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .preferredColorScheme(.light)
         .onAppear { countries = CountryLoader.loadAll() }
     }
 }
