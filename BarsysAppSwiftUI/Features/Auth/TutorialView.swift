@@ -137,7 +137,7 @@ struct TutorialView: View {
                             .resizable()
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 45, height: 45)
                             .foregroundStyle(Theme.Color.softWhiteText)
                     }
                     .buttonStyle(BounceButtonStyle())

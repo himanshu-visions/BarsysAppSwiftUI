@@ -46,6 +46,18 @@ final class SessionExpirationHandler {
     /// logout flow finishes, OR when the user returns to Login manually.
     private var isHandlingExpiration = false
 
+    /// Suppression scope counter — when > 0, `handleExpiration()` is a
+    /// no-op. Used to wrap the post-login data chain
+    /// (`onLoginSuccessAsync`: profile fetch + recipes + mixlists +
+    /// favourites) so a transient 401 from any of those endpoints
+    /// can't fire the "session expired" alert moments after the user
+    /// just authenticated. UIKit didn't see this race because it
+    /// triggered the post-login fetches from inside
+    /// `SplashViewController` AFTER its own delay, and dropped 401s
+    /// during the splash hold; mirroring that here with an explicit
+    /// scoped suppression is the simplest 1:1.
+    private var suppressionDepth = 0
+
     /// Show-alert hook. Installed once from `RootView.task`. The closure
     /// receives a completion callback which must be invoked on "OK" tap
     /// so the handler can then run the logout flow.
@@ -72,6 +84,11 @@ final class SessionExpirationHandler {
     /// is observed. De-dups concurrent calls and fires the alert. The
     /// logout runs only after the user taps OK.
     func handleExpiration() {
+        // Inside a `suppressExpirationDuring` scope (e.g. the post-login
+        // data fetch) — drop the 401 silently. Without this guard a
+        // stale recipes/mixlists/profile 401 fired moments after a
+        // successful OTP verify would log the user back out.
+        guard suppressionDepth == 0 else { return }
         guard !isHandlingExpiration else { return }
         isHandlingExpiration = true
 
@@ -97,6 +114,17 @@ final class SessionExpirationHandler {
     /// a new alert without needing a full app restart.
     func reset() {
         isHandlingExpiration = false
+    }
+
+    /// Run `block` with the session-expired alert suppressed. Designed
+    /// for the post-login data chain so a stale-token 401 on
+    /// `/my/profile`, `/cache/recipes`, `/cache/mixlists`, etc. can't
+    /// log the user back out moments after a successful OTP verify.
+    /// Reentrant via `suppressionDepth` so nested wrappers stay safe.
+    func suppressExpirationDuring<T>(_ block: () async -> T) async -> T {
+        suppressionDepth += 1
+        defer { suppressionDepth -= 1 }
+        return await block()
     }
 }
 

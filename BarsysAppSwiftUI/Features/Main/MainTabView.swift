@@ -841,8 +841,21 @@ struct MainTabView: View {
             //   → API: getMixlist + getCacheRecipes + getFavouritesData
             //   → DB: insertToDatabase
             // This ensures recipes and mixlists are fresh after device connects.
+            //
+            // Wrapped in `suppressExpirationDuring` for the same reason
+            // `onLoginSuccessAsync` is wrapped: a transient 401 /
+            // "expired session token" on `/cache/recipes`,
+            // `/cache/mixlists`, or favourites — which can happen if
+            // the BLE connect fires concurrently with another
+            // in-flight authenticated request — must NOT log the user
+            // out. UIKit's `MixlistsUpdateClass.updateMixlists(trigger:
+            // .connection)` ran on a background queue and silently
+            // dropped 401s during the connection burst; mirroring that
+            // behaviour here matches UIKit byte-for-byte.
             Task {
-                await env.catalog.preload()
+                await SessionExpirationHandler.shared.suppressExpirationDuring {
+                    await env.catalog.preload()
+                }
             }
         }
 

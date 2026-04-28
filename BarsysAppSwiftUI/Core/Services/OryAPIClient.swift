@@ -427,7 +427,17 @@ final class OryAPIClient: APIClient {
                 UserDefaultsClass.storeProfileImage(picUrl)
             }
             if let country = profile.country, !country.isEmpty {
-                UserDefaultsClass.storeCountryName(country)
+                // Don't stomp the user's login-time picker selection.
+                // UIKit `MyProfileViewController+ProfileSetup` only
+                // writes the server country when no local one is
+                // stored, so an account with a stale "USA" default on
+                // the backend doesn't override an India user's flag
+                // every time the profile fetches. Preserve that
+                // semantics: write the server value only when the
+                // local slot is empty.
+                if (UserDefaultsClass.getCountryName() ?? "").isEmpty {
+                    UserDefaultsClass.storeCountryName(country)
+                }
             }
 
             // Update observable store so UI refreshes

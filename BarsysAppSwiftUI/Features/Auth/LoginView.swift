@@ -220,6 +220,21 @@ final class LoginViewModel: ObservableObject {
 
         do {
             try await auth.verifyOtp(phone: formattedPhone, code: otp)
+            // Persist the country picked at login alongside the phone
+            // — 1:1 with UIKit `verifyOTPForLoginOry` which writes
+            // BOTH `storePhone(...)` AND `storeCountryName(...)` so
+            // `MyProfileViewController+ProfileSetup.refreshProfile()`
+            // can resolve the flag/dial-code without falling back to
+            // `defaultCountrySelection` (USA). The SwiftUI
+            // `OryAPIClient.verifyOtp` writes phone but not country
+            // (the picker selection lives on the View only), so the
+            // fix lands here in the LoginViewModel success path. If
+            // the server's `/my/profile` response later returns a
+            // non-empty country, `fetchAndSyncProfile` will overwrite
+            // this with the server value — but only when the server
+            // actually has one set (it won't clobber India with USA
+            // when the account has no country recorded).
+            UserDefaultsClass.storeCountryName(selectedCountry.name)
             analytics.track(TrackEventName.loginSuccessFul.rawValue,
                             properties: ["phone_number": formattedPhone])
             // 1:1 with UIKit `AuthCoordinator.swift:60`.

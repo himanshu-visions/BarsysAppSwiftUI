@@ -531,6 +531,14 @@ struct DevicePairedView: View {
     /// inline play card. Mirrors UIKit's `present(tutorialVc, animated: true)`.
     @State private var showTutorialPlayer = false
 
+    /// Inline AVPlayer that powers the Explore tutorial card preview —
+    /// 1:1 with UIKit `playerView?.setupPlayer(with: videoURL, on:
+    /// containerView, fillMode: .resizeAspectFill, shouldRepeat: true)`
+    /// in `setupTutorialVideoIfNeeded()`. Muted + looping. The play
+    /// icon overlay still routes the tap to the modal `TutorialView`
+    /// for the full sound/controls experience.
+    @StateObject private var inlineTutorialPlayer = PlayerHolder()
+
     // MARK: - Computed state
 
     /// Whether any BLE device is currently connected.
@@ -765,16 +773,34 @@ struct DevicePairedView: View {
                             showTutorialPlayer = true
                         } label: {
                             ZStack {
+                                // 1:1 with UIKit `viewTutorial` — instead of
+                                // a static black rectangle, render the same
+                                // device-specific instructional video the
+                                // modal uses, muted + looping. UIKit wired
+                                // its inline `playerView?.setupPlayer(with:
+                                // videoURL, ...)` here (see the
+                                // `setupTutorialVideoIfNeeded()` snippet in
+                                // the @State doc block above). Without an
+                                // inline player the card renders as a flat
+                                // black thumbnail which the user reads as
+                                // "tutorials always show a black screen".
                                 RoundedRectangle(cornerRadius: 20)
                                     .fill(Color.black)
-                                // 60pt visual scale of the 24×24 play_thumb
-                                // asset, white tint to match UIKit's button
-                                // tintColor (white=1, alpha=1).
+                                if let player = inlineTutorialPlayer.player {
+                                    VideoPlayerView(player: player,
+                                                    fillMode: .resizeAspectFill)
+                                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                                        .allowsHitTesting(false)
+                                }
+                                // 45pt visual scale of the 24×24 play_thumb
+                                // asset (was 60pt). White tint matches UIKit
+                                // `tintColor white="1" alpha="1"` on the
+                                // play button.
                                 Image("play_thumb")
                                     .resizable()
                                     .renderingMode(.template)
                                     .aspectRatio(contentMode: .fit)
-                                    .frame(width: 60, height: 60)
+                                    .frame(width: 45, height: 45)
                                     .foregroundStyle(Theme.Color.softWhiteText)
                             }
                             .frame(height: 194)
@@ -1110,6 +1136,24 @@ struct DevicePairedView: View {
         // inside `decideTutorialOnAppear()`.
         .onAppear {
             decideTutorialOnAppear()
+            // Boot the inline tutorial preview if the card is showing —
+            // 1:1 with UIKit `setupTutorialVideoIfNeeded()`. Muted +
+            // looping so the card animates without audio while the
+            // user reads the surrounding labels. The modal handles
+            // sound + full controls when the card is tapped.
+            if isConnected, !hideTutorialThisSession,
+               let url = tutorialVideoURL ?? tutorialVideoURLForCurrentDevice {
+                inlineTutorialPlayer.load(url: url, repeatPlayback: true)
+                inlineTutorialPlayer.player?.isMuted = true
+                inlineTutorialPlayer.play()
+            }
+        }
+        .onDisappear {
+            // Pause inline preview when the screen leaves view so the
+            // AVPlayer doesn't keep buffering / decoding while the user
+            // is on a different tab. Matches UIKit `viewWillDisappear`
+            // → `playerView?.pause()`.
+            inlineTutorialPlayer.pause()
         }
         // Re-decide if the user reconnects to a different device kind
         // mid-session (e.g. switches from Coaster → Barsys 360). Each
@@ -1120,6 +1164,16 @@ struct DevicePairedView: View {
                 // Reset the guard so the new device kind re-evaluates.
                 tutorialDecisionMade = false
                 decideTutorialOnAppear()
+                // Reload the inline preview against the new device's
+                // URL once the tutorial card decision has resolved.
+                if !hideTutorialThisSession,
+                   let url = tutorialVideoURL ?? tutorialVideoURLForCurrentDevice {
+                    inlineTutorialPlayer.load(url: url, repeatPlayback: true)
+                    inlineTutorialPlayer.player?.isMuted = true
+                    inlineTutorialPlayer.play()
+                }
+            } else {
+                inlineTutorialPlayer.pause()
             }
         }
     }

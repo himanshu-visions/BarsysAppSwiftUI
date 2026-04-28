@@ -111,12 +111,26 @@ final class AppEnvironment: ObservableObject {
     /// Awaitable version — waits for data to load before returning.
     /// Called from login/signup flows so data is ready before navigation.
     func onLoginSuccessAsync() async {
-        // Step 1: Fetch full profile (ports handleProfileFetchAndPostLogin → getProfile)
-        if let oryAPI = api as? OryAPIClient {
-            await oryAPI.fetchAndSyncProfile()
+        // Wrap the entire post-login fetch chain in the
+        // session-expired suppression scope. The Ory token persisted
+        // by `verifyOtp` is fresh, but the downstream services
+        // (`/my/profile`, `cache/recipes`, `cache/mixlists`, favourites)
+        // can transiently respond with 401 / "expired session token"
+        // immediately after sign-in — propagation lag in the Ory
+        // session, server caches, etc. Without this guard the very
+        // first stale 401 trips `SessionExpirationHandler` and shows
+        // the "Your session has expired" alert moments after the user
+        // just logged in. UIKit never hit this because its splash
+        // controller silently absorbed early 401s while the splash
+        // GIF held; we mirror that with an explicit scoped suppress.
+        await SessionExpirationHandler.shared.suppressExpirationDuring {
+            // Step 1: Fetch full profile (ports handleProfileFetchAndPostLogin → getProfile)
+            if let oryAPI = api as? OryAPIClient {
+                await oryAPI.fetchAndSyncProfile()
+            }
+            // Steps 2-6: Fetch mixlists + recipes + favourites + insert to storage
+            await catalog.preload()
         }
-        // Steps 2-6: Fetch mixlists + recipes + favourites + insert to storage
-        await catalog.preload()
     }
 
     // MARK: - Factory
