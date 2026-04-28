@@ -382,8 +382,18 @@ struct ControlCenterTile: View {
             // consistent with the rest of the app's adapted cards.
             .background(Theme.Color.surface)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            // Shadow: UIKit lightGray, 0.15, offset(0,3), radius 10
-            .shadow(color: Color.gray.opacity(0.15), radius: 10, x: 0, y: 3)
+            // Shadow: UIKit lightGray, 0.15, offset(0,3), radius 10.
+            // Light mode keeps the EXACT historical values (bit-identical
+            // pixels). Dark mode drops opacity to 0.05 + radius to 4 so
+            // the tile reads as a subtly raised card without the heavy
+            // halo that the 0.15/10 light-mode shadow produces against
+            // the dark `primaryBackgroundColor` canvas.
+            .shadow(
+                color: Color.gray.opacity(colorScheme == .dark ? 0.05 : 0.15),
+                radius: colorScheme == .dark ? 4 : 10,
+                x: 0,
+                y: 3
+            )
         }
         .buttonStyle(.plain)
         .padding(8) // 8pt padding from outer cell to inner card
@@ -3174,6 +3184,7 @@ struct StationCleaningFlowTableRow: View {
 /// suppresses `selectedBackgroundView`.  Text colour + font weight
 /// are the sole selection affordance.
 private struct StationCleaningRowBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         if #available(iOS 26.0, *) {
             // `addGlassEffect(cornerRadius: xlarge=20, alpha: 1.0)` —
@@ -3181,8 +3192,17 @@ private struct StationCleaningRowBackground: View {
             // defaults to false and the UIKit call site relies on the
             // default). `.regularMaterial` is the documented SwiftUI
             // bridge.
+            //
+            // Dark mode reduces the blur intensity by routing through
+            // `.ultraThinMaterial` so the row reads as a lightly tinted
+            // glass instead of a heavy blurred slab — light mode keeps
+            // `.regularMaterial` so pixels stay bit-identical to the
+            // existing UIKit-parity rendering.
+            let material: Material = colorScheme == .dark
+                ? .ultraThinMaterial
+                : .regularMaterial
             RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
-                .fill(.regularMaterial)
+                .fill(material)
         } else {
             // Pre-iOS 26: 24pt corner, 1pt solid #F2F2F2 border, and a
             // diagonal (top-leading → bottom-trailing) gradient layer

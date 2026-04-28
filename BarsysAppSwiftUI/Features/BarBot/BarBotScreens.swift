@@ -2057,6 +2057,7 @@ struct ChatInputBar: View {
     let ble: BLEService
     @Binding var showAttachmentOptions: Bool
     @State private var textHeight: CGFloat = 44
+    @Environment(\.colorScheme) private var colorScheme
 
     private var canSend: Bool {
         (!vm.draft.trimmingCharacters(in: .whitespaces).isEmpty || vm.selectedImage != nil)
@@ -2173,19 +2174,31 @@ struct ChatInputBar: View {
                 hideKeyboard()
                 vm.send(ble: ble)
             } label: {
-                Image("sendImage")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 24, height: 24)
-                    // `appBlackColor` is the canonical adaptive
-                    // "primary text/icon" token: #4C4D4F (near-black)
-                    // in light mode, #E5E5EA (near-white) in dark.
-                    // Matches the UIKit reference (black-tinted send
-                    // icon) in light AND keeps the icon clearly
-                    // visible against the dark surface in dark mode.
-                    .foregroundStyle(canSend ? Color("appBlackColor") : Color("lightGrayColor"))
-                    .frame(width: 58, height: 58)
-                    .background(Theme.Color.surface, in: RoundedRectangle(cornerRadius: 8))
+                // Light mode keeps the original PNG (no template) so the
+                // send icon stays bit-identical to the existing UIKit-
+                // parity rendering. Dark mode swaps to a template-rendered
+                // copy tinted with `softWhiteText` (#EBEBEB) so the icon
+                // reads as a proper white on the elevated dark surface
+                // (the original PNG was a near-black chevron and sank
+                // into the dark tile).
+                Group {
+                    if colorScheme == .dark {
+                        Image("sendImage")
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .foregroundStyle(canSend
+                                             ? Theme.Color.softWhiteText
+                                             : Color("lightGrayColor"))
+                    } else {
+                        Image("sendImage")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    }
+                }
+                .frame(width: 24, height: 24)
+                .frame(width: 58, height: 58)
+                .background(Theme.Color.surface, in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(BounceButtonStyle())
             .disabled(!canSend)
