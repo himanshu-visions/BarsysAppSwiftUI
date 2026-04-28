@@ -3012,6 +3012,11 @@ struct EditRecipeView: View {
                     .frame(width: 12, height: 12)
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(width: 24, height: 24)
+                    // The inner 12pt icon left an empty 6pt margin
+                    // inside the 24pt tap-target. `contentShape` makes
+                    // the whole 24×24 frame hit-testable so the close
+                    // button works anywhere inside the visible area.
+                    .contentShape(Rectangle())
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Close editor")

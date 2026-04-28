@@ -1208,6 +1208,11 @@ private struct BarsysPopupCard: View {
                     HapticService.light()
                     onClose()
                 } label: {
+                    // Stroke-only `Circle()` has an empty interior —
+                    // taps inside the empty disc fell through. Force
+                    // the entire 30×30 frame to be hit-testable so
+                    // the close button works anywhere inside the
+                    // visual circle.
                     Image(systemName: "xmark")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color("appBlackColor"))
@@ -1218,6 +1223,7 @@ private struct BarsysPopupCard: View {
                                 lineWidth: 1
                             )
                         )
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 8)

@@ -643,6 +643,12 @@ struct BarsysAlertOverlay: View {
                             HapticService.light()
                             onDismiss()
                         } label: {
+                            // Stroke-only `Circle()` has an empty
+                            // interior — taps inside the empty disc
+                            // were falling through. `contentShape`
+                            // forces the entire 30×30 frame to be
+                            // hit-testable so the close button works
+                            // anywhere inside the visual circle.
                             Image(systemName: "xmark")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(Color("appBlackColor"))
@@ -653,6 +659,7 @@ struct BarsysAlertOverlay: View {
                                         lineWidth: 1
                                     )
                                 )
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Close")
