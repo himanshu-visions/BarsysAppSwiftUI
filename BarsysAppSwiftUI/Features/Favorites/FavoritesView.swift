@@ -117,7 +117,6 @@ struct FavoritesView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var selectedTab: FavouritesTab = .barsysRecipes
-    @State private var query: String = ""
     @State private var showMoreMenuFor: RecipeID? = nil
     @State private var didTrackView = false
     @State private var recipeToEdit: Recipe? = nil
@@ -196,12 +195,7 @@ struct FavoritesView: View {
                     .sorted { ($0.favCreatedAt ?? 0) > ($1.favCreatedAt ?? 0) }
             }
         }
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return pool }
-        return pool.filter {
-            ($0.name ?? "").lowercased().contains(q)
-                || ($0.ingredientNames ?? "").lowercased().contains(q)
-        }
+        return pool
     }
 
     // Toolbar device helpers.
@@ -219,7 +213,7 @@ struct FavoritesView: View {
     }
 
     var body: some View {
-        // tabsBar + searchBar + recipe rows are now hosted INSIDE the
+        // tabsBar + recipe rows are now hosted INSIDE the
         // outer ScrollView — same structural pattern that fixed the
         // right-pill chrome on HomeView / Cocktail Kits / Pair Your
         // Device / Preferences. iOS 26's nav-bar Liquid Glass auto-wrap
@@ -239,7 +233,6 @@ struct FavoritesView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
                 tabsBar
-                searchBar
                 content
             }
         }
@@ -487,26 +480,6 @@ struct FavoritesView: View {
         .padding(.horizontal, 24)           // storyboard outer HStack x=24
         .padding(.top, 10)
         .background(Color("primaryBackgroundColor"))
-    }
-
-    // MARK: - Search bar (1pt barbotBorderColor stroke, 12pt corners)
-
-    private var searchBar: some View {
-        // Shared `BarsysSearchBar` — 1:1 port of the UIKit
-        // `viewSearch` + `txtSearch` + `searchAndCloseButton` widget
-        // used by FavouritesRecipesAndDrinksViewController (see the
-        // Mixlist.storyboard Favourites scene + the `filterCountries`
-        // implementation where the button's image swaps between
-        // `.search` and `.crossIcon` based on whether the field has
-        // content). Previous inline implementation used SF Symbols
-        // instead of the UIKit assets, a 16pt placeholder font
-        // instead of 14pt, and a white container instead of the UIKit
-        // transparent one.
-        BarsysSearchBar(query: $query, placeholder: "Search favourites")
-            .padding(.horizontal, 24)
-            .padding(.top, 15)
-            .accessibilityLabel("Search favourites")
-            .accessibilityHint("Type a recipe or ingredient name")
     }
 
     // MARK: - List / empty state
