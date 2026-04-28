@@ -1463,6 +1463,11 @@ final class BLEService: NSObject, ObservableObject {
         connectedPeripheral = nil
         writeCharacteristic = nil
         readCharacteristic = nil
+        // Clear the staging slot so the next connect attempt — possibly
+        // for a DIFFERENT device kind (e.g. user switching from Barsys 360
+        // to Coaster) — can't inherit this disconnected device's name and
+        // mis-classify the new peripheral as the old kind.
+        pendingDeviceName = ""
 
         // Fire the onDeviceDisconnected callback synchronously so
         // MainTabView's handler queues the disconnect toast + alert
@@ -1719,9 +1724,26 @@ extension BLEService: CBCentralManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
 
-            let deviceName = self.pendingDeviceName
-                .replacingOccurrences(of: "\r\n", with: "")
-                .trimmingCharacters(in: .whitespaces)
+            // Source the device name from the peripheral that just
+            // CONNECTED — `peripheral.name` is the authoritative current
+            // BLE name, fed straight from CoreBluetooth. `pendingDeviceName`
+            // is the user-intent staging slot set during the connect call
+            // and is NOT cleared between attempts; if a previous Barsys 360
+            // pairing left "Barsys_360_…" sitting in `pendingDeviceName`,
+            // a subsequent Coaster connection would inherit that stale
+            // name, mis-classify the device as `.barsys360`, and then route
+            // the tutorial / device-icon / other kind-based UI to the wrong
+            // device. UIKit dodges this because it overwrites `customName`
+            // on the peripheral itself — same idea here, just sourced
+            // from `peripheral.name` directly.
+            let resolvedName: String = {
+                let live = (peripheral.name ?? "").trimmingCharacters(in: .whitespaces)
+                if !live.isEmpty { return live }
+                return self.pendingDeviceName
+                    .replacingOccurrences(of: "\r\n", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+            }()
+            let deviceName = resolvedName
             let kind = self.deviceKind(fromName: deviceName) ?? .coaster
 
             let device = BarsysDevice(
@@ -1736,6 +1758,10 @@ extension BLEService: CBCentralManagerDelegate {
             self.connected.append(device)
             self.state = .connected
             self.connectedPeripheral = peripheral
+            // Reset the staging slot so the NEXT connection attempt
+            // doesn't inherit this name. Mirrors UIKit
+            // `BleManager+Commands.swift:160` `connectedPeripheral?.customName = ""`.
+            self.pendingDeviceName = ""
 
             // CRITICAL — ports UIKit L184-185:
             //   peripheral.delegate = self
@@ -1827,6 +1853,10 @@ extension BLEService: CBCentralManagerDelegate {
             // (ports UIKit L257-258: writeCharacteristic=nil / readCharacteristic=nil).
             self.writeCharacteristic = nil
             self.readCharacteristic = nil
+            // Reset the staging name so the next connect attempt cannot
+            // inherit this disconnected device's name and mis-classify
+            // a different device kind (e.g. Coaster) as this kind (360).
+            self.pendingDeviceName = ""
 
             // 1:1 with UIKit `BleManager+Commands.swift` L204, L210
             // — distinguish "user manually disconnected" (fire

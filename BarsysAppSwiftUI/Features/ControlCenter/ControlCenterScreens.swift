@@ -35,8 +35,11 @@ struct ControlCenterView: View {
     /// 1:1 with UIKit `ControlCenterViewController` L191-202 — Tutorial
     /// menu presents `TutorialViewController` modally (`overFullScreen`)
     /// with a device-specific video URL.
+    /// The URL itself isn't stored in @State — it's resolved on-demand
+    /// inside the cover's content closure via `resolveTutorialVideoURL()`
+    /// to dodge the two-state-update race that caused the wrong video
+    /// to play right after a fresh pairing.
     @State private var showTutorialPlayer = false
-    @State private var tutorialVideoURL: URL? = nil
 
     // 2 columns, 18pt spacing (UIKit overrides XIB's 10pt to 18pt)
     private let columns = [GridItem(.flexible(), spacing: 18),
@@ -180,9 +183,19 @@ struct ControlCenterView: View {
         // video, modal full-screen, dismisses via the X button or the
         // close callback. The TutorialView's `onDismiss` closure
         // routes the close back through this `showTutorialPlayer` flag.
+        //
+        // The video URL is resolved INSIDE the content closure off the
+        // current BLE state — not from the cached `tutorialVideoURL`
+        // @State. SwiftUI's two-state update (URL + presentation flag)
+        // is not guaranteed to apply atomically when the user goes
+        // straight from a fresh Coaster pairing into the Control Center
+        // and taps Tutorial: the cover can render before the URL state
+        // commits, and the previous tap's URL gets used. Resolving on
+        // present-time guarantees the cover always sees the latest
+        // connected-device kind.
         .fullScreenCover(isPresented: $showTutorialPlayer) {
             TutorialView(
-                videoURL: tutorialVideoURL,
+                videoURL: resolveTutorialVideoURL(),
                 onDismiss: { showTutorialPlayer = false }
             )
         }
@@ -268,24 +281,34 @@ struct ControlCenterView: View {
             // shows the tutorial card the first time a user pairs each
             // device kind, then hides it on subsequent visits.
             //
-            // Control Center's Tutorial menu is a USER-INITIATED action
-            // (tap the menu item) and ALWAYS opens the modal — the only
-            // logic here is picking which device-specific video URL to
-            // play:
-            //   • Coaster or Shaker connected → barsysCoasterUrl
-            //   • Barsys 360 connected         → barsys360VideoUrl
-            //   • Otherwise (defensive)        → barsys360VideoUrl
-            //   (matches `tutorialVc.videoURL` initial value in
-            //    `TutorialViewController.swift` L19).
-            let url: URL?
-            if ble.isCoasterConnected() || ble.isBarsysShakerConnected() {
-                url = URL(string: VideoURLConstants.barsysCoasterUrl)
-            } else if ble.isBarsys360Connected() {
-                url = URL(string: VideoURLConstants.barsys360VideoUrl)
-            } else {
-                url = URL(string: VideoURLConstants.barsys360VideoUrl)
-            }
-            tutorialVideoURL = url
+            // Per-device URL routing (1:1 with UIKit
+            // `DevicePairedViewModel.tutorialVideoURLAndMarkShown()`
+            // L162-177 — same Shaker → Coaster → 360 priority):
+            //   • Shaker  → barsysShakerUrl
+            //   • Coaster → barsysCoasterUrl
+            //   • 360     → barsys360VideoUrl
+            //   • Otherwise (defensive) → barsys360VideoUrl
+            //
+            // UIKit's `ControlCenterViewController` L194-198 lumps the
+            // Coaster + Shaker branch into `barsysCoasterUrl`, but the
+            // dedicated `barsysShakerUrl` constant exists and is what
+            // every other tutorial entry point in the app uses. Routing
+            // each device kind to its own video keeps the Control Center
+            // menu consistent with the Explore tutorial card.
+            //
+            // The Shaker / Coaster checks run BEFORE the 360 check so a
+            // stale `barsys_360` entry left in `BLEService.connected`
+            // (the SwiftUI port tracks an ARRAY of connected devices,
+            // unlike UIKit which only ever has one peripheral) cannot
+            // shadow the just-connected Coaster — that was the
+            // user-reported "Coaster connected, 360 instruction video
+            // plays" bug.
+            // Don't pre-resolve the URL here — `resolveTutorialVideoURL()`
+            // runs inside the `.fullScreenCover` content closure on the
+            // live BLE state at present-time. Setting it on the @State
+            // before flipping the cover flag introduces a two-state-
+            // update race that lets the cover render with a stale URL
+            // when the user opens Tutorial right after pairing.
             env.analytics.track(TrackEventName.controlCenterTutorialsViewed.rawValue)
             showTutorialPlayer = true
         case "quick spin":
@@ -293,6 +316,31 @@ struct ControlCenterView: View {
         default:
             break
         }
+    }
+
+    /// Resolves the device-specific tutorial video URL based on the
+    /// CURRENT live BLE state. Called inside the `.fullScreenCover`
+    /// content closure so the URL is always picked at present-time —
+    /// this fixes the "Coaster connected, 360 video plays" bug that
+    /// happened when the user went straight from a fresh pairing into
+    /// the Control Center and tapped Tutorial before SwiftUI's two-state
+    /// update (URL @State + cover flag @State) had committed atomically.
+    ///
+    /// Order: Shaker → Coaster → 360. Per-device URL routing matches
+    /// `DevicePairedViewModel.tutorialVideoURLAndMarkShown()` (UIKit
+    /// L162-177). UIKit `ControlCenterViewController.swift:194` lumps
+    /// Shaker + Coaster together → `coasterUrl`; we route each kind to
+    /// its own dedicated URL constant so the Shaker plays the Shaker
+    /// video instead of the Coaster one.
+    private func resolveTutorialVideoURL() -> URL? {
+        if ble.isBarsysShakerConnected() {
+            return URL(string: VideoURLConstants.barsysShakerUrl)
+        } else if ble.isCoasterConnected() {
+            return URL(string: VideoURLConstants.barsysCoasterUrl)
+        } else if ble.isBarsys360Connected() {
+            return URL(string: VideoURLConstants.barsys360VideoUrl)
+        }
+        return URL(string: VideoURLConstants.barsys360VideoUrl)
     }
 }
 
@@ -538,13 +586,23 @@ struct DevicePairedView: View {
     /// first-time flag has already been consumed by `decideTutorialOnAppear`
     /// (the card stays visible during the same session even though the
     /// flag now reads true).
+    ///
+    /// Order: **Shaker → Coaster → 360** — 1:1 with UIKit
+    /// `DevicePairedViewModel.tutorialVideoURLAndMarkShown()` (L162-177).
+    /// UIKit only ever has ONE peripheral connected at a time, so any
+    /// order works there. SwiftUI's `BLEService.connected` is an array
+    /// (multi-device support), so a stale or simultaneous `barsys_360`
+    /// entry would shadow the just-connected Coaster if the 360 branch
+    /// ran first — playing the 360 instruction video on the Coaster
+    /// tutorial card. Checking the more specific (Shaker, Coaster)
+    /// devices BEFORE the 360 fallback matches UIKit semantics.
     private var tutorialVideoURLForCurrentDevice: URL? {
-        if ble.isBarsys360Connected() {
-            return URL(string: VideoURLConstants.barsys360VideoUrl)
+        if ble.isBarsysShakerConnected() {
+            return URL(string: VideoURLConstants.barsysShakerUrl)
         } else if ble.isCoasterConnected() {
             return URL(string: VideoURLConstants.barsysCoasterUrl)
-        } else if ble.isBarsysShakerConnected() {
-            return URL(string: VideoURLConstants.barsysShakerUrl)
+        } else if ble.isBarsys360Connected() {
+            return URL(string: VideoURLConstants.barsys360VideoUrl)
         }
         return nil
     }
