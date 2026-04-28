@@ -855,13 +855,24 @@ struct FavoritesView: View {
                             if let total = model.total { model.total = total - 1 }
                             myDrinksResponseModel = model
                         }
+                        // Persist the trimmed list to disk now that local
+                        // state is correct — survives a cold launch even
+                        // if the user closes the app before any background
+                        // re-sync runs.
+                        MyDrinksCache.save(myDrinksLoaded)
 
-                        // 4. Success alert — on dismiss → full reset + re-fetch
-                        //    (1:1 UIKit onComplete: resetMyDrinksForRefresh +
-                        //    getMyDrinksApi + reloadData)
-                        env.alerts.show(message: Constants.recipeDeleteMessage) {
-                            resetMyDrinksForRefresh()
-                        }
+                        // 4. Success alert — DON'T re-fetch on dismiss.
+                        // UIKit's `resetMyDrinksForRefresh + getMyDrinksApi
+                        // + reloadData` chain was an imperative-table-view
+                        // workaround; in SwiftUI the @State arrays already
+                        // drive the UI and were updated atomically in step
+                        // 3, so a full reset (`myDrinksLoaded = []` →
+                        // refetch) just causes a visible empty-state flash
+                        // and a re-render fluctuation. Local state is
+                        // authoritative; the server already accepted the
+                        // delete in step 1, so a re-fetch can only return
+                        // the same trimmed list.
+                        env.alerts.show(message: Constants.recipeDeleteMessage)
                     } catch {
                         env.alerts.show(message: Constants.recipeSaveError)
                     }
@@ -1008,6 +1019,11 @@ struct BarsysRecipeRow: View {
     let onMore: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
+    /// Drives dark-mode template-tinting of the Edit/Trash glyphs in
+    /// the more-menu popup so they stay legible against the dark
+    /// `systemBackground` / `.ultraThinMaterial` popup surface.
+    /// Light mode keeps the original PNG (bit-identical UIKit-parity).
+    @Environment(\.colorScheme) private var colorScheme
 
     private var optimizedImageURL: URL? {
         // Match UIKit `BarsysRecipeTableViewCell` exactly:
@@ -1211,39 +1227,92 @@ struct BarsysRecipeRow: View {
             .padding(.bottom, 12)
     }
 
-    // 92×76 popup with Edit (92×38) + Delete (92×38), 12pt system font,
-    // appBlackColor titles, glass card with 8pt corner radius.
+    // 92×76 popup with Edit (92×38) + Delete (92×38).
+    //
+    // 1:1 with UIKit `BarsysRecipeTableViewCell.xib` `moreView` (id `3gv-w4-LyK`):
+    //   • Outer view  : 92×76, `roundCorners = 8` (BarsysCornerRadius.small).
+    //   • Vertical stackView (`PCD-Gr-eJU`): fillEqually → two 92×38 cells.
+    //   • Edit cell `LMv-Za-JFL`:
+    //       - title "Edit", image "edit", font system 12pt, title color
+    //         `appBlackColor`.
+    //       - contentHorizontalAlignment: leading.
+    //       - contentEdgeInsets: minX=16, minY=8, maxX=0, maxY=0 →
+    //         16pt leading + 8pt top inset (top button gets extra top
+    //         breathing room).
+    //       - titleEdgeInsets: minX=8 → 8pt gap between image and title.
+    //   • Delete cell `DC3-xs-NMc`:
+    //       - title "Delete", image "trash", font/colour identical.
+    //       - contentEdgeInsets: minX=16, minY=0, maxX=0, maxY=8 →
+    //         16pt leading + 8pt bottom inset (bottom button gets extra
+    //         bottom breathing room).
+    //
+    // The previous SwiftUI port centered the HStack inside each 92×38
+    // cell with a 6pt spacing — that visually pushed the Edit/Delete
+    // labels toward the middle of the popup and used the wrong gap
+    // between icon and title. The corrected version uses leading
+    // alignment + 16pt leading inset + asymmetric top/bottom 8pt insets
+    // (Edit pinned to top, Delete pinned to bottom) so the two rows
+    // sit at the corners of the popup like the storyboard, with the
+    // 8pt icon→title gap matching `titleEdgeInsets`.
     private var morePopup: some View {
         VStack(spacing: 0) {
             Button(action: onEdit) {
-                HStack(spacing: 6) {
-                    Image("edit").resizable().aspectRatio(contentMode: .fit)
-                        .frame(width: 16, height: 16)
+                HStack(spacing: 8) {
+                    morePopupGlyph(name: "edit")
                     Text("Edit")
                         .font(.system(size: 12))
                         .foregroundStyle(Color("appBlackColor"))
+                    Spacer(minLength: 0)
                 }
-                .frame(width: 92, height: 38)
+                .padding(EdgeInsets(top: 8, leading: 16, bottom: 0, trailing: 0))
+                .frame(width: 92, height: 38, alignment: .topLeading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Edit recipe")
 
             Button(action: onDelete) {
-                HStack(spacing: 6) {
-                    Image("trash").resizable().aspectRatio(contentMode: .fit)
-                        .frame(width: 16, height: 16)
+                HStack(spacing: 8) {
+                    morePopupGlyph(name: "trash")
                     Text("Delete")
                         .font(.system(size: 12))
                         .foregroundStyle(Color("appBlackColor"))
+                    Spacer(minLength: 0)
                 }
-                .frame(width: 92, height: 38)
+                .padding(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 0))
+                .frame(width: 92, height: 38, alignment: .bottomLeading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Delete recipe")
         }
+        .frame(width: 92, height: 76)
         .background(morePopupBackground)
         .overlay(morePopupBorder)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+    }
+
+    /// 16×16 glyph for the Edit / Trash rows in the more-menu popup.
+    /// Light mode keeps the original PNG (bit-identical UIKit-parity).
+    /// Dark mode template-tints with `appBlackColor` (which resolves to
+    /// near-white #E5E5EA in dark) so the dark glyph isn't invisible
+    /// against the dark popup surface.
+    @ViewBuilder
+    private func morePopupGlyph(name: String) -> some View {
+        if colorScheme == .dark {
+            Image(name)
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Color("appBlackColor"))
+                .frame(width: 16, height: 16)
+        } else {
+            Image(name)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 16, height: 16)
+        }
     }
 
     /// UIKit BarsysRecipeTableViewCell L75-79:
