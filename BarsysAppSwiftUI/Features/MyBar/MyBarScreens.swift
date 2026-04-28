@@ -185,9 +185,15 @@ struct MyBarView: View {
     /// the picker has dismissed (UIKit parity: `didSelectImagesFromPhotos`).
     @State private var pickedImage: UIImage?
 
-    /// Blocks input during `uploadIngredientImageForMyBar` — reproduces
-    /// UIKit `showGlassLoader(message: "Adding Ingredients")`.
-    @State private var isUploading = false
+    // Loader for `uploadIngredientImageForMyBar` is now the shared
+    // `env.loading` overlay (`LoadingOverlayModifier` in
+    // DesignSystem/Components.swift) — that's the canonical SwiftUI
+    // port of UIKit `showGlassLoader(message:)` and matches the UIKit
+    // dimensions exactly (200×150pt card, 20pt corners, BarsysLoader
+    // GIF, SFProDisplay-Medium 15pt label, black@0.30 backdrop). The
+    // previous local `@State isUploading` overlay used a smaller
+    // ProgressView + 16pt-corner card with `.regularMaterial` and
+    // 14pt label — visually off from the UIKit reference.
 
     // MARK: - "Ingredient(s) found" popup state
     //
@@ -291,37 +297,19 @@ struct MyBarView: View {
                 pickedImage = nil
             }
         }
-        // Glass loader — 1:1 with UIKit `showGlassLoader(message:)`.
-        .overlay {
-            if isUploading {
-                ZStack {
-                    Color.black.opacity(0.25).ignoresSafeArea()
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text(Constants.addingIngredientLoaderText)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(Color("appBlackColor"))
-                    }
-                    .padding(24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(.regularMaterial)
-                    )
-                    .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
-                }
-                .transition(.opacity)
-            }
-        }
         // "Ingredient(s) found" glass popup — 1:1 with UIKit
         // `MultipleIngredientsPopUpViewController`. Rendered on top of
         // the loader so the transition out → popup in matches UIKit.
+        // The "Adding Ingredients" glass loader itself is rendered by
+        // the shared `LoadingOverlayModifier` (applied at the app
+        // root via `.loadingOverlay(env.loading)`) — driven below by
+        // `env.loading.show/hide`.
         .overlay {
             if showIngredientsFoundPopup {
                 ingredientsFoundPopup
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: isUploading)
         .animation(.easeInOut(duration: 0.25), value: showIngredientsFoundPopup)
     }
 
@@ -843,11 +831,11 @@ struct MyBarView: View {
             env.alerts.show(message: Constants.ingredientUpdateError)
             return
         }
-        isUploading = true
+        env.loading.show(Constants.addingIngredientLoaderText)
         Task { @MainActor in
             do {
                 let detected = try await env.api.uploadIngredientImageForMyBar(data)
-                isUploading = false
+                env.loading.hide()
                 let (toShow, errorMessage) = processImageScanResults(detected)
                 if let errorMessage, toShow.isEmpty {
                     env.alerts.show(message: errorMessage)
@@ -862,7 +850,7 @@ struct MyBarView: View {
                 detectedIngredients = toShow
                 showIngredientsFoundPopup = true
             } catch {
-                isUploading = false
+                env.loading.hide()
                 env.alerts.show(message: Constants.ingredientUpdateError)
             }
         }
