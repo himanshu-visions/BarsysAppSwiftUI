@@ -754,7 +754,13 @@ struct FavoritesView: View {
                     env.alerts.show(message: Constants.unlikeSuccessMessage) {
                         // applyLikeResult (UIKit L370-372 Tab 0):
                         //   storage.updateFavouriteStatus(forRecipeId: recipeId, isFavourite: false)
-                        env.storage.toggleFavorite(recipe.id)
+                        // Use explicit `setFavorite(id, false)` instead of
+                        // `toggleFavorite` — Tab 0 always unfavourites, so
+                        // we should commit the EXACT direction. `toggle`
+                        // would re-add the favourite if storage somehow
+                        // already had it removed (e.g. an earlier preload
+                        // raced ahead).
+                        env.storage.setFavorite(recipe.id, isFavorite: false)
                         // getMyFavouritesDataToShow(indexToLike: index)
                         //   — re-fetch the favourites listing so the
                         //   removed row drops out. SwiftUI parity:

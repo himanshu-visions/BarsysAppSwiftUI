@@ -1363,9 +1363,15 @@ struct MixlistDetailView: View {
     /// — our `toggleFavorite` now handles that (sets isFavourite + favCreatedAt).
     private func toggleFav(_ recipe: Recipe) {
         HapticService.light()
-        let wasFav = recipe.isFavourite ?? false
+        // Drive off the favs Set, not the recipe struct's `isFavourite`
+        // flag — the struct flag can drift out of sync with the favs Set
+        // after `CatalogService.preload()` re-fetches recipes. Reading
+        // the wrong source caused the toggle to flip the WRONG way for
+        // already-favourited recipes (the bug the user observed as
+        // "tapping Add to Favorites does nothing / flips back").
+        let wasFav = env.storage.favorites().contains(recipe.id)
         let willBeFav = !wasFav
-        env.storage.toggleFavorite(recipe.id)
+        env.storage.setFavorite(recipe.id, isFavorite: willBeFav)
         // Force the `recipes` computed property to re-run so the heart
         // icon swaps between `favIconRecipe` ↔ `favIconRecipeSelected`
         // immediately. Without this bump, `MockStorageService` mutates

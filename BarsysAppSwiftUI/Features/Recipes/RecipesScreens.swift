@@ -882,11 +882,20 @@ struct RecipeDetailView: View {
                 .chooseOptionsStyleNavBar()
                 .onAppear {
                     loadIngredients(from: recipe)
-                    // Seed local favourite state from storage so the
-                    // button text + toolbar heart icon are correct on
-                    // initial render. Subsequent toggles update
-                    // localIsFavourite directly (instant UI feedback).
-                    localIsFavourite = recipe.isFavourite ?? false
+                    // Seed local favourite state from the AUTHORITATIVE
+                    // favs Set, not from the recipe struct's flag — the
+                    // struct flag can drift away from the favs Set after
+                    // `CatalogService.preload()` re-fetches recipes (the
+                    // API recipe payload has no isFavourite field, so
+                    // the upsert overwrites the flag back to nil while
+                    // the favs Set still has the id). Reading the wrong
+                    // source seeded `false` for already-favourited
+                    // recipes, so the button rendered "Add to Favorites"
+                    // and tapping it called `toggleFavorite` which then
+                    // REMOVED the existing favourite — the bug the user
+                    // observed as "tapping Add to Favorites changes back
+                    // to Add to Favorites".
+                    localIsFavourite = env.storage.favorites().contains(recipeID)
                     // 1:1 with UIKit `RecipePageViewModel+CraftAndAnalytics`
                     // `trackViewRecipe()` (L144-200) — fires every time the
                     // recipe page lands. Property dictionary mirrors the
@@ -1504,31 +1513,35 @@ struct RecipeDetailView: View {
                     showEditRecipe = true
                 case .addToFavourites:
                     localIsFavourite = true
-                    env.storage.toggleFavorite(recipe.id)
-                    // 1:1 port of UIKit RecipePageViewController+Actions
-                    // performLikeUnlike: updates DB + calls likeUnlikeApi
-                    // Revert on failure (matches FavoritesView pattern)
+                    // Use explicit `setFavorite(_:isFavorite:)` instead
+                    // of `toggleFavorite` — `toggleFavorite` flips the
+                    // current storage state, which means a UI that's
+                    // out-of-sync with storage (possible after a preload
+                    // re-fetch) toggles the WRONG way. `setFavorite`
+                    // commits to the intended direction so the optimistic
+                    // local state always matches storage.
+                    env.storage.setFavorite(recipe.id, isFavorite: true)
                     Task {
                         do {
                             _ = try await env.api.likeUnlike(
                                 recipeId: recipe.id.value, isLike: true)
                         } catch {
                             localIsFavourite = false
-                            env.storage.toggleFavorite(recipe.id)
+                            env.storage.setFavorite(recipe.id, isFavorite: false)
                         }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeAdded.rawValue)
                     env.alerts.show(message: Constants.likeSuccessMessage)
                 case .unfavourite:
                     localIsFavourite = false
-                    env.storage.toggleFavorite(recipe.id)
+                    env.storage.setFavorite(recipe.id, isFavorite: false)
                     Task {
                         do {
                             _ = try await env.api.likeUnlike(
                                 recipeId: recipe.id.value, isLike: false)
                         } catch {
                             localIsFavourite = true
-                            env.storage.toggleFavorite(recipe.id)
+                            env.storage.setFavorite(recipe.id, isFavorite: true)
                         }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)

@@ -298,6 +298,12 @@ protocol StorageService: AnyObject {
     func toggleMyBar(_ ingredient: Ingredient)
     func favorites() -> Set<RecipeID>
     func toggleFavorite(_ id: RecipeID)
+    /// Explicitly set favourite state (idempotent). Prefer over
+    /// `toggleFavorite` when the caller knows the intended direction —
+    /// avoids the toggle-direction divergence bug where the recipe
+    /// struct's `isFavourite` flag has gone out of sync with the
+    /// `favs` Set after a catalog re-fetch.
+    func setFavorite(_ id: RecipeID, isFavorite: Bool)
 
     /// Flush the in-memory dictionaries to disk so a cold launch
     /// without network can rebuild the cached catalog. 1:1 with UIKit's
@@ -484,6 +490,20 @@ final class MockStorageService: StorageService {
     /// to compute ingredientNames from stored ingredients.
     func allMixlists() -> [Mixlist] {
         var result = Array(mixlists.values)
+        // Defensive dedupe — `CatalogService.preload()` now strips
+        // duplicate nested recipes before upsert, but cached/persisted
+        // mixlists from older builds may still carry duplicates. UIKit's
+        // SQL JOIN naturally dedupes via the `mixlistrecipes` PK; SwiftUI
+        // keeps the API array verbatim, so we filter at read-time too.
+        for i in result.indices {
+            if let nested = result[i].recipes, !nested.isEmpty {
+                var seen = Set<RecipeID>()
+                let deduped = nested.filter { seen.insert($0.id).inserted }
+                if deduped.count != nested.count {
+                    result[i].recipes = deduped
+                }
+            }
+        }
         // Compute ingredientNames for each mixlist from nested recipes
         for i in result.indices {
             let mixlist = result[i]
@@ -550,6 +570,38 @@ final class MockStorageService: StorageService {
         // restart even when the optimistic API call hasn't returned
         // yet — matches UIKit's SQLite-backed `_updateFavouriteStatus`
         // which commits the row inside the same transaction.
+        persistCache()
+    }
+
+    /// Explicit favourite-state setter — use this when the caller knows
+    /// the desired state (Add to Favorites → true, Remove → false). Avoids
+    /// the divergence bug where `toggleFavorite` flips based on stale
+    /// storage state: e.g. user taps "Add to Favorites" on a recipe that
+    /// is ALREADY in `favs` (because `CatalogService.preload` re-synced
+    /// from the API but the recipe.isFavourite struct flag got overwritten),
+    /// causing toggle to actually REMOVE the favourite. With `setFavorite`
+    /// the caller commits to a direction and idempotently writes that
+    /// state, so the UI's optimistic update always matches storage.
+    func setFavorite(_ id: RecipeID, isFavorite: Bool) {
+        let currentlyFav = favs.contains(id)
+        // Idempotent — if storage already matches the desired state we
+        // still ensure the recipe.isFavourite flag is in sync (it can
+        // diverge after a `preload()` upsert from the API), then bail.
+        if currentlyFav == isFavorite {
+            if var r = recipes[id], (r.isFavourite ?? false) != isFavorite {
+                r.isFavourite = isFavorite
+                r.favCreatedAt = isFavorite ? Int32(Date().timeIntervalSince1970) : 0
+                recipes[id] = r
+                persistCache()
+            }
+            return
+        }
+        if isFavorite { favs.insert(id) } else { favs.remove(id) }
+        if var r = recipes[id] {
+            r.isFavourite = isFavorite
+            r.favCreatedAt = isFavorite ? Int32(Date().timeIntervalSince1970) : 0
+            recipes[id] = r
+        }
         persistCache()
     }
 
@@ -2150,16 +2202,50 @@ final class CatalogService: ObservableObject {
                 print("[CatalogService] Inserting \(freshRecipes.count) recipes + \(freshMixlists.count) mixlists")
             }
 
-            // 4. Insert recipes to storage (ports insertCacheRecipeDatabase)
+            // Snapshot the current favourites set BEFORE upserting so we
+            // can preserve the favourite flag on each recipe struct after
+            // the API payload (which doesn't carry isFavourite) overwrites
+            // it. Without this, the recipe.isFavourite flag flips back to
+            // `false` on every preload while the `favs` Set still contains
+            // the id — leading to the divergence bug where a fresh recipe
+            // detail render shows "Add to Favorites" for an already-
+            // favourited recipe, and tapping it toggles the WRONG way.
+            let favsSnapshot = storage.favorites()
+
+            // 4. Insert recipes to storage (ports insertCacheRecipeDatabase).
+            // Stamp `isFavourite` from the favs Set so the recipe struct's
+            // flag matches storage's authoritative `favs` membership even
+            // after the API payload overwrite.
             for recipe in freshRecipes {
-                storage.upsert(recipe: recipe)
+                var r = recipe
+                r.isFavourite = favsSnapshot.contains(r.id)
+                storage.upsert(recipe: r)
             }
 
-            // 5. Insert mixlists + nested recipes (ports _insertToDatabase)
+            // 5. Insert mixlists + nested recipes (ports _insertToDatabase).
+            // Same isFavourite preservation as step 4 — nested recipes hit
+            // the same recipes dict via `upsert(recipe:)` so they need the
+            // same favs-stamp to stay consistent. Also dedupe each mixlist's
+            // nested `recipes` array by id — the API occasionally returns
+            // the same recipe twice inside a single mixlist payload, which
+            // bubbled up as duplicate rows on the Ready-to-Pour mixlist
+            // drill-down (UIKit's SQL JOIN naturally dedupes; SwiftUI keeps
+            // the array as-is so we have to dedupe explicitly here).
             for mixlist in freshMixlists {
-                storage.upsert(mixlist: mixlist)
-                for nestedRecipe in mixlist.recipes ?? [] {
-                    storage.upsert(recipe: nestedRecipe)
+                var clean = mixlist
+                if let nested = clean.recipes {
+                    var seen = Set<RecipeID>()
+                    var deduped: [Recipe] = []
+                    for nestedRecipe in nested where seen.insert(nestedRecipe.id).inserted {
+                        deduped.append(nestedRecipe)
+                    }
+                    clean.recipes = deduped
+                }
+                storage.upsert(mixlist: clean)
+                for nestedRecipe in clean.recipes ?? [] {
+                    var r = nestedRecipe
+                    r.isFavourite = favsSnapshot.contains(r.id)
+                    storage.upsert(recipe: r)
                 }
             }
 
@@ -2173,19 +2259,18 @@ final class CatalogService: ObservableObject {
             do {
                 let favIDs = try await api.fetchFavorites()
                 let serverFavSet = Set(favIDs)
-                let currentFavs = storage.favorites()
 
-                // a) Add missing favourites
-                for favID in serverFavSet {
-                    if !currentFavs.contains(favID) {
-                        storage.toggleFavorite(favID)
-                    }
-                }
-                // b) Remove stale local favourites not on server
-                for localFavID in currentFavs {
-                    if !serverFavSet.contains(localFavID) {
-                        storage.toggleFavorite(localFavID)   // removes from favs set
-                    }
+                // Replace the local favs set with the server's view via
+                // explicit `setFavorite` calls so each affected recipe's
+                // struct flag stays in sync with the favs Set. Previously
+                // we used `toggleFavorite` here which works for the favs
+                // Set but only updates the recipe struct flag if the favs
+                // Set actually changes — a recipe that was already in the
+                // local set + server set was skipped, leaving its struct
+                // flag at whatever the API recipe payload reset it to.
+                let allKnownIds = serverFavSet.union(storage.favorites())
+                for id in allKnownIds {
+                    storage.setFavorite(id, isFavorite: serverFavSet.contains(id))
                 }
                 if !favIDs.isEmpty {
                     print("[CatalogService] Synced \(favIDs.count) favourites from API")
@@ -2250,15 +2335,23 @@ final class CatalogService: ObservableObject {
 
     /// Toggle favourite status locally + call API.
     /// Ports FavoriteRecipeApiService.likeUnlikeApi() + DBManager.updateFavouriteStatus().
+    /// Drives off the favs Set (authoritative) so the recipe struct's
+    /// flag drifting out of sync (which can happen after `preload()`
+    /// re-fetches recipes from the API) cannot reverse the toggle
+    /// direction.
     func toggleFavourite(recipeId: RecipeID) {
         let wasFav = storage.favorites().contains(recipeId)
-        storage.toggleFavorite(recipeId)
+        let willBeFav = !wasFav
+        // Explicit set instead of toggle — keeps the recipe struct's
+        // `isFavourite` flag aligned with the favs Set even if they
+        // were already out of sync.
+        storage.setFavorite(recipeId, isFavorite: willBeFav)
         recipes = storage.allRecipes()
 
         // Fire-and-forget API call to sync with server
         if let api = api as? OryAPIClient {
             Task {
-                await api.toggleFavoriteOnServer(recipeId: recipeId.value, isFavourite: !wasFav)
+                await api.toggleFavoriteOnServer(recipeId: recipeId.value, isFavourite: willBeFav)
             }
         }
     }

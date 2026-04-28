@@ -115,13 +115,26 @@ struct ReadyToPourView: View {
     /// `recipesShownOnMixlistsTab` returns the recipe array to
     /// render as rows; nil means "render mixlist cards instead".
     private var recipesShownOnMixlistsTab: [Recipe]? {
+        // Dedupe by recipe id — UIKit's SQL JOIN naturally dedupes via
+        // the `mixlistrecipes` PK; SwiftUI keeps the API array verbatim,
+        // so a mixlist payload with the same recipe twice (or a stale
+        // selectedMixlist set before `CatalogService.preload()`'s dedupe
+        // pass) would render duplicate rows. Without dedup, ForEach
+        // renders both rows with the same `id`, and SwiftUI's
+        // reconciliation only updates ONE of them when the favourite
+        // state flips — the visible "tap heart, nothing happens on the
+        // duplicate" bug the user reported.
+        let source: [Recipe]?
         if mixlists.count > 1, let selected = selectedMixlist {
-            return selected.recipes ?? []
+            source = selected.recipes ?? []
+        } else if mixlists.count == 1 {
+            source = mixlists[0].recipes ?? []
+        } else {
+            return nil
         }
-        if mixlists.count == 1 {
-            return mixlists[0].recipes ?? []
-        }
-        return nil
+        guard let arr = source else { return nil }
+        var seen = Set<RecipeID>()
+        return arr.filter { seen.insert($0.id).inserted }
     }
 
     /// Recipes to show on the Recipes tab. UIKit
@@ -629,16 +642,30 @@ struct ReadyToPourView: View {
 
     private func toggleFavourite(_ recipe: Recipe) {
         HapticService.light()
-        let willBeFav = !(recipe.isFavourite ?? false)
-        env.storage.toggleFavorite(recipe.id)
-        // Re-read from storage to update UI
-        Task { await loadData() }
+        // Read the AUTHORITATIVE current state from the favs Set, not
+        // from the recipe struct's flag. The struct flag can diverge
+        // from the favs Set after a `CatalogService.preload()` re-fetch
+        // (the API recipe payload doesn't carry isFavourite, so the
+        // upsert resets the flag while the favs Set still has the id).
+        // Driving `willBeFav` off `recipe.isFavourite` was causing the
+        // wrong toggle direction — user tapped "Add to Favorites" on a
+        // row showing a hollow heart, but storage already had the id and
+        // `toggleFavorite` actually REMOVED it.
+        let isCurrentlyFav = env.storage.favorites().contains(recipe.id)
+        let willBeFav = !isCurrentlyFav
+        env.storage.setFavorite(recipe.id, isFavorite: willBeFav)
+        // Re-read from storage to update UI on the main actor so the
+        // ForEach re-renders with the fresh isFavourite flag in the
+        // same render pass as the tap.
+        Task { @MainActor in await loadData() }
         Task {
             do {
                 _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: willBeFav)
             } catch {
-                env.storage.toggleFavorite(recipe.id)
-                await loadData()
+                // Revert on failure — explicit setFavorite back to the
+                // pre-tap state, not toggle, so we don't bounce twice.
+                env.storage.setFavorite(recipe.id, isFavorite: isCurrentlyFav)
+                await MainActor.run { Task { await loadData() } }
             }
         }
         env.analytics.track(
