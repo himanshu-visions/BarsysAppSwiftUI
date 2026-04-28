@@ -1639,7 +1639,16 @@ struct RecipeDetailView: View {
             }
             .buttonStyle(BounceButtonStyle())
         }
-        .padding(.horizontal, 16)
+        // 1:1 with UIKit `Mixlist.storyboard` `Seh-le-otk` stack
+        // constraints `4p8-cd-X5a` (leading=24) and `pdu-H2-8V5`
+        // (trailing=24). Matches the recipe-image horizontal inset
+        // (`heroImage` is rendered with `.padding(.horizontal, 24)` at
+        // the caller) so the Add-to-Favourites pill's leading edge and
+        // the Craft pill's trailing edge align vertically with the
+        // image's left and right edges. Was 16pt — visibly tighter
+        // than the image, breaking the storyboard's intended column
+        // grid.
+        .padding(.horizontal, 24)
         .padding(.top, 10)
         // Bottom offset between the action pills and the physical
         // bottom edge:
