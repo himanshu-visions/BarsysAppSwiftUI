@@ -442,12 +442,12 @@ struct FavoritesView: View {
             // 1 × 16 vertical separator (fRu-Zk-Dvg).
             // Trait-resolved at draw time so the separator is the
             // EXACT historical `Color.black` in light (bit-identical
-            // pixels) and a near-white tone in dark for visibility
-            // between the two tab labels.
+            // pixels) and a softened off-white (`softWhiteTextColor`
+            // = #EBEBEB) in dark for visibility without OLED glare.
             Rectangle()
                 .fill(Color(UIColor { trait in
                     trait.userInterfaceStyle == .dark
-                        ? UIColor.white
+                        ? (UIColor(named: "softWhiteTextColor") ?? .white)
                         : UIColor.black // EXACT historical
                 }))
                 .frame(width: 1, height: 16)

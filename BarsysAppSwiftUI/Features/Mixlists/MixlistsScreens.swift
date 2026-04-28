@@ -742,13 +742,14 @@ struct MixlistDetailView: View {
             // segmentSeparator — 1×14 black vertical rule, centered.
             // Trait-resolved at draw time so the light variant is the
             // EXACT historical `UIColor.black` (bit-identical pixels in
-            // light mode), and the dark variant is near-white so the
-            // separator stays visible between the Recipes / Ingredients
-            // tab labels on the dark Mixlist Detail header.
+            // light mode), and the dark variant routes through the
+            // shared `softWhiteTextColor` asset (#EBEBEB) so the rule
+            // sits as a soft off-white rather than a harsh full-
+            // luminance #FFFFFF on OLED.
             Rectangle()
                 .fill(Color(UIColor { trait in
                     trait.userInterfaceStyle == .dark
-                        ? UIColor.white
+                        ? (UIColor(named: "softWhiteTextColor") ?? .white)
                         : UIColor.black // EXACT historical black
                 }))
                 .frame(width: 1, height: 14)
