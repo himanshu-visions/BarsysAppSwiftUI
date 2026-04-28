@@ -129,7 +129,12 @@ enum Constants {
     static let systemReset = "Are you sure you want to reset the system?"
     static let doYouWantToDeleteIngredient = "Are you sure you want to delete this ingredient?"
     static let doYouWantToDeleteRecipe = "Are you sure you want to delete this recipe?"
-    static let doYouWantToLogout = "Do you want to Log out ?"
+    /// Logout confirmation popup title. Matches the "Are you sure you
+    /// want to …" wording used by every other confirm popup in the
+    /// codebase (delete recipe, delete ingredient, reset system, delete
+    /// account) so the logout flow feels consistent with the rest of
+    /// the app.
+    static let doYouWantToLogout = "Are you sure you want to logout?"
 
     /// 1:1 with UIKit `Constants.expiredSessionToken` in
     /// `BarsysApp/Helpers/Constants/Constants.swift` — the exact string

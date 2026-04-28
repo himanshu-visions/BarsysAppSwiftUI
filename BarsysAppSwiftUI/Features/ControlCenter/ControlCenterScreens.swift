@@ -2896,6 +2896,10 @@ struct StationSelectorCard: View {
     let progressMessage: String
     let ingredientName: String
     let onSelect: (StationName) -> Void
+    /// Light = original PNG; dark = template-tinted to `softWhiteText`
+    /// so the station diagram reads as a clean white glyph instead of
+    /// sinking into the dark surface.
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         // UIKit uses NON-UNIFORM spacing inside the card. Storyboard
@@ -2982,12 +2986,26 @@ struct StationSelectorCard: View {
             // Buttons → image: 26pt gap
             Spacer().frame(height: 26)
 
-            // Station diagram — UIKit: 279×246, scaleAspectFit
-            Image("station\(selected.rawValue)")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .frame(height: 246)
+            // Station diagram — UIKit: 279×246, scaleAspectFit.
+            // Light mode: original PNG (bit-identical UIKit-parity).
+            // Dark mode: template-tinted with `softWhiteText` so the
+            // dark equipment glyph reads as a clear white diagram on
+            // the dark Stations Menu canvas.
+            Group {
+                if colorScheme == .dark {
+                    Image("station\(selected.rawValue)")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundStyle(Theme.Color.softWhiteText)
+                } else {
+                    Image("station\(selected.rawValue)")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 246)
 
             // Image → ingredient name: 5pt gap
             Spacer().frame(height: 5)

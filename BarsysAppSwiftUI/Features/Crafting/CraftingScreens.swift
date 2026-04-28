@@ -1190,11 +1190,27 @@ struct CraftingView: View {
                             // when idle/waiting, pouring variant when
                             // actively dispensing — mirrors UIKit
                             // `deviceInQueueImage` / `devicePouringImage`.
-                            Image(deviceImageName())
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 120, height: 120)
-                                .padding(.top, 30)
+                            //
+                            // Light mode: original PNG (bit-identical to
+                            // UIKit-parity render). Dark mode: template-
+                            // tinted with `softWhiteText` so the dark
+                            // device illustration reads as a clear white
+                            // glyph against the dark crafting canvas.
+                            Group {
+                                if colorScheme == .dark {
+                                    Image(deviceImageName())
+                                        .renderingMode(.template)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .foregroundStyle(Theme.Color.softWhiteText)
+                                } else {
+                                    Image(deviceImageName())
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                }
+                            }
+                            .frame(width: 120, height: 120)
+                            .padding(.top, 30)
 
                             // Recipe name (vHh-PF-hYT): system 16pt
                             // charcoalGrayColor, centered, y=44 below
@@ -1943,9 +1959,22 @@ struct DrinkCompleteView: View {
                             case .empty:
                                 Color("lightBorderGrayColor")
                             case .failure:
-                                Image("myDrink")
-                                    .resizable().aspectRatio(contentMode: .fit)
-                                    .padding(30)
+                                // Light mode keeps the placeholder PNG;
+                                // dark mode template-tints with
+                                // `softWhiteText` so the dark glyph
+                                // doesn't blend into the dark fallback
+                                // background.
+                                if colorScheme == .dark {
+                                    Image("myDrink")
+                                        .renderingMode(.template)
+                                        .resizable().aspectRatio(contentMode: .fit)
+                                        .foregroundStyle(Theme.Color.softWhiteText)
+                                        .padding(30)
+                                } else {
+                                    Image("myDrink")
+                                        .resizable().aspectRatio(contentMode: .fit)
+                                        .padding(30)
+                                }
                             @unknown default:
                                 Color("lightBorderGrayColor")
                             }
@@ -2161,11 +2190,25 @@ struct DrinkCompleteView: View {
                 HapticService.light()
                 doneAction()
             } label: {
-                Image("back")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 12, height: 20)
-                    .frame(width: 30, height: 30)
+                // Light mode keeps the original PNG so pixels stay
+                // bit-identical to the existing UIKit-parity render.
+                // Dark mode template-tints with `softWhiteText` so the
+                // dark chevron doesn't sink into the dark canvas.
+                if colorScheme == .dark {
+                    Image("back")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundStyle(Theme.Color.softWhiteText)
+                        .frame(width: 12, height: 20)
+                        .frame(width: 30, height: 30)
+                } else {
+                    Image("back")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 12, height: 20)
+                        .frame(width: 30, height: 30)
+                }
             }
             .accessibilityLabel("Back")
             .accessibilityHint("Returns to the previous screen")
