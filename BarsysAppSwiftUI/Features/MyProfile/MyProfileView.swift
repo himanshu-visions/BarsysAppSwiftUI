@@ -685,7 +685,6 @@ struct MyProfileView: View {
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     @State private var showDeleteConfirm = false
     @State private var showDatePicker = false
-    @State private var showCountryPicker = false
 
     @FocusState private var focusedField: EditableField?
     enum EditableField: Hashable { case name, email, dob }
@@ -824,10 +823,6 @@ struct MyProfileView: View {
                     viewModel.errorDob = nil
                 }
             )
-        }
-        .sheet(isPresented: $showCountryPicker) {
-            CountryPickerSheet(countries: viewModel.allCountries,
-                               selection: $viewModel.selectedCountry)
         }
         // UIKit `showCustomAlertMultipleButtons(title: areYouSureYouWantToDeleteAccount,
         //   subTitleStr: deleteTheAccountAlertMessage, …)`
@@ -1186,51 +1181,40 @@ struct MyProfileView: View {
     //   flag (35pt) + downArrow (25pt, template) + code (17pt light) +
     //   numberPad textfield (17pt, `lightGrayColor` text).
     //
-    // COUNTRY PICKER FIX: UIKit's `actionFlag(_:)` is intentionally empty
-    // (country changes happen during signup / login only). But the
-    // product now expects the country to be editable from the profile
-    // screen too, so we wire the full flag + arrow + code cluster up
-    // to `showCountryPicker = true`. `contentShape(Rectangle())` makes
-    // empty spacing inside the HStack hit-testable, and `.plain`
-    // buttonStyle keeps the tap area identical to the visible label.
+    // Country + phone are READ-ONLY on the profile screen — both are
+    // captured during signup / login and cannot be edited here. The
+    // flag / dial-code cluster is rendered as a non-interactive HStack
+    // (no Button wrapper, no tap → sheet) and the phone field is shown
+    // as a static `Text` so neither produces a keyboard nor a picker.
     @ViewBuilder private var phoneInput: some View {
         HStack(spacing: 7) {
-            Button {
-                HapticService.light()
-                showCountryPicker = true
-            } label: {
-                HStack(spacing: 0) {
-                    Text(viewModel.selectedCountry.flag)
-                        .font(.system(size: 35))
-                    Image("downArrowSmall")
-                        .resizable()
-                        .renderingMode(.template)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
-                        .foregroundStyle(Color("lightGrayColor"))
-                    Text(viewModel.countryCodeDisplay)
-                        .font(.system(size: 17, weight: .light))
-                        // UIKit `qPl-l8-7SS` textColor white 0.666 alpha 1.
-                        .foregroundStyle(Color(white: 0.666))
-                        .padding(.leading, 3)
-                }
-                // Hit-test the ENTIRE cluster, not just the glyphs —
-                // UIKit `TlM-dI-cCu` is a 171×42 transparent button
-                // layered on top of the flag stack.
-                .frame(height: 42)
-                .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                Text(viewModel.selectedCountry.flag)
+                    .font(.system(size: 35))
+                Image("downArrowSmall")
+                    .resizable()
+                    .renderingMode(.template)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 25, height: 25)
+                    .foregroundStyle(Color("lightGrayColor"))
+                Text(viewModel.countryCodeDisplay)
+                    .font(.system(size: 17, weight: .light))
+                    // UIKit `qPl-l8-7SS` textColor white 0.666 alpha 1.
+                    .foregroundStyle(Color(white: 0.666))
+                    .padding(.leading, 3)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Select country")
-            .accessibilityHint("Opens a country picker")
+            .frame(height: 42)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Country \(viewModel.selectedCountry.name), code \(viewModel.countryCodeDisplay)")
 
-            TextField("Phone no.", text: $viewModel.phone)
+            // UIKit: `txtPhoneNumber.textColor = .lightGrayColor`
+            // (phone stays greyed, not edited in this screen). Rendered
+            // as a `Text` (not a TextField) so the field never accepts
+            // focus and never raises the keyboard.
+            Text(viewModel.phone.isEmpty ? "Phone no." : viewModel.phone)
                 .font(.system(size: 17))
-                // UIKit: `txtPhoneNumber.textColor = .lightGrayColor`
-                // (phone stays greyed, not edited in this screen).
                 .foregroundStyle(Color("lightGrayColor"))
-                .keyboardType(.numberPad)
-                .disabled(true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel("Phone number")
         }
     }
@@ -1566,55 +1550,3 @@ private struct DatePickerSheet: View {
     }
 }
 
-// MARK: - Country Picker Sheet (ports `allCountries` picker)
-
-private struct CountryPickerSheet: View {
-    let countries: [Country]
-    @Binding var selection: Country
-    @Environment(\.dismiss) private var dismiss
-    @State private var searchText = ""
-
-    private var filtered: [Country] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty { return countries }
-        return countries.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(filtered) { country in
-                    Button {
-                        selection = country
-                        dismiss()
-                    } label: {
-                        HStack(spacing: 12) {
-                            Text(country.flag).font(.system(size: 28))
-                            Text(country.name)
-                                .font(.system(size: 16))
-                                .foregroundStyle(Color("appBlackColor"))
-                            Spacer()
-                            Text("+\(country.dial_code)")
-                                .font(.system(size: 14))
-                                .foregroundStyle(Color("mediumGrayColor"))
-                        }
-                    }
-                }
-            }
-            .searchable(text: $searchText, prompt: "Search country")
-            .navigationTitle("Select Country")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { dismiss() } label: {
-                        if #available(iOS 26.0, *) {
-                            Image(systemName: "xmark")
-                        } else {
-                            Text("Cancel")
-                        }
-                    }
-                    .tint(Color("appBlackColor"))
-                }
-            }
-        }
-    }
-}
