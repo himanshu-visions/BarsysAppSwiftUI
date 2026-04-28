@@ -143,8 +143,7 @@ struct ReadyToPourView: View {
             return nil
         }
         guard let arr = source else { return nil }
-        var seen = Set<RecipeID>()
-        return arr.filter { seen.insert($0.id).inserted }
+        return uniqueRecipes(arr)
     }
 
     /// Recipes to show on the Recipes tab. UIKit
@@ -215,6 +214,15 @@ struct ReadyToPourView: View {
         .toolbar { toolbarContent }
         .chooseOptionsStyleNavBar()
         .onAppear {
+            // Sync the favourite flag on every visible state row from
+            // the live `env.storage.favorites()` set, on EVERY appear
+            // (not just the first). When the user pushes RecipeDetail,
+            // taps Add to Favorites / Remove from Favorites in there,
+            // and pops back to Ready to Pour, this re-projection picks
+            // up the storage-layer change and flips the heart icons
+            // without waiting for a heavy `loadData()` round-trip. Runs
+            // before the `didLoad` guard so it never misses a refresh.
+            refreshFavouritesFromStorage()
             guard !didLoad else { return }
             didLoad = true
             // 1:1 port of UIKit
@@ -582,7 +590,7 @@ struct ReadyToPourView: View {
             // Non-360 devices don't have the per-station matching flow
             // in UIKit either — keep the existing "show everything"
             // fallback so Coaster / Shaker behaviour is unchanged.
-            recipes = uniqueByID(env.storage.allRecipes())
+            recipes = uniqueRecipes(env.storage.allRecipes())
             mixlists = uniqueByID(env.storage.allMixlists().map(dedupedMixlist))
             return
         }
@@ -641,11 +649,12 @@ struct ReadyToPourView: View {
         // Step 4: run the same filter UIKit does — every non-garnish
         // ingredient must match an assigned station category pair, and
         // the recipe must have at least one such ingredient.
-        // Belt-and-suspenders dedup at the @State boundary so a stray
-        // duplicate from any upstream layer (API payload, persisted
-        // cache, future storage-layer change) cannot leak duplicate
-        // rows into the rendered list.
-        recipes = uniqueByID(env.storage.recipesMatchingIngredients(allowed))
+        // Dedupe at the @State boundary by id + slug + name so a stray
+        // duplicate (the API occasionally returns the same drink under
+        // multiple ids — e.g. one standalone catalog entry and one
+        // mixlist-nested entry — both of which get upserted into the
+        // dict-backed storage and surface as duplicate rows here).
+        recipes = uniqueRecipes(env.storage.recipesMatchingIngredients(allowed))
         mixlists = uniqueByID(
             env.storage.readyToPourMixlists(
                 allowedIngredients: allowed,
@@ -662,15 +671,77 @@ struct ReadyToPourView: View {
         return items.filter { seen.insert($0.id).inserted }
     }
 
+    /// Recipe-specific dedupe: id first, then slug (canonical drink
+    /// identifier), then name (lowercased + trimmed) when slug is
+    /// missing. The same drink can appear in storage under TWO
+    /// different `RecipeID`s when the API returns it once at the
+    /// top-level catalog AND once as a nested copy inside a mixlist —
+    /// both ids get upserted into the dict-backed `recipes` storage,
+    /// and `recipesMatchingIngredients()` returns BOTH. This was the
+    /// "Gin & It appears twice on Ready to Pour, one row's heart
+    /// works and the other's does not" bug — the non-working row's
+    /// id wasn't recognised by the server's `likeUnlike` endpoint
+    /// because it was a mixlist-scoped duplicate id.
+    ///
+    /// Preference: keep the entry that already has a non-empty `slug`
+    /// or `userId` over a bare entry, because those carry the metadata
+    /// the catalog API needs to round-trip favourite state. When neither
+    /// candidate has those, keep the first occurrence (storage already
+    /// sorts by `createdAt DESC`, so newest wins).
+    private func uniqueRecipes(_ recipes: [Recipe]) -> [Recipe] {
+        var seenIDs = Set<RecipeID>()
+        var nameKeyToIndex: [String: Int] = [:]
+        var result: [Recipe] = []
+        let favSet = env.storage.favorites()
+
+        // Dedupe by NAME first. Earlier this was keyed off slug-when-
+        // present-else-name, which left "Gin & It with slug=gin-and-it"
+        // and "Gin & It with no slug" sitting under DIFFERENT keys —
+        // so both rows survived. Switching to a pure name key collapses
+        // every same-name pair regardless of which row carries the slug.
+        //
+        // Within a name collision, the entry with the highest score
+        // wins:
+        //   1. Already in the user's favourites set — preserves their
+        //      tap so the heart doesn't visibly bounce.
+        //   2. Has a non-empty `slug` — canonical catalog drink, the id
+        //      the server's `likeUnlike` endpoint recognises.
+        //   3. Has a non-empty `userId` — a "My Drink" the user owns.
+        //
+        // Empty names are NOT collapsed (would otherwise merge every
+        // anonymous row into a single entry).
+        func metadataScore(_ r: Recipe) -> Int {
+            let hasSlug = !((r.slug ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            let hasUser = !((r.userId ?? "").isEmpty)
+            let isInFavs = favSet.contains(r.id)
+            return (isInFavs ? 4 : 0) + (hasSlug ? 2 : 0) + (hasUser ? 1 : 0)
+        }
+
+        for recipe in recipes {
+            guard seenIDs.insert(recipe.id).inserted else { continue }
+            let nameKey = (recipe.name ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if !nameKey.isEmpty, let existingIndex = nameKeyToIndex[nameKey] {
+                if metadataScore(recipe) > metadataScore(result[existingIndex]) {
+                    result[existingIndex] = recipe
+                }
+            } else {
+                if !nameKey.isEmpty { nameKeyToIndex[nameKey] = result.count }
+                result.append(recipe)
+            }
+        }
+        return result
+    }
+
     /// Return a copy of the mixlist whose nested `recipes` array has
-    /// any same-id duplicates stripped (keeping the first occurrence).
-    /// `MockStorageService.allMixlists()` already projects + dedupes
-    /// nested recipes; this is a render-side guarantee that survives
-    /// future storage-layer changes.
+    /// duplicates stripped via `uniqueRecipes(...)` — id + slug + name
+    /// dedup, preferring the candidate with stronger metadata. This
+    /// catches the same "two Gin & It rows" pattern when the user
+    /// drills into a mixlist on the Mixlists tab.
     private func dedupedMixlist(_ mixlist: Mixlist) -> Mixlist {
         guard let nested = mixlist.recipes, !nested.isEmpty else { return mixlist }
-        var seen = Set<RecipeID>()
-        let deduped = nested.filter { seen.insert($0.id).inserted }
+        let deduped = uniqueRecipes(nested)
         if deduped.count == nested.count { return mixlist }
         var copy = mixlist
         copy.recipes = deduped
@@ -729,6 +800,39 @@ struct ReadyToPourView: View {
         env.alerts.show(message: willBeFav
                         ? Constants.likeSuccessMessage
                         : Constants.unlikeSuccessMessage)
+    }
+
+    /// Re-project the LIVE `env.storage.favorites()` set onto every
+    /// recipe in the in-flight `recipes` + `mixlists[].recipes` arrays.
+    /// Called on every screen appear so favourite changes made from
+    /// child views (RecipeDetail, etc.) are reflected on Ready-to-Pour
+    /// rows the moment the user pops back — without re-running the
+    /// heavy `loadData()` station-fetch path.
+    @MainActor
+    private func refreshFavouritesFromStorage() {
+        let favs = env.storage.favorites()
+        for i in recipes.indices {
+            let isFav = favs.contains(recipes[i].id)
+            if (recipes[i].isFavourite ?? false) != isFav {
+                recipes[i].isFavourite = isFav
+            }
+        }
+        for i in mixlists.indices {
+            guard var nested = mixlists[i].recipes else { continue }
+            var didMutate = false
+            for j in nested.indices {
+                let isFav = favs.contains(nested[j].id)
+                if (nested[j].isFavourite ?? false) != isFav {
+                    nested[j].isFavourite = isFav
+                    didMutate = true
+                }
+            }
+            if didMutate { mixlists[i].recipes = nested }
+        }
+        if let selected = selectedMixlist,
+           let live = mixlists.first(where: { $0.id == selected.id }) {
+            selectedMixlist = live
+        }
     }
 
     /// Synchronously mirror a favourite-state change onto every local
