@@ -2669,7 +2669,15 @@ struct EditRecipeView: View {
     @State private var showAddIngredientActionSheet = false
     @State private var ingredientImagePicker: EditRecipePickerPresentation?
     @State private var pickedIngredientImage: UIImage?
-    @State private var isUploadingIngredient = false
+    // Loader for `uploadIngredientImage` is now the shared
+    // `env.loading` overlay (`LoadingOverlayModifier` in
+    // DesignSystem/Components.swift) — that's the canonical SwiftUI
+    // port of UIKit `showGlassLoader(message:)` and matches the UIKit
+    // dimensions exactly (200×150pt card, 20pt corners, BarsysLoader
+    // GIF, SFProDisplay-Medium 15pt label, black@0.30 backdrop). The
+    // previous local `@State isUploadingIngredient` overlay used a
+    // smaller ProgressView + 16pt-corner card with `.regularMaterial`
+    // and 14pt label — visually off from the UIKit reference.
 
     /// Ports UIKit `EditViewModel.validateForSave()` — must have a name
     /// and at least one ingredient with a non-zero quantity.
@@ -2951,29 +2959,13 @@ struct EditRecipeView: View {
                 pickedIngredientImage = nil
             }
         }
-        .overlay {
-            // 1:1 with UIKit `showGlassLoader(message: "Adding ingredients")`
-            // — a small modal overlay that blocks input while the upload
-            // request is in flight (UploadIngredientsImage + AI detection
-            // can take 1-3s on a slow connection).
-            if isUploadingIngredient {
-                ZStack {
-                    Color.black.opacity(0.25).ignoresSafeArea()
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text(Constants.addingIngredientLoaderText)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(Color("appBlackColor"))
-                    }
-                    .padding(24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(.regularMaterial)
-                    )
-                    .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
-                }
-            }
-        }
+        // The "Adding ingredients" glass loader is rendered by the
+        // shared `LoadingOverlayModifier` (applied at the app root via
+        // `.loadingOverlay(env.loading)`) — driven by
+        // `env.loading.show/hide` in `uploadAndProcessIngredient`. This
+        // matches UIKit's `showGlassLoader(message:)` dimensions
+        // (200×150pt card, 20pt corners, BarsysLoader GIF) instead of
+        // the previous undersized inline ProgressView card.
         .onAppear {
             // Prefer the recipe passed in directly. Fallback to storage
             // lookup so RouteView's id-only `.editRecipe(id)` path keeps
@@ -3353,9 +3345,9 @@ struct EditRecipeView: View {
             return
         }
 
-        isUploadingIngredient = true
+        env.loading.show(Constants.addingIngredientLoaderText)
         Task { @MainActor in
-            defer { isUploadingIngredient = false }
+            defer { env.loading.hide() }
             do {
                 let detected = try await env.api.uploadIngredientImage(data)
                 let result = processUploadedIngredients(detected)
