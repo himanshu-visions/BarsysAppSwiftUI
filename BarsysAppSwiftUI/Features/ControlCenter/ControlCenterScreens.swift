@@ -871,6 +871,15 @@ struct DevicePairedView: View {
                             .frame(width: 300, height: 170)
                             .background(Color("warmBackgroundColor"))
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            // 1:1 UIKit `didSelectItemAt` for the
+                            // `recommendedCollectionView` (L135-136) —
+                            // any tap on a recommended row routes to
+                            // `showUnderConstructionPopup()`.
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                HapticService.light()
+                                presentComingSoonPopup()
+                            }
                         }
                     }
                     .padding(.horizontal, 24)
@@ -916,6 +925,15 @@ struct DevicePairedView: View {
                                         .frame(width: cardW)
                                         .multilineTextAlignment(.center)
                                 }
+                                // 1:1 UIKit `didSelectItemAt` for the
+                                // `partnershipsCollectionView` (L137-138)
+                                // — any partnership tap routes to
+                                // `showUnderConstructionPopup()`.
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    HapticService.light()
+                                    presentComingSoonPopup()
+                                }
                             }
                         }
                         .padding(.horizontal, 24)
@@ -947,6 +965,15 @@ struct DevicePairedView: View {
                                     .aspectRatio(contentMode: .fill)
                                     .frame(width: cardW, height: 285)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    // 1:1 UIKit `didSelectItemAt` for
+                                    // the `socialMediaCollectionView`
+                                    // (L139-140) — any social card tap
+                                    // routes to `showUnderConstructionPopup()`.
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        HapticService.light()
+                                        presentComingSoonPopup()
+                                    }
                             }
                         }
                         .padding(.horizontal, 24)
@@ -1058,10 +1085,44 @@ struct DevicePairedView: View {
         case "Host an Event":
             router.selectedTab = .barBot
         case "Party Mode":
-            env.toast.show("Coming Soon!", color: Color("segmentSelectionColor"), duration: 3)
+            // 1:1 with UIKit `DevicePairedViewController+CollectionView`
+            // L132-133 — the "Party Mode" tile routes to
+            // `showUnderConstructionPopup()` (UIAlertController with
+            // title "Coming Soon", under-construction message + OK).
+            presentComingSoonPopup()
         default:
             break
         }
+    }
+
+    // MARK: - Coming Soon popup
+    //
+    // 1:1 with UIKit `DevicePairedViewController.showUnderConstructionPopup`
+    // (L384-390):
+    //
+    //     let alert = UIAlertController(
+    //         title:   "Coming Soon",
+    //         message: "\nThis feature is currently under construction.\nStay tuned!",
+    //         preferredStyle: .alert)
+    //     let okAction = UIAlertAction(title: "OK", style: .default, handler: nil)
+    //     okAction.setValue(UIColor.black, forKey: "titleTextColor")
+    //     alert.addAction(okAction)
+    //     present(alert, animated: true)
+    //
+    // Routed through the shared `env.alerts.show(...)` (the SwiftUI
+    // bridge for `showCustomAlert*`) so the visuals stay consistent
+    // with the rest of the SwiftUI popups (delete-account, logout,
+    // etc.). UIKit's call sites that hit this popup are: Party Mode
+    // (main collection view), every recommended-recipe row, every
+    // partnership card, and every social-media card — wired up below.
+    private func presentComingSoonPopup() {
+        env.alerts.show(
+            title: "Coming Soon",
+            message: "\nThis feature is currently under construction.\nStay tuned!",
+            primary: ConstantButtonsTitle.okButtonTitle,
+            action: nil,
+            hideClose: true
+        )
     }
 }
 
