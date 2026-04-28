@@ -366,12 +366,19 @@ enum ConstantButtonsTitle {
     static let dismissButtonTitle = "Dismiss"
     static let yesButtonTitle = "Yes"
     static let noButtonTitle = "No"
+    /// 1:1 with UIKit `ConstantButtonsTitle.donotDeleteTitle`
+    /// (Constants+UI.swift L32). Used as the TINTED (primary) cancel
+    /// button on the delete-account confirmation popup.
+    static let donotDeleteTitle = "Don't delete"
     static let continueButtonTitle = "Continue"
     static let discardButtonTitle = "Discard"
     static let keepEditingButtonTitle = "Keep Editing"
     static let saveButtonTitle = "Save"
     static let deleteButtonTitle = "Delete"
-    static let logoutButtonTitle = "Log out"
+    /// 1:1 with UIKit `ConstantButtonsTitle.logoutButtonTitle`
+    /// (Constants+UI.swift L20). NOTE the capital "O" — must stay
+    /// "Log Out" (not "Log out") to match the UIKit popup text.
+    static let logoutButtonTitle = "Log Out"
     static let yesPleaseButtonTitle = "Yes please!"
     static let noStayInAppButtonTitle = "No, stay in the app"
     // 1:1 with UIKit `Constants+UI.swift` L38 + L40 — used by

@@ -683,7 +683,6 @@ struct MyProfileView: View {
     @State private var showImageSourceSheet = false
     @State private var showImagePicker = false
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
-    @State private var showDeleteConfirm = false
     @State private var showDatePicker = false
 
     @FocusState private var focusedField: EditableField?
@@ -823,45 +822,6 @@ struct MyProfileView: View {
                     viewModel.errorDob = nil
                 }
             )
-        }
-        // UIKit `showCustomAlertMultipleButtons(title: areYouSureYouWantToDeleteAccount,
-        //   subTitleStr: deleteTheAccountAlertMessage, …)`
-        .alert(Constants.areYouSureYouWantToDeleteAccount,
-               isPresented: $showDeleteConfirm) {
-            // UIKit uses `ConstantButtonsTitle.donotDeleteTitle` ("Do not
-            // delete") here; it's not defined in SwiftUI Constants so we
-            // hard-code the same literal to stay 1:1 with the alert UX.
-            Button("Do not delete", role: .cancel) {}
-            Button(ConstantButtonsTitle.yesButtonTitle, role: .destructive) {
-                Task {
-                    // 1:1 with UIKit `MyProfileViewModel.deleteProfile()`
-                    // L188 `showGlassLoader(message: "Deleting Your Account")`.
-                    // The in-button spinner is insufficient; the delete
-                    // API can take multiple seconds and the view should
-                    // block during the tear-down (BLE disconnect,
-                    // Braze wipe, UserDefaults clear) so the user
-                    // can't retap or navigate.
-                    env.loading.show(Constants.loaderDeletingAccount)
-                    let didDelete = await viewModel.deleteAccount(env: env)
-                    env.loading.hide()
-
-                    // Only navigate to auth on a CONFIRMED deletion —
-                    // otherwise the user stays on MyProfile and sees
-                    // the error alert surfaced inside `deleteAccount`.
-                    // Without this guard, a 4xx/5xx would have still
-                    // popped the user to Login with a blank profile.
-                    guard didDelete else { return }
-
-                    // Match the manual logout finish: `auth.logout()`
-                    // fires the Braze logout event and resets
-                    // `isAuthenticated`; `router.logout()` swaps the
-                    // root scene to `.auth` and clears nav stacks.
-                    env.auth.logout()
-                    router.logout()
-                }
-            }
-        } message: {
-            Text(Constants.deleteTheAccountAlertMessage)
         }
         .onChange(of: viewModel.selectedImage) { new in
             if new != nil { viewModel.isEdit = true; viewModel.isProfileChanged = true }
@@ -1481,7 +1441,7 @@ struct MyProfileView: View {
             Spacer()
             Button {
                 HapticService.light()
-                showDeleteConfirm = true
+                presentDeleteConfirmation()
             } label: {
                 Text("Delete account")
                     .font(.system(size: 14))
@@ -1491,6 +1451,53 @@ struct MyProfileView: View {
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Delete account")
+        }
+    }
+
+    // MARK: - Delete account confirmation
+    //
+    // Mirrors the logout popup convention used elsewhere in the app
+    // (SideMenuView.presentLogoutConfirmation): the destructive action
+    // is the TINTED right-hand button and the safe cancel is the
+    // NEUTRAL left-hand button. Specifically:
+    //
+    //   • RIGHT (TINTED `segmentSelectionColor`) — "Yes" → delete
+    //   • LEFT  (NEUTRAL bordered)               — "Don't delete" → no-op
+    //
+    // Title + subtitle text are taken verbatim from the UIKit constants
+    // (`Constants.areYouSureYouWantToDeleteAccount` and
+    // `Constants.deleteTheAccountAlertMessage`) so the strings stay 1:1
+    // with `MyProfileViewController.actionDelete(_:)`.
+    private func presentDeleteConfirmation() {
+        env.alerts.show(
+            title: Constants.areYouSureYouWantToDeleteAccount,
+            message: Constants.deleteTheAccountAlertMessage,
+            primaryTitle: ConstantButtonsTitle.yesButtonTitle,
+            secondaryTitle: ConstantButtonsTitle.donotDeleteTitle,
+            onPrimary: { performDeleteAccount() },
+            onSecondary: nil,
+            hideClose: true
+        )
+    }
+
+    private func performDeleteAccount() {
+        Task {
+            // 1:1 with UIKit `MyProfileViewModel.deleteProfile()` L188:
+            // `showGlassLoader(message: "Deleting Your Account")`. The
+            // delete API can take multiple seconds and the view should
+            // block during the BLE disconnect / Braze wipe / UserDefaults
+            // clear so the user can't retap or navigate.
+            env.loading.show(Constants.loaderDeletingAccount)
+            let didDelete = await viewModel.deleteAccount(env: env)
+            env.loading.hide()
+
+            // Only navigate to auth on a CONFIRMED deletion — otherwise
+            // the user stays on MyProfile and sees the error alert
+            // surfaced inside `deleteAccount`.
+            guard didDelete else { return }
+
+            env.auth.logout()
+            router.logout()
         }
     }
 }
