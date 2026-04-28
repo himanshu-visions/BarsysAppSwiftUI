@@ -604,19 +604,29 @@ struct LoginView: View {
         hideKeyboard()
         Task {
             if viewModel.otpSent {
+                // Glass loader stays up across the entire verify →
+                // profile fetch → catalog preload → navigation chain
+                // (1:1 with the UIKit `showGlassLoader(message:)` that
+                // wrapped LoginViewController+OTP.swift's verify path).
+                // `env.auth.isAuthenticated` flips inside `auth.verifyOtp`
+                // on the success path, so checking it after `verifyOtp`
+                // returns tells us which branch ran without needing a
+                // captured-var flag in the success closure.
+                env.loading.show(Constants.loaderLoggingIn)
                 await viewModel.verifyOtp(auth: env.auth,
                                           alerts: env.alerts,
-                                          analytics: env.analytics) {
-                    // Fetch data then navigate — Task needed because onSuccess is sync
-                    Task {
-                        await env.onLoginSuccessAsync()
-                        router.didLogin()
-                    }
+                                          analytics: env.analytics) { }
+                if env.auth.isAuthenticated {
+                    await env.onLoginSuccessAsync()
+                    router.didLogin()
                 }
+                env.loading.hide()
             } else {
+                env.loading.show(Constants.loaderSendingOTP)
                 await viewModel.sendOtp(api: env.api,
                                         alerts: env.alerts,
                                         analytics: env.analytics)
+                env.loading.hide()
             }
         }
     }

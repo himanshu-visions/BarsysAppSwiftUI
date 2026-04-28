@@ -151,6 +151,7 @@ enum Constants {
     /// view code.
     static let loaderSendingOTP = "Sending OTP"
     static let loaderRegistering = "Registering"
+    static let loaderLoggingIn = "Logging In"
     static let loaderLoggingOut = "Logging Out"
     static let loaderDeletingAccount = "Deleting Your Account"
 
