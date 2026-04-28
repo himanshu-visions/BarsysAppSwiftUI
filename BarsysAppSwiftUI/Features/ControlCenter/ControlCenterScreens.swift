@@ -420,7 +420,6 @@ struct DevicePairedView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService
 
-    @State private var showDevicePopup = false
     @State private var favourites: Set<Int> = []
 
     /// Bottom breathing room above the tab bar. iOS 26+ glass blurs
@@ -969,23 +968,13 @@ struct DevicePairedView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
-            // Back button — only shown when connected (UIKit: btnBack.isHidden = true initially)
-            // When connected, taps open DeviceConnectedPopup (ports didPressBackButton)
-            if isConnected {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        HapticService.light()
-                        showDevicePopup = true
-                    } label: {
-                        Image("back")
-                            .renderingMode(.template)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 18, height: 18)
-                            .foregroundStyle(Color("appBlackColor"))
-                    }
-                }
-            }
+            // No back button — DevicePairedView is the root of the
+            // Explore tab, not a pushed screen, so a back chevron has
+            // nowhere to go. UIKit `btnBack.isHidden = true` was the
+            // initial state and the visible-when-connected port was
+            // wrong — the device-disconnect popup is reachable from
+            // the device icon in the centre slot, no leading button
+            // is needed.
 
             // Center: device ICON 25×25 ONLY — ONLY when connected.
             //
@@ -1016,10 +1005,6 @@ struct DevicePairedView: View {
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()
-        .fullScreenCover(isPresented: $showDevicePopup) {
-            DeviceConnectedPopup(isPresented: $showDevicePopup)
-                .background(ClearBGHelper())
-        }
         // Tutorial modal — 1:1 with UIKit
         // `present(tutorialVc, animated: true)` from
         // `DevicePairedViewController.didPressPlayPauseButton(_:)`
