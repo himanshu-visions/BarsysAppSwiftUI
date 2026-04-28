@@ -124,9 +124,19 @@ struct ReadyToPourView: View {
         // reconciliation only updates ONE of them when the favourite
         // state flips — the visible "tap heart, nothing happens on the
         // duplicate" bug the user reported.
+        //
+        // Always re-resolve the source from the LIVE `mixlists` array
+        // by id rather than reading the cached `selectedMixlist` struct
+        // directly. `selectedMixlist` is a value type captured when the
+        // user drilled in, so it doesn't pick up the fresh
+        // `isFavourite` flag projection that `loadData()` applies on
+        // every storage refresh — without this re-resolve, tapping a
+        // heart icon on a drilled-in mixlist row left the icon stuck on
+        // the pre-tap state until the user backed out and re-entered.
         let source: [Recipe]?
         if mixlists.count > 1, let selected = selectedMixlist {
-            source = selected.recipes ?? []
+            let live = mixlists.first(where: { $0.id == selected.id }) ?? selected
+            source = live.recipes ?? []
         } else if mixlists.count == 1 {
             source = mixlists[0].recipes ?? []
         } else {
@@ -572,8 +582,8 @@ struct ReadyToPourView: View {
             // Non-360 devices don't have the per-station matching flow
             // in UIKit either — keep the existing "show everything"
             // fallback so Coaster / Shaker behaviour is unchanged.
-            recipes = env.storage.allRecipes()
-            mixlists = env.storage.allMixlists()
+            recipes = uniqueByID(env.storage.allRecipes())
+            mixlists = uniqueByID(env.storage.allMixlists().map(dedupedMixlist))
             return
         }
 
@@ -631,11 +641,40 @@ struct ReadyToPourView: View {
         // Step 4: run the same filter UIKit does — every non-garnish
         // ingredient must match an assigned station category pair, and
         // the recipe must have at least one such ingredient.
-        recipes = env.storage.recipesMatchingIngredients(allowed)
-        mixlists = env.storage.readyToPourMixlists(
-            allowedIngredients: allowed,
-            barsys360Only: true
+        // Belt-and-suspenders dedup at the @State boundary so a stray
+        // duplicate from any upstream layer (API payload, persisted
+        // cache, future storage-layer change) cannot leak duplicate
+        // rows into the rendered list.
+        recipes = uniqueByID(env.storage.recipesMatchingIngredients(allowed))
+        mixlists = uniqueByID(
+            env.storage.readyToPourMixlists(
+                allowedIngredients: allowed,
+                barsys360Only: true
+            ).map(dedupedMixlist)
         )
+    }
+
+    /// Drop duplicate elements that share the same `id`, keeping the
+    /// first occurrence. Generic over `Identifiable` so it works for
+    /// both `[Recipe]` and `[Mixlist]`.
+    private func uniqueByID<Element: Identifiable>(_ items: [Element]) -> [Element] {
+        var seen = Set<Element.ID>()
+        return items.filter { seen.insert($0.id).inserted }
+    }
+
+    /// Return a copy of the mixlist whose nested `recipes` array has
+    /// any same-id duplicates stripped (keeping the first occurrence).
+    /// `MockStorageService.allMixlists()` already projects + dedupes
+    /// nested recipes; this is a render-side guarantee that survives
+    /// future storage-layer changes.
+    private func dedupedMixlist(_ mixlist: Mixlist) -> Mixlist {
+        guard let nested = mixlist.recipes, !nested.isEmpty else { return mixlist }
+        var seen = Set<RecipeID>()
+        let deduped = nested.filter { seen.insert($0.id).inserted }
+        if deduped.count == nested.count { return mixlist }
+        var copy = mixlist
+        copy.recipes = deduped
+        return copy
     }
 
     // MARK: - Actions
@@ -654,6 +693,18 @@ struct ReadyToPourView: View {
         let isCurrentlyFav = env.storage.favorites().contains(recipe.id)
         let willBeFav = !isCurrentlyFav
         env.storage.setFavorite(recipe.id, isFavorite: willBeFav)
+
+        // Synchronously flip the in-flight `recipes` + `mixlists` arrays
+        // so the ForEach re-renders the heart icon on the SAME tap. A
+        // subsequent `loadData()` for Barsys 360 users hits an async
+        // `StationsAPIService.loadStations(...)` round-trip (1-2s on a
+        // real device) — without this in-place mutation the row stays
+        // visually stuck on the pre-tap state until the station fetch
+        // finishes. Mutating both `recipes` and `mixlists[].recipes`
+        // mirrors what storage's `allRecipes()` + `allMixlists()` would
+        // return on the next read, just without waiting for the network.
+        applyFavouriteToLocalState(recipeID: recipe.id, isFavourite: willBeFav)
+
         // Re-read from storage to update UI on the main actor so the
         // ForEach re-renders with the fresh isFavourite flag in the
         // same render pass as the tap.
@@ -665,7 +716,10 @@ struct ReadyToPourView: View {
                 // Revert on failure — explicit setFavorite back to the
                 // pre-tap state, not toggle, so we don't bounce twice.
                 env.storage.setFavorite(recipe.id, isFavorite: isCurrentlyFav)
-                await MainActor.run { Task { await loadData() } }
+                await MainActor.run {
+                    applyFavouriteToLocalState(recipeID: recipe.id, isFavourite: isCurrentlyFav)
+                    Task { await loadData() }
+                }
             }
         }
         env.analytics.track(
@@ -675,6 +729,30 @@ struct ReadyToPourView: View {
         env.alerts.show(message: willBeFav
                         ? Constants.likeSuccessMessage
                         : Constants.unlikeSuccessMessage)
+    }
+
+    /// Synchronously mirror a favourite-state change onto every local
+    /// copy of the recipe — top-level `recipes` (Recipes-tab source)
+    /// AND the nested `recipes` arrays inside each `mixlists[i]`
+    /// (Mixlists-tab source). Lets the ForEach re-render instantly on
+    /// tap without waiting for the next `loadData()` round-trip.
+    private func applyFavouriteToLocalState(recipeID: RecipeID, isFavourite: Bool) {
+        for i in recipes.indices where recipes[i].id == recipeID {
+            recipes[i].isFavourite = isFavourite
+        }
+        for i in mixlists.indices {
+            guard var nested = mixlists[i].recipes else { continue }
+            var didMutate = false
+            for j in nested.indices where nested[j].id == recipeID {
+                nested[j].isFavourite = isFavourite
+                didMutate = true
+            }
+            if didMutate { mixlists[i].recipes = nested }
+        }
+        if let selected = selectedMixlist,
+           let live = mixlists.first(where: { $0.id == selected.id }) {
+            selectedMixlist = live
+        }
     }
 
     private func craftRecipe(_ recipe: Recipe) {

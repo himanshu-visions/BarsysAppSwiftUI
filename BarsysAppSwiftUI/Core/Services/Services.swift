@@ -490,17 +490,37 @@ final class MockStorageService: StorageService {
     /// to compute ingredientNames from stored ingredients.
     func allMixlists() -> [Mixlist] {
         var result = Array(mixlists.values)
+        let currentFavs = favs
         // Defensive dedupe — `CatalogService.preload()` now strips
         // duplicate nested recipes before upsert, but cached/persisted
         // mixlists from older builds may still carry duplicates. UIKit's
         // SQL JOIN naturally dedupes via the `mixlistrecipes` PK; SwiftUI
         // keeps the API array verbatim, so we filter at read-time too.
+        //
+        // Also project the LIVE favourites set onto each nested recipe's
+        // `isFavourite` flag here. `setFavorite(_:isFavorite:)` updates
+        // the top-level `recipes` dict + `favs` set, but the recipe
+        // STRUCTS embedded inside `mixlist.recipes` are independent
+        // copies that don't get the new flag — so a heart-tap on the
+        // Ready-to-Pour Mixlists tab toggled storage correctly but the
+        // row's `recipe.isFavourite ?? false` read kept reporting the
+        // old value, leaving the heart icon visually unchanged. UIKit's
+        // SQL JOIN reads the `isFavouriteRecipe` column live every
+        // query, which is what this projection mirrors.
         for i in result.indices {
             if let nested = result[i].recipes, !nested.isEmpty {
                 var seen = Set<RecipeID>()
-                let deduped = nested.filter { seen.insert($0.id).inserted }
-                if deduped.count != nested.count {
-                    result[i].recipes = deduped
+                var rebuilt: [Recipe] = []
+                rebuilt.reserveCapacity(nested.count)
+                for var r in nested where seen.insert(r.id).inserted {
+                    r.isFavourite = currentFavs.contains(r.id)
+                    rebuilt.append(r)
+                }
+                if rebuilt.count != nested.count
+                    || zip(rebuilt, nested).contains(where: {
+                        ($0.isFavourite ?? false) != ($1.isFavourite ?? false)
+                    }) {
+                    result[i].recipes = rebuilt
                 }
             }
         }
