@@ -3837,7 +3837,7 @@ struct QRReaderView: View {
                 // 2. "Scan QR" title — 24pt leading, 10pt below nav.
                 Text("Scan QR")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Theme.Color.softWhiteText)
                     .padding(.leading, 24)
                     .padding(.top, 10)
 
@@ -3859,11 +3859,11 @@ struct QRReaderView: View {
                 VStack(spacing: 14) {
                     ProgressView()
                         .progressViewStyle(.circular)
-                        .tint(Color.white)
+                        .tint(Theme.Color.softWhiteText)
                         .scaleEffect(1.4)
                     Text(loaderMessage)
                         .font(.system(size: 14))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Theme.Color.softWhiteText)
                 }
                 .padding(24)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -3953,7 +3953,7 @@ struct QRReaderView: View {
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 19, height: 18)
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Theme.Color.softWhiteText)
                     .frame(width: 27, height: 27)
                     .contentShape(Rectangle())
             }
@@ -4710,7 +4710,7 @@ struct BarBotCraftingView: View {
             } label: {
                 Text("Make it Again")
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.Color.softWhiteText)
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)
                     .background(

@@ -502,19 +502,24 @@ struct MainTabView: View {
         // counterparts so icons / titles stay legible against the dark
         // `primaryBackgroundColor` canvas instead of disappearing into
         // a black-on-dark blur.
+        // Dark-mode "white" is routed through `softWhiteTextColor` so the
+        // tab-bar icons / titles read as a softened off-white (#EBEBEB)
+        // instead of harsh full-luminance #FFFFFF on OLED. Light mode is
+        // bit-identical to the historical hard-coded `UIColor.black(...)`.
+        let softWhiteUIColor = UIColor(named: "softWhiteTextColor") ?? .white
         let unselectedIconColor = UIColor { trait in
             trait.userInterfaceStyle == .dark
-                ? UIColor.white.withAlphaComponent(0.55)
+                ? softWhiteUIColor.withAlphaComponent(0.55)
                 : UIColor.black.withAlphaComponent(0.55) // EXACT historical value
         }
         let unselectedTitleColor = UIColor { trait in
             trait.userInterfaceStyle == .dark
-                ? UIColor.white.withAlphaComponent(0.6)
+                ? softWhiteUIColor.withAlphaComponent(0.6)
                 : UIColor.black.withAlphaComponent(0.6) // EXACT historical value
         }
         let selectedColor = UIColor { trait in
             trait.userInterfaceStyle == .dark
-                ? UIColor.white
+                ? softWhiteUIColor
                 : UIColor.black // EXACT historical value
         }
 

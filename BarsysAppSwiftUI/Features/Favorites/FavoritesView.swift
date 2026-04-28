@@ -683,7 +683,7 @@ struct FavoritesView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 24, height: 24)
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Theme.Color.softWhiteText)
                 } else {
                     Image("profileIcon")
                         .resizable()
@@ -1026,7 +1026,7 @@ struct BarsysRecipeRow: View {
         if #available(iOS 26.0, *) {
             return Color.black.opacity(0.3)
         } else {
-            return Color.white
+            return Theme.Color.softWhiteText
         }
     }
 

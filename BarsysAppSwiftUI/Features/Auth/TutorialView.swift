@@ -113,7 +113,7 @@ struct TutorialView: View {
                                 .renderingMode(.template)
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 24, height: 24)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.Color.softWhiteText)
                         }
                     }
                 }
@@ -138,7 +138,7 @@ struct TutorialView: View {
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 30, height: 30)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.Color.softWhiteText)
                     }
                     .buttonStyle(BounceButtonStyle())
                     .padding(.trailing, 20)
@@ -161,7 +161,7 @@ struct TutorialView: View {
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 35, height: 44)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.Color.softWhiteText)
                     }
                     .buttonStyle(BounceButtonStyle())
                     .padding(.trailing, 20)

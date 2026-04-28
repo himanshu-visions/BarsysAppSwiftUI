@@ -602,7 +602,7 @@ struct RecipeRowCell: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 22, height: 22)
                         .frame(width: 30, height: 30)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.Color.softWhiteText)
                         .background(Color.black.opacity(0.001)) // ensures hit area
                 }
                 .buttonStyle(BounceButtonStyle())
@@ -2174,7 +2174,7 @@ struct RecipeIngredientRow: View {
                             .frame(width: 24, height: 24)
                             .foregroundStyle(Color(UIColor { trait in
                                 trait.userInterfaceStyle == .dark
-                                    ? UIColor.white
+                                    ? (UIColor(named: "softWhiteTextColor") ?? .white)
                                     : UIColor(named: "grayBorderColor") ?? .gray
                             }))
                             .frame(width: 30, height: 30)
@@ -2271,7 +2271,7 @@ struct RecipeIngredientRow: View {
                             .frame(width: 24, height: 24)
                             .foregroundStyle(Color(UIColor { trait in
                                 trait.userInterfaceStyle == .dark
-                                    ? UIColor.white
+                                    ? (UIColor(named: "softWhiteTextColor") ?? .white)
                                     : UIColor(named: "grayBorderColor") ?? .gray
                             }))
                             .frame(width: 30, height: 30)

@@ -502,7 +502,7 @@ struct MyBarView: View {
                             .frame(width: 22, height: 22)
                         Image(systemName: "checkmark")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(Theme.Color.softWhiteText)
                     }
                 }
                 .frame(width: 30, height: 30)
@@ -1150,7 +1150,7 @@ struct ScanIngredientsView: View {
                 Spacer()
                 Text("Point the camera at an ingredient barcode")
                     .font(Theme.Font.body(14))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.Color.softWhiteText)
                     .padding(Theme.Spacing.m)
                     .background(.black.opacity(0.6), in: Capsule())
                     .padding(.bottom, Theme.Spacing.xxl)

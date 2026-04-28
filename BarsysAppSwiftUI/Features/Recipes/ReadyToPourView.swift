@@ -939,7 +939,7 @@ struct ReadyToPourRecipeRow: View {
         if #available(iOS 26.0, *) {
             return Color.black.opacity(0.3)
         } else {
-            return Color.white
+            return Theme.Color.softWhiteText
         }
     }
 

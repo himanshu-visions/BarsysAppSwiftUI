@@ -255,7 +255,7 @@ struct BarsysWebView: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.Color.softWhiteText)
                         .frame(width: 22, height: 22)
                         .frame(width: 50, height: 50)
                         .contentShape(Rectangle())
@@ -267,7 +267,7 @@ struct BarsysWebView: View {
                     // UIKit: `boldSystem pointSize=16` → `.system(16, .bold)`.
                     .font(.system(size: 16, weight: .bold))
                     // UIKit: `textColor white="1"` → white.
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.Color.softWhiteText)
                     // UIKit: `lineBreakMode tailTruncation`, single line.
                     .lineLimit(1)
                     .truncationMode(.tail)

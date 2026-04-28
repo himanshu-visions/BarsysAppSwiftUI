@@ -348,7 +348,7 @@ struct RecipeCard: View {
                         .overlay(
                             Image(systemName: recipe.imageName.isEmpty ? "wineglass" : recipe.imageName)
                                 .font(.system(size: 52))
-                                .foregroundStyle(.white.opacity(0.85))
+                                .foregroundStyle(Theme.Color.softWhiteText.opacity(0.85))
                         )
 
                     if let onFavorite {
@@ -356,7 +356,7 @@ struct RecipeCard: View {
                         Button(action: onFavorite) {
                             Image(systemName: isFav ? "heart.fill" : "heart")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(isFav ? Theme.Color.danger : .white)
+                                .foregroundStyle(isFav ? Theme.Color.danger : Theme.Color.softWhiteText)
                                 .padding(8)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
@@ -773,7 +773,7 @@ struct BarsysAlertOverlay: View {
                     } label: {
                         Text(item.primaryActionTitle)
                             .font(.system(size: 16))
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(Theme.Color.softWhiteText)
                             .frame(maxWidth: .infinity)
                             .frame(height: 45)
                             .background(

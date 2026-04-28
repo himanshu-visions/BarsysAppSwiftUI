@@ -708,7 +708,7 @@ struct DevicePairedView: View {
                                     .renderingMode(.template)
                                     .aspectRatio(contentMode: .fit)
                                     .frame(width: 60, height: 60)
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(Theme.Color.softWhiteText)
                             }
                             .frame(height: 194)
                             .clipShape(RoundedRectangle(cornerRadius: 20))

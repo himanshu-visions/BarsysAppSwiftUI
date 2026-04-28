@@ -55,6 +55,12 @@ enum Theme {
         static let textTertiary         = SwiftUI.Color("lightGrayColor")
         static let textDisabled         = SwiftUI.Color("disabledGrayColor")
         static let textMuted            = SwiftUI.Color("mutedGrayColor")
+        // Adaptive replacement for hard-coded `Color.white` foregrounds.
+        // Light = pure white (1,1,1) — bit-identical to `Color.white` so
+        // light-mode pixels are unchanged. Dark = #EBEBEB (0.92,0.92,0.92)
+        // — a very subtle off-white that softens OLED glare without
+        // looking grey.
+        static let softWhiteText        = SwiftUI.Color("softWhiteTextColor")
         static let inputPlaceholder     = SwiftUI.Color("inputPlaceholderColor")
         static let craftingTitle        = SwiftUI.Color("craftingTitleColor")
         static let charcoalGray         = SwiftUI.Color("charcoalGrayColor")
@@ -1535,7 +1541,7 @@ private struct BarsysPopupCard: View {
         Button { HapticService.light(); action() } label: {
             Text(title)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.Color.softWhiteText)
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
                 .background(
