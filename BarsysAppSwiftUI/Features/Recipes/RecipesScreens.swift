@@ -326,46 +326,45 @@ struct ExploreRecipesView: View {
 
     /// Source recipes for the Explore listing.
     ///
-    /// Mirrors UIKit `DBQueries.fetchExploreAllRecipes()` which only
-    /// shows standalone Barsys recipes (`WHERE user_id IS NULL OR
-    /// TRIM(user_id) = ''`) — user-created My Drinks live on the
-    /// Favorites/My-Drinks tab, never the Explore feed.
-    ///
-    /// On top of that we de-dupe by display name (case-insensitive,
-    /// trimmed). UIKit's data model stores standalone recipes in
-    /// `recipes` and mixlist→recipe associations in
-    /// `mixlist_recipes` so a single bottle like "Long Island Iced
-    /// Tea" can only appear once in the Explore SQL. SwiftUI
-    /// upserts nested mixlist recipes into the same in-memory dict
-    /// in `CatalogService.preload()` — when the API hands the same
-    /// recipe back under a different `id` for the standalone copy
-    /// vs. the mixlist-nested copy, both land in the dict and the
-    /// list shows duplicates ("Long Island Iced Tea" appearing
-    /// multiple times was the user-reported regression). Collapsing
-    /// by displayName here brings the Explore listing back in line
-    /// with UIKit's one-row-per-recipe rendering without touching
-    /// storage (so `recipe(by:)` lookups from RecipePage / MixlistDetail
-    /// still resolve every id, regardless of which source inserted it).
-    private var dedupedRecipes: [Recipe] {
-        let onlyStandalone = catalog.recipes.filter { ($0.userId ?? "").isEmpty }
-        var seenNames = Set<String>()
-        var result: [Recipe] = []
-        result.reserveCapacity(onlyStandalone.count)
-        for recipe in onlyStandalone {
-            let key = recipe.displayName
-                .lowercased()
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            // Don't dedupe nameless rows — fall through so a
-            // missing-name edge case can't silently drop a recipe.
-            if key.isEmpty {
-                result.append(recipe)
-                continue
+    /// Mirrors UIKit `DBQueries.fetchExploreAllRecipes()`:
+    ///   • `WHERE user_id IS NULL OR TRIM(user_id) = ''` — only
+    ///     standalone Barsys recipes; user-created My Drinks live on
+    ///     the Favorites/My-Drinks tab, never the Explore feed.
+    ///   • `ORDER BY createdAt DESC` — already applied by
+    ///     `MockStorageService.allRecipes()` so `catalog.recipes`
+    ///     arrives newest-first.
+    ///   • UIKit ships every standalone recipe regardless of how many
+    ///     ingredients it has (no SQL-level filter on ingredient
+    ///     count) — but the PRODUCT requirement here is to suppress
+    ///     rows with zero non-garnish ingredients (those render an
+    ///     empty cell that confused users into thinking the page was
+    ///     duplicating entries when the API hands back two copies of
+    ///     the same recipe — one populated, one bare). Skipping the
+    ///     empty copies leaves the populated row from the same
+    ///     fetch, so nothing legitimate goes missing.
+    ///   • NO de-dupe by displayName — UIKit doesn't `DISTINCT` /
+    ///     `GROUP BY name`, and a previous SwiftUI dedup-by-name was
+    ///     silently dropping the populated copy when the API returned
+    ///     the same recipe under two ids. Matching UIKit's row-per-
+    ///     standalone-record semantics keeps every populated recipe
+    ///     visible.
+    private var exploreRecipes: [Recipe] {
+        catalog.recipes.filter { recipe in
+            // Standalone-only (UIKit user_id filter).
+            guard (recipe.userId ?? "").isEmpty else { return false }
+            // Hide empty-ingredient rows. "Empty" mirrors UIKit's
+            // ingredient subquery semantics: at least one ingredient
+            // whose primary category isn't `garnish` /
+            // `additionals` / `additional`. Garnish-only entries
+            // count as empty and are suppressed.
+            let realIngredients = (recipe.ingredients ?? []).filter { ingredient in
+                let primary = (ingredient.category?.primary ?? "").lowercased()
+                return primary != "garnish"
+                    && primary != "additionals"
+                    && primary != "additional"
             }
-            if seenNames.insert(key).inserted {
-                result.append(recipe)
-            }
+            return !realIngredients.isEmpty
         }
-        return result
     }
 
     /// Filtered recipes — ports cacheRecipesSearchResults().
@@ -373,10 +372,10 @@ struct ExploreRecipesView: View {
     /// Searches recipe name and ingredientNames string.
     private var filtered: [Recipe] {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return dedupedRecipes
+            return exploreRecipes
         }
         let words = query.lowercased().split(separator: " ").map(String.init)
-        return dedupedRecipes.filter { r in
+        return exploreRecipes.filter { r in
             let name = r.displayName.lowercased()
             let ingredients = (r.ingredientNames ?? "").lowercased()
             return words.contains { word in
