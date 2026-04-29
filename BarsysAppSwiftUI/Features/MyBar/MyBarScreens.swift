@@ -338,11 +338,13 @@ struct MyBarView: View {
     private var ingredientsFoundPopup: some View {
         ZStack {
             // Dark scrim — UIKit viewTransparent backgroundColor black@0.5.
+            // No `.onTapGesture` here: an empty tap gesture on the
+            // full-screen scrim was intercepting tap events before they
+            // could reach the close (X) button inside the card. UIKit's
+            // dim layer has no action either, so leaving the scrim
+            // gesture-less matches behaviour and unblocks the X.
             Color.black.opacity(0.5)
                 .ignoresSafeArea()
-                .onTapGesture { /* ignore taps on scrim — UIKit has a
-                                   transparent button only for the X
-                                   icon; scrim itself does nothing */ }
 
             ingredientsFoundCard
                 .padding(.horizontal, 24)
