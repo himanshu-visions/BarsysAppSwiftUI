@@ -177,9 +177,22 @@ struct FavoritesView: View {
         let pool: [Recipe]
         switch selectedTab {
         case .barsysRecipes:
+            // 1:1 with UIKit `DBQueries.fetchFavouritesRecipes` which
+            // filters `WHERE user_id IS NULL OR TRIM(user_id) = ''` so
+            // the Barsys Recipes tab ONLY ever lists Barsys-side
+            // favourites. Without the userId filter, a recipe that the
+            // user favourited from the My Drinks tab leaked into this
+            // listing because `fetchMyDrinks` upserts My Drinks into
+            // the same `recipes` dict and any add-to-favourites
+            // (whether from MyDrinks, RecipePage, or MixlistDetail)
+            // wrote into the same favs Set. The userId guard splits
+            // them back into the two distinct columns UIKit shipped
+            // with — Barsys favourites here, My Drinks favourites on
+            // Tab 1 — and is also a no-op flag check (~constant time
+            // per recipe) so existing performance is unchanged.
             let ids = env.storage.favorites()
             pool = env.storage.allRecipes()
-                .filter { ids.contains($0.id) }
+                .filter { ids.contains($0.id) && ($0.userId ?? "").isEmpty }
                 .sorted { lhs, rhs in
                     let lb = lhs.barsys360Compatible == true
                     let rb = rhs.barsys360Compatible == true
@@ -787,7 +800,14 @@ struct FavoritesView: View {
                                     : Constants.unlikeSuccessMessage) {
                         // applyLikeResult (UIKit L373-374 Tab 1):
                         //   myDrinksResponseModel.data[index].isMyDrinkFavourite = isLike
-                        //   (in-memory only, no DB write)
+                        //   (in-memory only in UIKit, where viewWillAppear
+                        //   re-fetches /my/recipes on every screen entry).
+                        //   SwiftUI keeps a UserDefaults-backed
+                        //   `MyDrinksCache` so the My Drinks list survives
+                        //   offline / cold-launch — without a re-save here
+                        //   the cache held the pre-toggle favourite state
+                        //   and the heart visually reverted on app restart
+                        //   even though the server PATCH had succeeded.
                         if let idx = myDrinksLoaded.firstIndex(where: { $0.id == recipe.id }) {
                             myDrinksLoaded[idx].isMyDrinkFavourite = willBeFav
                             myDrinksLoaded[idx].isFavourite = willBeFav
@@ -798,6 +818,27 @@ struct FavoritesView: View {
                                 myDrinksResponseModel = model
                             }
                         }
+                        // 1:1 with UIKit Tab 1 `applyLikeResult`
+                        // (FavouritesRecipesAndDrinksViewModel.swift:373):
+                        // ONLY update `isMyDrinkFavourite` here — DO
+                        // NOT mirror into the global favs Set. UIKit
+                        // keeps the two data sources fully separate so
+                        // a heart-tap on a My Drink can never make
+                        // the recipe appear in the Barsys Recipes
+                        // favourites tab. Earlier SwiftUI behaviour
+                        // wrote into the favs Set for cross-screen
+                        // consistency, but that polluted Tab 0 with
+                        // My Drinks rows — the user-reported
+                        // regression. The favs Set is reserved for
+                        // Barsys-recipe favourites; My Drinks
+                        // favourites live exclusively on the
+                        // `isMyDrinkFavourite` flag + MyDrinksCache.
+                        // Persist updated My Drinks cache so the
+                        // toggle survives an app restart even when
+                        // offline. Mirrors UIKit's behaviour where
+                        // the next viewWillAppear refetch from
+                        // `/my/recipes` would supply the same state.
+                        MyDrinksCache.save(myDrinksLoaded)
                         // UIKit Tab 1: tblFavouritesRecipesAndDrinks.reloadData()
                         // — local @State writes already trigger SwiftUI re-render.
                     }

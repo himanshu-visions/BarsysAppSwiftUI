@@ -917,20 +917,33 @@ struct RecipeDetailView: View {
                 .chooseOptionsStyleNavBar()
                 .onAppear {
                     loadIngredients(from: recipe)
-                    // Seed local favourite state from the AUTHORITATIVE
-                    // favs Set, not from the recipe struct's flag — the
-                    // struct flag can drift away from the favs Set after
-                    // `CatalogService.preload()` re-fetches recipes (the
-                    // API recipe payload has no isFavourite field, so
-                    // the upsert overwrites the flag back to nil while
-                    // the favs Set still has the id). Reading the wrong
-                    // source seeded `false` for already-favourited
-                    // recipes, so the button rendered "Add to Favorites"
-                    // and tapping it called `toggleFavorite` which then
-                    // REMOVED the existing favourite — the bug the user
-                    // observed as "tapping Add to Favorites changes back
-                    // to Add to Favorites".
-                    localIsFavourite = env.storage.favorites().contains(recipeID)
+                    // Seed local favourite state from the right source
+                    // depending on whether this recipe is a Barsys
+                    // recipe or a My Drink (1:1 UIKit Tab 0 / Tab 1):
+                    //   • Barsys recipe (`isMyDrinkFavourite == nil`)
+                    //     → favs Set (`storage.favorites()`).
+                    //   • My Drink (`isMyDrinkFavourite != nil`)
+                    //     → that flag itself.
+                    // For Barsys recipes the favs Set is the
+                    // AUTHORITATIVE source — the struct's
+                    // `isFavourite` flag can drift after
+                    // `CatalogService.preload()` re-fetches recipes
+                    // (the API payload has no isFavourite field, so
+                    // the upsert resets the flag to nil while the
+                    // favs Set still holds the id). Reading the
+                    // wrong source previously seeded `false` for
+                    // already-favourited recipes and the "Add to
+                    // Favorites" tap then REMOVED the favourite.
+                    // For My Drinks the favs Set is intentionally
+                    // empty (Tab 1 keeps its own flag, never writes
+                    // to favs), so we read from the per-row flag
+                    // instead.
+                    if let stored = env.storage.recipe(by: recipeID),
+                       let myDrinkFlag = stored.isMyDrinkFavourite {
+                        localIsFavourite = myDrinkFlag
+                    } else {
+                        localIsFavourite = env.storage.favorites().contains(recipeID)
+                    }
                     // 1:1 with UIKit `RecipePageViewModel+CraftAndAnalytics`
                     // `trackViewRecipe()` (L144-200) — fires every time the
                     // recipe page lands. Property dictionary mirrors the
@@ -1548,35 +1561,91 @@ struct RecipeDetailView: View {
                     showEditRecipe = true
                 case .addToFavourites:
                     localIsFavourite = true
-                    // Use explicit `setFavorite(_:isFavorite:)` instead
-                    // of `toggleFavorite` — `toggleFavorite` flips the
-                    // current storage state, which means a UI that's
-                    // out-of-sync with storage (possible after a preload
-                    // re-fetch) toggles the WRONG way. `setFavorite`
-                    // commits to the intended direction so the optimistic
-                    // local state always matches storage.
-                    env.storage.setFavorite(recipe.id, isFavorite: true)
+                    // Branch on the data source so the two listings
+                    // stay completely separate (1:1 UIKit Tabs 0/1):
+                    //   • Barsys recipe → write to favs Set ONLY.
+                    //   • My Drink (`isMyDrinkFavourite` non-nil) →
+                    //     update `isMyDrinkFavourite` ONLY, leave the
+                    //     favs Set alone so it never appears in
+                    //     "Barsys Recipes" tab.
+                    //
+                    // `setFavorite(_:isFavorite:)` is preferred over
+                    // `toggleFavorite` so the optimistic UI direction
+                    // always matches storage, even if storage drifted
+                    // from a recent preload re-fetch.
+                    let isMyDrink: Bool = {
+                        if let s = env.storage.recipe(by: recipe.id) {
+                            return s.isMyDrinkFavourite != nil
+                        }
+                        return false
+                    }()
+                    if isMyDrink {
+                        if let stored = env.storage.recipe(by: recipe.id) {
+                            var u = stored
+                            u.isMyDrinkFavourite = true
+                            u.isFavourite = true
+                            env.storage.upsert(recipe: u)
+                        }
+                    } else {
+                        env.storage.setFavorite(recipe.id, isFavorite: true)
+                    }
                     Task {
                         do {
                             _ = try await env.api.likeUnlike(
                                 recipeId: recipe.id.value, isLike: true)
                         } catch {
                             localIsFavourite = false
-                            env.storage.setFavorite(recipe.id, isFavorite: false)
+                            if isMyDrink {
+                                if let stored = env.storage.recipe(by: recipe.id) {
+                                    var u = stored
+                                    u.isMyDrinkFavourite = false
+                                    u.isFavourite = false
+                                    env.storage.upsert(recipe: u)
+                                }
+                            } else {
+                                env.storage.setFavorite(recipe.id, isFavorite: false)
+                            }
                         }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeAdded.rawValue)
                     env.alerts.show(message: Constants.likeSuccessMessage)
                 case .unfavourite:
                     localIsFavourite = false
-                    env.storage.setFavorite(recipe.id, isFavorite: false)
+                    // Same Tab 0 / Tab 1 split as `.addToFavourites`
+                    // — only the data source that owns this recipe's
+                    // favourite state gets updated.
+                    let isMyDrink: Bool = {
+                        if let s = env.storage.recipe(by: recipe.id) {
+                            return s.isMyDrinkFavourite != nil
+                        }
+                        return false
+                    }()
+                    if isMyDrink {
+                        if let stored = env.storage.recipe(by: recipe.id) {
+                            var u = stored
+                            u.isMyDrinkFavourite = false
+                            u.isFavourite = false
+                            env.storage.upsert(recipe: u)
+                        }
+                    } else {
+                        env.storage.setFavorite(recipe.id, isFavorite: false)
+                    }
                     Task {
                         do {
                             _ = try await env.api.likeUnlike(
                                 recipeId: recipe.id.value, isLike: false)
                         } catch {
                             localIsFavourite = true
-                            env.storage.setFavorite(recipe.id, isFavorite: true)
+                            if isMyDrink {
+                                if let stored = env.storage.recipe(by: recipe.id) {
+                                    var u = stored
+                                    u.isMyDrinkFavourite = true
+                                    u.isFavourite = true
+                                    env.storage.upsert(recipe: u)
+                                }
+                            } else {
+                                env.storage.setFavorite(recipe.id, isFavorite: true)
+                            }
                         }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)

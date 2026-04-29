@@ -709,7 +709,15 @@ final class OryAPIClient: APIClient {
         // returns empty on API failure / app restart.
         let recipes: [Recipe] = apiRecipes.map {
             var r = $0.toRecipe()
-            r.isMyDrinkFavourite = true
+            // Use the API's per-row `favorite` flag (1:1 with UIKit
+            // `MixlistModel.isMyDrinkFavourite = "favorite"`). Default
+            // to `true` ONLY when the server omits the field — this
+            // preserves the previous "treat any my-recipes row as a
+            // favourite by default" fallback for older payloads while
+            // letting fresh responses honour the real toggle state, so
+            // an unfavourited My Drink no longer reappears as
+            // favourited after a cache reload / app restart.
+            r.isMyDrinkFavourite = $0.favorite ?? true
             return r
         }
         return MyDrinksDataModel(
@@ -1112,6 +1120,16 @@ final class OryAPIClient: APIClient {
         let barsys360Compatible: Bool?
         let slug: String?
         let userId: String?
+        /// 1:1 with UIKit `MixlistModel.swift:87`
+        /// `case isMyDrinkFavourite = "favorite"` — the
+        /// `my/recipes` API hands back a `"favorite"` boolean per
+        /// row indicating whether the user has currently
+        /// favourited this My Drink. Decoding it here lets
+        /// `fetchMyDrinks` propagate the real per-row state into
+        /// `Recipe.isMyDrinkFavourite` instead of unconditionally
+        /// assuming `true`, which was masking unfavourite state
+        /// across cache reloads / app restarts.
+        let favorite: Bool?
 
         // JSON from API uses snake_case: created_at, updated_at,
         // barsys_360_compatible, ingredient_names, user_id, full_recipe_id
@@ -1126,6 +1144,7 @@ final class OryAPIClient: APIClient {
             case barsys360Compatible = "barsys_360_compatible"
             case slug
             case userId = "user_id"
+            case favorite
         }
 
         func toRecipe() -> Recipe {
