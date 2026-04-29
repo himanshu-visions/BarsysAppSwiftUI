@@ -2208,15 +2208,14 @@ final class CatalogService: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // The notification fires on `.main` queue but a fresh
-            // `Task { ... }` defaults to a background executor, so
-            // explicitly hop the task onto the main actor. `preload()`
-            // wraps every `@Published` write in `MainActor.run { }`,
-            // so this is belt-and-suspenders — the explicit `@MainActor`
-            // annotation also keeps `handleConnectionRestored()`'s
-            // `lastAPICallTime` reset and `await preload()` invocation
-            // on the same main thread the user-facing fetch path uses.
-            Task { @MainActor [weak self] in
+            // Spawn a plain (nonisolated) task — `preload()` itself
+            // wraps every `@Published` write in `await MainActor.run { }`,
+            // so the publish always lands on main regardless of what
+            // executor this Task starts on. Using a `@MainActor` Task
+            // here would make Swift infer the surrounding `init` as
+            // main-actor isolated and break the synchronous call site
+            // in `AppEnvironment.live()`.
+            Task { [weak self] in
                 await self?.handleConnectionRestored()
             }
         }

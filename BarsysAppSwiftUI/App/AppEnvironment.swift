@@ -135,6 +135,14 @@ final class AppEnvironment: ObservableObject {
 
     // MARK: - Factory
 
+    /// `@MainActor` because every caller — `@StateObject private var
+    /// environment = AppEnvironment.live()` in the `@main` App struct
+    /// — already runs on the main actor, and pinning the factory here
+    /// lets it call any service initializer that the Swift concurrency
+    /// checker may end up inferring as main-actor-isolated (e.g. when
+    /// the type holds `@Published` properties or registers
+    /// NotificationCenter observers).
+    @MainActor
     static func live() -> AppEnvironment {
         let preferences = PreferencesService()
         let storage = MockStorageService()
