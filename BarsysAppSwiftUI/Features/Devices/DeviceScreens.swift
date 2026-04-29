@@ -555,11 +555,30 @@ struct DeviceListPopup: View {
                 .layoutPriority(1)
 
                 // Arrow (imgDeviceArrow, 10×10, "arrowRight")
-                Image("arrowRight")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 10, height: 10)
-                    .padding(.leading, 8)
+                //
+                // Light mode keeps the raw PNG so the row stays
+                // pixel-identical to the existing UIKit-parity render.
+                // Dark mode template-tints the arrow with
+                // `softWhiteText` because the asset PNG is a near-black
+                // chevron — without the override it disappears against
+                // the dark device-list-popup canvas. Same pattern used
+                // by `BarBotScreens.swift` `sendImage` and the Crafting
+                // back-button branch.
+                Group {
+                    if colorScheme == .dark {
+                        Image("arrowRight")
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .foregroundStyle(Theme.Color.softWhiteText)
+                    } else {
+                        Image("arrowRight")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    }
+                }
+                .frame(width: 10, height: 10)
+                .padding(.leading, 8)
             }
             .padding(.vertical, 10)
             .contentShape(Rectangle())
