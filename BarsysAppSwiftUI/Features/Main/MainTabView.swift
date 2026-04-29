@@ -94,13 +94,13 @@ struct MainTabView: View {
         Binding(
             get: { router.selectedTab },
             set: { newTab in
-                // 1:1 with UIKit `TabBarViewController.tabBar(_:didSelect:)`
-                // (BarsysApp/Controllers/TabBar/TabBarViewController.swift:255)
-                // which calls `HapticService.shared.selection()` on every
-                // tab-bar tap. The SwiftUI port previously fired no
-                // haptic at all; restoring it here so a tab switch
-                // feels the same as in UIKit.
-                HapticService.selection()
+                // Intentionally diverges from UIKit parity (which used
+                // `HapticService.shared.selection()` in
+                // BarsysApp/Controllers/TabBar/TabBarViewController.swift:255):
+                // per user feedback the SwiftUI tab bar tap should feel
+                // a little firmer, so we use a medium impact instead of
+                // the subtler selectionChanged() vibration.
+                HapticService.medium()
                 // UIKit-parity guard — if a RecipeDetailView currently on
                 // screen reports unsaved quantity edits, surface the
                 // same "Keep Editing / Discard" confirmation UIKit's
