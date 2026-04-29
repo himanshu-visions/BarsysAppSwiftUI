@@ -1049,6 +1049,13 @@ private struct BarsysPopupCard: View {
     /// `ManualStartSpiningPopUpViewController`, and
     /// `MultipleIngredientsPopUpViewController`.
     let onClose: () -> Void
+    /// Drives the dark-mode invert of the `BarsysLoader` GIF used in the
+    /// `.waiting` / `.manualSpinning` popup cases. The spinner ships as
+    /// a dark-inked Barsys logo on a transparent backdrop, perfect on a
+    /// light card but invisible against the dark popup card. Inverting
+    /// flips the ink to near-white in dark mode only — light mode
+    /// renders the original pixels byte-for-byte.
+    @Environment(\.colorScheme) private var colorScheme
 
     // Storyboard was 277pt but that pinned the two-button row to
     // 109.5pt per button — "No, stay in the app" touched the pill edges
@@ -1117,10 +1124,17 @@ private struct BarsysPopupCard: View {
 
             case .manualSpinning(let title, let message):
                 popupTitleBlock(title: title, message: message)
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(Theme.Color.brand)
-                    .scaleEffect(1.4)
+                // UIKit `ManualStartSpiningPopUpViewController` shows the
+                // BarsysLoader.gif as the spinner. Reuses the shared
+                // `AnimatedGIFView` (BarBotScreens.swift) which decodes
+                // the GIF via CGImageSource and plays every frame at its
+                // encoded delay. 45×45 matches the UIKit storyboard's
+                // `imgLoading` constraints. The dark-mode invert flips
+                // the dark-inked GIF to near-white against the dark
+                // popup card.
+                AnimatedGIFView(assetName: "BarsysLoader")
+                    .frame(width: 45, height: 45)
+                    .invertedInDarkMode(colorScheme == .dark)
                     .padding(.vertical, 8)
                     .padding(.top, 23) // 31 - 8 (vertical 8 above + 8 below)
                 secondaryButton(ConstantButtonsTitle.cancelButtonTitle,
@@ -1167,10 +1181,15 @@ private struct BarsysPopupCard: View {
 
             case .waiting(let title, let message):
                 popupTitleBlock(title: title, message: message)
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(Theme.Color.brand)
-                    .scaleEffect(1.4)
+                // UIKit waiting popup uses BarsysLoader.gif as the
+                // spinner — see `AnimatedGIFView` in BarBotScreens.swift
+                // for the shared CGImageSource-based decoder. 45×45 to
+                // match UIKit's `imgLoading` constraints; dark-mode
+                // invert keeps the dark-inked GIF readable against the
+                // dark popup card.
+                AnimatedGIFView(assetName: "BarsysLoader")
+                    .frame(width: 45, height: 45)
+                    .invertedInDarkMode(colorScheme == .dark)
                     .padding(.vertical, 8)
                     .padding(.top, 23)
                     .padding(.bottom, 14)

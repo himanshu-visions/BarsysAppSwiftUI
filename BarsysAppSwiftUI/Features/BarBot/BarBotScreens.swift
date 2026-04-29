@@ -3870,10 +3870,15 @@ struct QRReaderView: View {
             if isConnecting {
                 Color.black.opacity(0.3).ignoresSafeArea()
                 VStack(spacing: 14) {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(Theme.Color.softWhiteText)
-                        .scaleEffect(1.4)
+                    // BarsysLoader GIF — matches the waiting/glass loaders
+                    // used elsewhere in the app. Forced-invert because the
+                    // QR screen always renders on a black 0.9 backdrop, so
+                    // the dark-inked GIF must flip to white regardless of
+                    // the system color scheme to read against the dark
+                    // glass card.
+                    AnimatedGIFView(assetName: "BarsysLoader")
+                        .frame(width: 45, height: 45)
+                        .invertedInDarkMode(true)
                     Text(loaderMessage)
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.Color.softWhiteText)
@@ -5002,13 +5007,18 @@ struct WaitingRecipePopup: View {
                 // Inner content (`L9q-OP-VHX`) — 229×193.33 at (24, 24).
                 VStack(spacing: 24) {
                     // Spinner — UIKit uses a 45×45 GIF (BarsysLoader.gif).
-                    // The SwiftUI port uses a native ProgressView tinted
-                    // with the brand colour; swap for an AnimatedImage
-                    // wrapper once the GIF is packaged in SwiftUI assets.
-                    ProgressView()
-                        .controlSize(.large)
+                    // The asset is now packaged in the SwiftUI target
+                    // (Assets.xcassets/BarsysLoader.dataset), so we route
+                    // through the shared `AnimatedGIFView` (defined
+                    // earlier in this file) which decodes the GIF via
+                    // CGImageSource and animates every frame at its
+                    // encoded delay — bit-identical to UIKit's
+                    // SDAnimatedImageView playback. Dark-mode invert
+                    // keeps the dark-inked GIF readable on the dark
+                    // glass card.
+                    AnimatedGIFView(assetName: "BarsysLoader")
                         .frame(width: 45, height: 45)
-                        .tint(Color("veryDarkGrayColor"))
+                        .invertedInDarkMode(colorScheme == .dark)
                         .accessibilityLabel("Loading recipe")
 
                     // Title — UIKit lblTitle: system 16pt,
