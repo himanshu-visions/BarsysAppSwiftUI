@@ -133,29 +133,25 @@ struct TutorialView: View {
                         playerHolder.cleanup()
                         finishTutorial()
                     } label: {
-                        // 15×15 visual icon inside a 44×44 glass-styled
-                        // circle — same `.ultraThinMaterial` + 1pt white
-                        // border recipe `NavigationRightGlassButtons`
-                        // (HomeView.swift:709) uses for the toolbar
-                        // back / favorites / profile chips, so the
-                        // Tutorial close button matches the iOS 26
-                        // Liquid Glass back-button look.
-                        Image("crossIcon")
-                            .resizable()
-                            .renderingMode(.template)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 15, height: 15)
-                            .foregroundStyle(Theme.Color.softWhiteText)
-                            .frame(width: 44, height: 44)
-                            .background(
-                                Circle()
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                                    )
-                            )
-                            .contentShape(Circle())
+                        // 15×15 cross icon inside a 44×44 glass circle.
+                        // iOS 26+: native `.glassEffect(.regular.interactive(), in: .circle)`
+                        // gives the same Liquid Glass press refraction
+                        // the toolbar back chevron has, so the tap
+                        // bounce is bit-identical. Pre-26: fall back
+                        // to the `.ultraThinMaterial` recipe used by
+                        // `NavigationRightGlassButtons`, paired with
+                        // `BounceButtonStyle` for the scale bounce.
+                        ZStack {
+                            Image("crossIcon")
+                                .resizable()
+                                .renderingMode(.template)
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 15, height: 15)
+                                .foregroundStyle(Theme.Color.softWhiteText)
+                        }
+                        .frame(width: 44, height: 44)
+                        .modifier(TutorialCloseGlassBackground())
+                        .contentShape(Circle())
                     }
                     .buttonStyle(BounceButtonStyle())
                     .padding(.trailing, 20)
@@ -264,6 +260,34 @@ struct VideoPlayerView: UIViewRepresentable {
     final class PlayerHostView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+}
+
+// MARK: - TutorialCloseGlassBackground
+//
+// Glass-styled circular background for the tutorial close (X) button.
+// On iOS 26+ uses the native `.glassEffect(.regular.interactive(), in:)`
+// modifier so the press gives the same Liquid Glass refraction the
+// system back chevron has. On older iOS falls back to the same
+// `.ultraThinMaterial` + 1pt white border recipe
+// `NavigationRightGlassButtons` uses (HomeView.swift:709), so the
+// chip still looks consistent with the toolbar back button there.
+private struct TutorialCloseGlassBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            content
+                .background(
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                        )
+                )
+        }
     }
 }
 
