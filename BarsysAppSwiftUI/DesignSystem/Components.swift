@@ -6,6 +6,78 @@
 //
 
 import SwiftUI
+import UIKit
+
+// MARK: - Interactive pop gesture (swipe-from-left-edge to dismiss)
+
+/// Re-enables the swipe-from-left-edge interactive pop gesture even
+/// when the host view has set `navigationBarBackButtonHidden(true)`.
+///
+/// UIKit silently disables `interactivePopGestureRecognizer` when the
+/// system back button is hidden — that's why every screen that swapped
+/// to a custom back chevron in this app lost its swipe-back behaviour.
+/// Setting the gesture's delegate to `nil` is Apple's documented
+/// workaround: the gesture no longer asks the (now-stale) delegate
+/// whether to recognise, so the swipe falls through to UIKit's default
+/// pop machinery exactly like on screens that still ship the system
+/// back button.
+///
+/// Apply via the `.interactivePopGestureEnabled()` `View` modifier on
+/// any screen with a custom back button that should still support
+/// swipe-back. Don't apply on screens that intentionally disable
+/// back navigation (e.g. CraftingView, which already sets
+/// `interactiveDismissDisabled()` to prevent accidental mid-pour
+/// dismiss).
+private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        ProbeController()
+    }
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+
+    /// Hosting `UIViewController` whose only job is to walk to the
+    /// nearest enclosing `UINavigationController` once it lands in
+    /// the hierarchy and clear the interactive-pop delegate.
+    final class ProbeController: UIViewController {
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = false
+        }
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            enableSwipeBack()
+        }
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            // Re-arm on every appear in case another screen pushed in
+            // between had its own delegate set, leaving the gesture
+            // disabled when we come back to a screen that wants it.
+            enableSwipeBack()
+        }
+        private func enableSwipeBack() {
+            // `parent?.navigationController` is the standard climb;
+            // SwiftUI sometimes hosts us inside a `UIHostingController`
+            // whose `navigationController` is the SwiftUI-managed
+            // `UINavigationController`. Both paths resolve to the same
+            // recogniser.
+            guard let nav = navigationController
+                ?? parent?.navigationController
+                ?? view.window?.rootViewController?.navigationController
+            else { return }
+            nav.interactivePopGestureRecognizer?.isEnabled = true
+            nav.interactivePopGestureRecognizer?.delegate = nil
+        }
+    }
+}
+
+extension View {
+    /// Re-enables the swipe-from-left-edge interactive pop gesture on
+    /// screens that have replaced the system back button with a custom
+    /// chevron. See `InteractivePopGestureEnabler` for rationale.
+    func interactivePopGestureEnabled() -> some View {
+        background(InteractivePopGestureEnabler())
+    }
+}
 
 // MARK: - Buttons
 

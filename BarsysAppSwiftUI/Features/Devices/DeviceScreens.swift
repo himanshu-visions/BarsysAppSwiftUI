@@ -142,6 +142,12 @@ struct PairDeviceView: View {
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()
+        // Re-enable swipe-from-left-edge interactive pop. The custom
+        // back chevron above sets `navigationBarBackButtonHidden`
+        // (implicit via the toolbar override), which UIKit treats as
+        // a signal to disable the gesture; this restores it without
+        // touching the visible chrome.
+        .interactivePopGestureEnabled()
         // Publish "we're on Pair Your Device" so the side menu's
         // "Device" row can skip a duplicate `router.push(.pairDevice)`
         // when this screen is already visible underneath the menu.

@@ -571,6 +571,9 @@ struct ExploreRecipesView: View {
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()
+        // Custom back chevron hides the system back button — restore
+        // the swipe-from-left-edge interactive pop gesture.
+        .interactivePopGestureEnabled()
     }
 }
 
@@ -889,6 +892,13 @@ struct RecipeDetailView: View {
                 .background(Theme.Color.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
                 .navigationBarBackButtonHidden(true)
+                // Custom back chevron hides the system back button —
+                // restore the swipe-from-left-edge interactive pop
+                // gesture. UIKit's swipe-back also bypasses the
+                // unsaved-changes alert, so this preserves UIKit
+                // parity (the alert only fires on the explicit
+                // back-button tap, not on swipe-back).
+                .interactivePopGestureEnabled()
                 .toolbar { toolbarContent(for: recipe) }
                 // Publish the local `hasUnsavedChanges` flag to the
                 // router so the tab-bar Binding in `MainTabView` can

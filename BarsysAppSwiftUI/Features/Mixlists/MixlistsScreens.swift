@@ -255,6 +255,9 @@ struct MixlistListView: View {
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()
+        // Custom back chevron hides the system back button — restore
+        // the swipe-from-left-edge interactive pop gesture.
+        .interactivePopGestureEnabled()
     }
 }
 
@@ -564,6 +567,9 @@ struct MixlistDetailView: View {
         .background(Theme.Color.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // Custom back chevron hides the system back button — restore
+        // the swipe-from-left-edge interactive pop gesture.
+        .interactivePopGestureEnabled()
         .toolbar { toolbarContent }
         .onAppear {
             // 1:1 with UIKit `MixlistDetailViewModel` L219 Braze call

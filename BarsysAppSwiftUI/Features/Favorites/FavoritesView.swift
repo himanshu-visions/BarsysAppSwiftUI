@@ -254,6 +254,9 @@ struct FavoritesView: View {
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // Custom back chevron hides the system back button — restore
+        // the swipe-from-left-edge interactive pop gesture.
+        .interactivePopGestureEnabled()
         .toolbar { toolbarContent }
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.

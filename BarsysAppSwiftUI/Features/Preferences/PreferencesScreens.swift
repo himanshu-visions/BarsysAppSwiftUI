@@ -157,6 +157,10 @@ struct PreferencesView: View {
         // pill renders against the same canvas as HomeView (ChooseOptions)
         // — makes the material blur + capsule stroke read identical.
         .chooseOptionsStyleNavBar()
+        // Re-enable swipe-back gesture (custom back chevron above
+        // hides the system one, which would otherwise disable
+        // `interactivePopGestureRecognizer`).
+        .interactivePopGestureEnabled()
         // Publish "we're on Preferences" so the side menu can skip a
         // duplicate push when the user taps Preferences while this
         // screen is already visible.

@@ -777,6 +777,12 @@ struct MyProfileView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // Custom back chevron hides the system back button — restore
+        // the swipe-from-left-edge interactive pop gesture so the user
+        // can still swipe back. `.onAppear` re-runs `loadFromDefaults()`
+        // anyway, so a swipe-back-without-Update reverts unsaved
+        // edits exactly like UIKit's `viewWillAppear`.
+        .interactivePopGestureEnabled()
         .toolbar { toolbarContent }
         // Keyboard accessory — adds the [Cancel ✕, Done ✓] pair above
         // the keyboard so the user can dismiss the email / name /
