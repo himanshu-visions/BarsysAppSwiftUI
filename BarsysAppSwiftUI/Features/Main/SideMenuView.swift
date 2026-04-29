@@ -756,14 +756,24 @@ private struct SideMenuPanel: View {
                 Color.clear // hit-test area spanning the whole row
 
                 // Leading icon — 19×18 at leading 24, vertically centred.
-                // Uses `systemName:` so SwiftUI looks the glyph up in the
-                // SF Symbol library instead of the asset catalog —
-                // `systemImageFor(_:)` returns SF Symbol names (e.g.
-                // `heart.fill`), so the previous bare `Image(name:)`
-                // call was logging "No image named X found in asset
-                // catalog" for every menu row on every render.
-                Image(systemName: systemImageFor(section.name))
-                    .font(.system(size: 17, weight: .regular))
+                //
+                // 1:1 with UIKit `SideMenuViewController.swift:218`
+                // which loads `UIImage(named: arrMenu[section].name)` —
+                // the section name itself ("Device", "Favourites",
+                // "Preferences" …) is the asset-catalog identifier.
+                // Every section's image is shipped under
+                // `Assets.xcassets/SideMenu/MenuItems/<sectionName>.imageset`,
+                // so this same lookup just works in SwiftUI. The
+                // previous SF Symbol fallback rendered visually
+                // different glyphs (Wi-Fi external drive vs. UIKit's
+                // Bluetooth antenna; sliders vs. UIKit's gear cog;
+                // SF heart vs. UIKit's outlined heart), which the
+                // user flagged as off-brand. Template-rendered with
+                // `appBlackColor` so the icon adapts to dark mode.
+                Image(section.name)
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: 19, height: 18)
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.leading, 24)
@@ -1031,25 +1041,6 @@ private struct SideMenuPanel: View {
         }
     }
 
-    // MARK: - Icons
-
-    /// The UIKit menu uses asset-catalog images named after each section
-    /// (e.g. `UIImage(named: "Device")`). Several of those are missing from
-    /// the SwiftUI project, so we fall back to SF Symbols that visually
-    /// match each section's semantic.
-    private func systemImageFor(_ sectionName: String) -> String {
-        switch sectionName {
-        case "Device":            return "externaldrive.fill.badge.wifi"
-        case "Favourites":        return "heart.fill"
-        case "Help":              return "questionmark.circle"
-        case "Preferences":       return "slider.horizontal.3"
-        case "Privacy and Legal": return "lock.doc"
-        case "About Barsys":      return "info.circle"
-        case "Review the App":    return "star.fill"
-        case "Logout":            return "rectangle.portrait.and.arrow.right"
-        default:                  return "line.3.horizontal"
-        }
-    }
 }
 
 // MARK: - BLEService convenience
