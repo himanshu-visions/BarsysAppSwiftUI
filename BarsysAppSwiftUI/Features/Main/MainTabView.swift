@@ -300,9 +300,32 @@ struct MainTabView: View {
             // state change caused the tab bar to re-run the override
             // back-to-back, contributing to the fluctuation the user
             // reported on connect / disconnect.
-            .onChange(of: ble.isAnyDeviceConnected) { _ in
-                // Clear BOTH home and explore nav stacks when connection
-                // state changes so the new root views appear cleanly.
+            .onChange(of: ble.isAnyDeviceConnected) { isConnected in
+                // Disconnect path: clear BOTH home and explore nav stacks
+                // so the new root views (Home replaces ControlCenter, etc.)
+                // are the top of each tab's stack.
+                //
+                // Connect path: do NOTHING here. The `onDeviceConnected`
+                // callback wired below is the single source of truth for
+                // post-connect navigation — it branches on
+                // `pendingConnectionSource`:
+                //   • `.recipeCrafting` → only pop the pair screen,
+                //     keep the craft source (RecipePage / RTP / Mixlist /
+                //     Edit / BarBot) visible (1:1 UIKit
+                //     `BleManagerDelegate+Connect.swift:146-165`).
+                //   • `.none` → switch to Explore + clear all paths
+                //     (1:1 UIKit L177-182).
+                //
+                // The previous version cleared paths here on EVERY state
+                // change. Because `onDeviceConnected` resets
+                // `pendingConnectionSource = .none` before the SwiftUI
+                // change-observer fires, the resets ran AFTER the source
+                // was already gone — wiping `.recipeDetail(id)` off the
+                // stack and bouncing the user back to Explore root. By
+                // gating on `!isConnected` we keep the disconnect-side
+                // cleanup intact while letting the connect callback own
+                // the post-connect navigation decision exclusively.
+                guard !isConnected else { return }
                 router.homePath.removeLast(router.homePath.count)
                 router.explorePath.removeLast(router.explorePath.count)
             }
