@@ -216,12 +216,46 @@ enum UserDefaultsClass {
             // recipes / mixlists / favourites. UIKit drops the SQLite
             // rows here (`DBManager.deleteAllData`); we drop the
             // JSON-encoded equivalents.
+            //
+            // Kept for backwards compatibility with builds that
+            // persisted the catalog in UserDefaults — current builds
+            // write to file storage (see below) but a stale
+            // UserDefaults blob from a pre-migration build still gets
+            // cleared here so it never lingers post-logout.
             Keys.storageRecipesCache,
             Keys.storageMixlistsCache,
             Keys.storageFavoritesCache
         ]
         for key in keys { defaults.removeObject(forKey: key) }
         defaults.synchronize()
+
+        // The catalog cache moved from UserDefaults to JSON files in
+        // the Caches directory (UserDefaults can't hold the ~5 MB
+        // recipes payload). Delete the file copies on logout so the
+        // next user / fresh login starts with an empty cache, just
+        // like UIKit's `DBManager.deleteAllData()`.
+        clearStorageCacheFiles()
+    }
+
+    /// Removes the catalog cache files that `MockStorageService`
+    /// writes (`barsys_storage_recipes.json` etc.) so a logout / delete-
+    /// account flow drops the on-disk JSON copies in addition to the
+    /// in-memory dictionaries the auth-flow tear-down already clears.
+    /// Filenames are duplicated from `MockStorageService` because the
+    /// Services-side constants are private to that type.
+    private static func clearStorageCacheFiles() {
+        guard let cacheDir = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask)
+            .first else { return }
+        let filenames = [
+            "barsys_storage_recipes.json",
+            "barsys_storage_mixlists.json",
+            "barsys_storage_favorites.json"
+        ]
+        for filename in filenames {
+            let url = cacheDir.appendingPathComponent(filename)
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
 

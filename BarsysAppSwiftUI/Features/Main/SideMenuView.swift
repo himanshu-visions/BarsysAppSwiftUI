@@ -756,7 +756,13 @@ private struct SideMenuPanel: View {
                 Color.clear // hit-test area spanning the whole row
 
                 // Leading icon — 19×18 at leading 24, vertically centred.
-                Image(systemImageFor(section.name))
+                // Uses `systemName:` so SwiftUI looks the glyph up in the
+                // SF Symbol library instead of the asset catalog —
+                // `systemImageFor(_:)` returns SF Symbol names (e.g.
+                // `heart.fill`), so the previous bare `Image(name:)`
+                // call was logging "No image named X found in asset
+                // catalog" for every menu row on every render.
+                Image(systemName: systemImageFor(section.name))
                     .font(.system(size: 17, weight: .regular))
                     .frame(width: 19, height: 18)
                     .foregroundStyle(Color("appBlackColor"))

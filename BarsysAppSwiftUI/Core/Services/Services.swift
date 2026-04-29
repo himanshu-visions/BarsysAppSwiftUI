@@ -356,26 +356,56 @@ final class MockStorageService: StorageService {
     private var ingredients: [IngredientID: Ingredient]
     private var favs: Set<RecipeID>
 
-    // MARK: - Disk-cache keys (1:1 with UIKit's SQLite tables)
+    // MARK: - Disk-cache (1:1 with UIKit's SQLite tables)
     //
     // UIKit persists its catalog to SQLite via `DBManager.insertToDatabase`,
     // which is why the legacy app keeps showing recipes / mixlists when
     // launched offline. SwiftUI's `MockStorageService` was in-memory
     // only, so a cold launch with no network rendered an empty Explore /
-    // Mixlists list. We mirror the SQLite cache by JSON-encoding each
-    // collection into UserDefaults — same pattern `MyDrinksCache` uses
-    // for the My Drinks tab — so cold-launch offline keeps showing the
-    // last fetched data, exactly like UIKit.
+    // Mixlists list.
     //
-    // ⚠ Keys are duplicated in `UserDefaultsClass.Keys.storageRecipesCache`
-    // / `storageMixlistsCache` / `storageFavoritesCache`. The duplication
-    // is intentional — `UserDefaultsClass.Keys` is `private` to that
-    // enum, so the two declarations keep the disk format wired in one
-    // direction and the `clearAll()` wipe wired in the other. Whenever
-    // either string changes, update both call sites together.
+    // We mirror the SQLite cache by JSON-encoding each collection to a
+    // file in the app's Caches directory. Originally this lived in
+    // `UserDefaults`, but the encoded recipes payload (~2000 entries)
+    // exceeds the 4 MB CFPreferences ceiling and triggered the
+    // "Attempting to store >= 4194304 bytes of data in
+    // CFPreferences/NSUserDefaults on this platform is invalid" warning
+    // in addition to silently dropping writes. File-based storage has
+    // no size limit and is still wiped on logout via
+    // `UserDefaultsClass.clearAll()`.
+    //
+    // The legacy UserDefaults keys are still recognised on first
+    // launch after this migration so the existing offline cache is
+    // imported, then cleared from `UserDefaults` to free up the
+    // CFPreferences slot.
+    //
+    // ⚠ The matching wipe lives in `UserDefaultsClass.clearAll()` —
+    // whenever a key / filename changes, update both call sites.
     private static let recipesCacheKey  = "barsys_storage_recipes"
     private static let mixlistsCacheKey = "barsys_storage_mixlists"
     private static let favsCacheKey     = "barsys_storage_favorites"
+
+    private static let recipesCacheFilename  = "barsys_storage_recipes.json"
+    private static let mixlistsCacheFilename = "barsys_storage_mixlists.json"
+    private static let favsCacheFilename     = "barsys_storage_favorites.json"
+
+    /// Cache directory URL (created on demand). Returns nil only if the
+    /// platform doesn't expose a Caches directory, which doesn't happen
+    /// on iOS.
+    private static var cacheDirectoryURL: URL? {
+        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir,
+                                                     withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
+    private static func cacheFileURL(_ filename: String) -> URL? {
+        cacheDirectoryURL?.appendingPathComponent(filename)
+    }
 
     /// Boots with whatever was on disk from the previous run so a
     /// cold-launch with no internet still shows last-known data —
@@ -395,18 +425,48 @@ final class MockStorageService: StorageService {
     /// Failures are swallowed — a corrupt cache simply leaves storage
     /// empty (the same state the previous in-memory-only build started
     /// in), so subsequent API fetches still populate it.
+    ///
+    /// Reads each collection from its file in the Caches directory.
+    /// As a one-time migration, also accepts data still parked in
+    /// `UserDefaults` under the old keys (build that ran before the
+    /// file-cache migration) and folds it into memory. The
+    /// `UserDefaults` entries are then cleared by `persistCache()` on
+    /// the next save so the legacy keys don't keep occupying the
+    /// 4 MB CFPreferences slot.
     private func loadCache() {
-        let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: Self.recipesCacheKey),
-           let decoded = try? JSONDecoder().decode([Recipe].self, from: data) {
+        let decoder = JSONDecoder()
+
+        if let url = Self.cacheFileURL(Self.recipesCacheFilename),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? decoder.decode([Recipe].self, from: data) {
             for r in decoded { recipes[r.id] = r }
         }
-        if let data = defaults.data(forKey: Self.mixlistsCacheKey),
-           let decoded = try? JSONDecoder().decode([Mixlist].self, from: data) {
+        if let url = Self.cacheFileURL(Self.mixlistsCacheFilename),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? decoder.decode([Mixlist].self, from: data) {
             for m in decoded { mixlists[m.id] = m }
         }
-        if let data = defaults.data(forKey: Self.favsCacheKey),
-           let decoded = try? JSONDecoder().decode([RecipeID].self, from: data) {
+        if let url = Self.cacheFileURL(Self.favsCacheFilename),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? decoder.decode([RecipeID].self, from: data) {
+            favs = Set(decoded)
+        }
+
+        // One-time migration from the legacy UserDefaults blobs.
+        let defaults = UserDefaults.standard
+        if recipes.isEmpty,
+           let data = defaults.data(forKey: Self.recipesCacheKey),
+           let decoded = try? decoder.decode([Recipe].self, from: data) {
+            for r in decoded { recipes[r.id] = r }
+        }
+        if mixlists.isEmpty,
+           let data = defaults.data(forKey: Self.mixlistsCacheKey),
+           let decoded = try? decoder.decode([Mixlist].self, from: data) {
+            for m in decoded { mixlists[m.id] = m }
+        }
+        if favs.isEmpty,
+           let data = defaults.data(forKey: Self.favsCacheKey),
+           let decoded = try? decoder.decode([RecipeID].self, from: data) {
             favs = Set(decoded)
         }
     }
@@ -416,18 +476,33 @@ final class MockStorageService: StorageService {
     /// `toggleFavorite(_:)` so a heart-tap survives an app restart.
     /// Cheap (<10ms for typical recipe counts) and synchronous — same
     /// envelope `MyDrinksCache.save(_:)` uses for the My Drinks tab.
+    ///
+    /// Writes to files in the Caches directory (no size limit) and
+    /// drops any legacy UserDefaults blob the same key still holds
+    /// (handled in `loadCache()` for the migration import).
     func persistCache() {
         let encoder = JSONEncoder()
+
+        if let url = Self.cacheFileURL(Self.recipesCacheFilename),
+           let data = try? encoder.encode(Array(recipes.values)) {
+            try? data.write(to: url, options: .atomic)
+        }
+        if let url = Self.cacheFileURL(Self.mixlistsCacheFilename),
+           let data = try? encoder.encode(Array(mixlists.values)) {
+            try? data.write(to: url, options: .atomic)
+        }
+        if let url = Self.cacheFileURL(Self.favsCacheFilename),
+           let data = try? encoder.encode(Array(favs)) {
+            try? data.write(to: url, options: .atomic)
+        }
+
+        // Free the legacy UserDefaults slot once data has been moved
+        // to the file cache. Cheap no-op on second call (the keys
+        // are already missing).
         let defaults = UserDefaults.standard
-        if let data = try? encoder.encode(Array(recipes.values)) {
-            defaults.set(data, forKey: Self.recipesCacheKey)
-        }
-        if let data = try? encoder.encode(Array(mixlists.values)) {
-            defaults.set(data, forKey: Self.mixlistsCacheKey)
-        }
-        if let data = try? encoder.encode(Array(favs)) {
-            defaults.set(data, forKey: Self.favsCacheKey)
-        }
+        defaults.removeObject(forKey: Self.recipesCacheKey)
+        defaults.removeObject(forKey: Self.mixlistsCacheKey)
+        defaults.removeObject(forKey: Self.favsCacheKey)
     }
 
     /// Ports DBManager.fetchAllRecipes() — returns all recipes with
