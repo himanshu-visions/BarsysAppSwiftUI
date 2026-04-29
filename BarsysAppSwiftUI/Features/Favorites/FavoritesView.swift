@@ -1249,7 +1249,23 @@ struct BarsysRecipeRow: View {
     // sit at the corners of the popup like the storyboard, with the
     // 8pt icon→title gap matching `titleEdgeInsets`.
     private var morePopup: some View {
-        VStack(spacing: 0) {
+        // Mirrors UIKit `BarsysRecipeTableViewCell.xib` `moreView`:
+        // 92pt wide, 8pt corner radius, glass material, two rows
+        // (Edit / Delete) with a 16pt leading inset and 8pt gap
+        // between glyph and label.
+        //
+        // Vertical metrics — balanced 14pt rhythm:
+        //   • Top edge → Edit text top:           14pt
+        //   • Edit text bottom → Delete text top: 14pt
+        //   • Delete text bottom → bottom edge:   14pt
+        //
+        // Each row's natural height is the 16pt glyph (the 12pt
+        // text fits inside the same vertical extent), so the
+        // popup is 14 + 16 + 14 + 16 + 14 = 74pt — close to UIKit's
+        // 76pt storyboard while keeping the three gaps mathematically
+        // equal. `.frame(maxWidth: .infinity)` + `.contentShape`
+        // keeps the tap target the full row width.
+        VStack(spacing: 14) {
             Button(action: onEdit) {
                 HStack(spacing: 8) {
                     morePopupGlyph(name: "edit")
@@ -1258,8 +1274,8 @@ struct BarsysRecipeRow: View {
                         .foregroundStyle(Color("appBlackColor"))
                     Spacer(minLength: 0)
                 }
-                .padding(EdgeInsets(top: 8, leading: 16, bottom: 0, trailing: 0))
-                .frame(width: 92, height: 38, alignment: .topLeading)
+                .padding(.leading, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(BounceButtonStyle())
@@ -1273,14 +1289,15 @@ struct BarsysRecipeRow: View {
                         .foregroundStyle(Color("appBlackColor"))
                     Spacer(minLength: 0)
                 }
-                .padding(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 0))
-                .frame(width: 92, height: 38, alignment: .bottomLeading)
+                .padding(.leading, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Delete recipe")
         }
-        .frame(width: 92, height: 76)
+        .padding(.vertical, 14)
+        .frame(width: 92)
         .background(morePopupBackground)
         .overlay(morePopupBorder)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
