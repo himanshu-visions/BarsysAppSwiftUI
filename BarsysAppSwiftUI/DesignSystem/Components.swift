@@ -772,7 +772,22 @@ struct BarsysAlertOverlay: View {
                 } else {
                     // Single continue button — 1:1 UIKit AlertPopUp.storyboard:
                     // `mSZ-L7-enf` (continueButton): 209×45pt, brandTanColor
-                    // background, white 16pt text, 20pt corner radius.
+                    // background, 16pt text, 20pt corner radius.
+                    //
+                    // Title color: UIKit storyboard hard-codes
+                    // `<color key="titleColor" white="0.0" alpha="1"
+                    // customColorSpace="genericGamma22GrayColorSpace"/>`
+                    // — pure BLACK, static in both light and dark
+                    // appearance. The previous SwiftUI port tinted the
+                    // label with `Theme.Color.softWhiteText`, which the
+                    // user reported as off-brand on the
+                    // "{device} is Disconnected" popup in light mode
+                    // (white-on-orange where UIKit shows black-on-orange).
+                    // Switching to `SwiftUI.Color.black` matches UIKit
+                    // exactly on both appearances and stays consistent
+                    // with the two-button variant's `AlertPopupButtonStyle`
+                    // which already uses static black for the same
+                    // storyboard-parity reason (Components.swift:1055).
                     Button {
                         HapticService.light()
                         item.primaryAction?()
@@ -780,7 +795,7 @@ struct BarsysAlertOverlay: View {
                     } label: {
                         Text(item.primaryActionTitle)
                             .font(.system(size: 16))
-                            .foregroundStyle(Theme.Color.softWhiteText)
+                            .foregroundStyle(SwiftUI.Color.black)
                             .frame(maxWidth: .infinity)
                             .frame(height: 45)
                             .background(
