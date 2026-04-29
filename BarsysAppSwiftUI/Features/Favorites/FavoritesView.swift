@@ -1373,20 +1373,35 @@ struct BarsysRecipeRow: View {
     /// `.ultraThinMaterial` is the SwiftUI equivalent of UIGlassEffect(style: .clear)
     @ViewBuilder
     private var morePopupBackground: some View {
-        if #available(iOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.ultraThinMaterial)
-        } else {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(UIColor.systemBackground))
-        }
+        // 1:1 with UIKit `BarsysRecipeTableViewCell.xib` `moreView` —
+        // a `UIVisualEffectView` with `addGlassEffect(.regular)` on
+        // iOS 26+ (UIViewClass+GlassEffects.swift L40-48) and
+        // `.systemMaterial` on earlier iOS.
+        //
+        // Earlier SwiftUI ports tried SwiftUI's `.fill(.regularMaterial)`
+        // which the host renderer composited as an opaque panel rather
+        // than a true blur — the "previous UI visible blurrily through
+        // it" effect the user expects (and that UIKit ships) was lost.
+        // Routing through the same `BarsysGlassPanelBackground`
+        // `UIViewRepresentable` the side menu / device-list panels
+        // already use guarantees a real `UIVisualEffectView`
+        // composes under the popup, so the recipe card behind it
+        // shows through a proper Liquid Glass blur on every iOS
+        // version — including the pre-iOS 26 fallback.
+        BarsysGlassPanelBackground()
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     @ViewBuilder
     private var morePopupBorder: some View {
         if #available(iOS 26.0, *) {
+            // Bumped from 0.15 → 0.35 so the whiter material now has a
+            // crisp 0.5pt outline — UIKit's storyboard glass border
+            // sits at ~white@30-35% so the popup edge stays visible
+            // against light backgrounds where the whiter fill blends
+            // into the recipe card behind it.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+                .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
         } else {
             EmptyView()
         }
