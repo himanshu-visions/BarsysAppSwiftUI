@@ -203,6 +203,26 @@ final class MyProfileViewModel: ObservableObject {
     //      longest-first to distinguish e.g. +1 from +1876).
     //   3. Fallback to `defaultCountrySelection` (UIKit behaviour).
     func loadFromDefaults() {
+        // Re-arm the hydration gate at the START of every reload so the
+        // `.onChange(of: selectedCountry/fullName/email/dob)` handlers
+        // don't flip `isEdit = true` while we mirror UserDefaults values
+        // back into the bound fields. Without this re-arm the flag stays
+        // `false` after the first load and any subsequent
+        // `loadFromDefaults()` call (e.g. on return-to-screen via
+        // `.onAppear` after the user edited but didn't tap Update)
+        // would re-enable the Update button as a side-effect of the
+        // restore. Also clears `isEdit` so the screen comes back in a
+        // clean "no pending edit" state — 1:1 with UIKit
+        // `MyProfileViewController+ProfileSetup.refreshProfile()` which
+        // unconditionally re-renders fields from UserDefaults on every
+        // `viewWillAppear` and resets the Update button to disabled.
+        isHydrating = true
+        isEdit = false
+        errorFullName = nil
+        errorEmail = nil
+        errorPhoneNumber = nil
+        errorDob = nil
+
         fullName = UserDefaultsClass.getName() ?? ""
         email    = UserDefaultsClass.getEmail() ?? ""
         profileImageURL = UserDefaultsClass.getProfileImage() ?? ""
@@ -231,9 +251,14 @@ final class MyProfileViewModel: ObservableObject {
             phone = rawPhone
         }
 
-        // DoB — accept multiple formats like UIKit.
+        // DoB — accept multiple formats like UIKit. Always assign
+        // (including the empty / unparsable branches) so a stale
+        // unsaved edit from a previous screen entry doesn't survive
+        // when UserDefaults has no DoB stored.
         if let raw = UserDefaultsClass.getDoB(), !raw.isEmpty {
             dob = Self.parseDate(raw)
+        } else {
+            dob = nil
         }
 
         // Hydration finished — from here on, any `selectedCountry` /

@@ -683,7 +683,14 @@ struct DevicePairedView: View {
     private let partnerships: [(name: String, image: String, url: String?)] = [
         ("Bathtub Gin",      "partnership_1", "https://barsys.com/bar/bathtub-gin"),
         ("Dead Rabbit",      "partnership_2", "https://barsys.com/bar/the-dead-rabbit"),
-        ("Ciel Social Club", "partnership_3", nil)
+        ("Ciel Social Club", "partnership_3", nil),
+        // Meili Vodka deep-links to its brand page
+        // (https://barsys.com/brand/meili-vodka). Image asset
+        // `partnership_4` should be added to
+        // `Assets.xcassets/Explore/`; until then SwiftUI renders an
+        // empty tile but the tap URL is wired up so the partnership
+        // ships as soon as the artwork lands.
+        ("Meili Vodka",      "partnership_4", "https://barsys.com/brand/meili-vodka")
     ]
 
     private let socialMedia: [String] = ["social_thumb_1", "social_thumb_2", "social_thumb_3"]
