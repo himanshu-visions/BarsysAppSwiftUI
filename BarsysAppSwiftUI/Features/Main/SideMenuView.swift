@@ -757,25 +757,36 @@ private struct SideMenuPanel: View {
 
                 // Leading icon — 19×18 at leading 24, vertically centred.
                 //
-                // 1:1 with UIKit `SideMenuViewController.swift:218`
-                // which loads `UIImage(named: arrMenu[section].name)` —
-                // the section name itself ("Device", "Favourites",
-                // "Preferences" …) is the asset-catalog identifier.
-                // Every section's image is shipped under
-                // `Assets.xcassets/SideMenu/MenuItems/<sectionName>.imageset`,
-                // so this same lookup just works in SwiftUI. The
-                // previous SF Symbol fallback rendered visually
-                // different glyphs (Wi-Fi external drive vs. UIKit's
-                // Bluetooth antenna; sliders vs. UIKit's gear cog;
-                // SF heart vs. UIKit's outlined heart), which the
-                // user flagged as off-brand. Template-rendered with
-                // `appBlackColor` so the icon adapts to dark mode.
+                // 1:1 asset lookup with UIKit
+                // `SideMenuViewController.swift:218` —
+                // `UIImage(named: arrMenu[section].name)`. Every
+                // section's image is shipped under
+                // `Assets.xcassets/SideMenu/MenuItems/<sectionName>.imageset`.
+                //
+                // Tint:
+                //   • Light mode → near-black `#1C1C1E` (iOS system
+                //     `.label`-equivalent). The original
+                //     `appBlackColor` resolves to mid-grey `#4C4D4F`
+                //     in light mode and the user reported the icons
+                //     looked washed-out against the white drawer
+                //     background; pushing the value to near-black
+                //     makes the glyphs visibly darker without going
+                //     fully `#000000` (which clashes with the rest
+                //     of the iOS 26 typography rendering at
+                //     `.label`).
+                //   • Dark mode → keep `appBlackColor`'s near-white
+                //     `#E5E5EA` so the icon stays legible against
+                //     the dark drawer canvas.
                 Image(section.name)
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 19, height: 18)
-                    .foregroundStyle(Color("appBlackColor"))
+                    .foregroundStyle(Color(uiColor: UIColor { trait in
+                        trait.userInterfaceStyle == .dark
+                            ? (UIColor(named: "appBlackColor") ?? .label)
+                            : UIColor(red: 0.110, green: 0.110, blue: 0.118, alpha: 1.0)
+                    }))
                     .padding(.leading, 24)
 
                 // Section title — leading 53, 17pt.
