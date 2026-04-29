@@ -845,22 +845,32 @@ final class AuthService: ObservableObject {
         guard hasPrefsToken || hasOryToken else { return }
 
         do {
-            profile = try await api.fetchProfile()
-            isAuthenticated = true
-            // 1:1 with UIKit: when the app re-launches with a stored
-            // session, `ChooseOptionsDashboardViewController` re-fires
-            // `brazeLoginUser()` + `brazeUpdateProfile()` so Braze
-            // re-attaches every subsequent custom event to the
-            // correct user — even if the SDK was reinitialised mid-
-            // session. Mirroring here on the SwiftUI restore path
-            // keeps Braze's user-id in sync across app restarts.
-            await MainActor.run { syncBrazeUser(profile: self.profile) }
+            // `try await api.fetchProfile()` resumes its continuation on
+            // URLSession's background queue, so any direct `@Published`
+            // write right after would publish from a background thread.
+            // Hop to the main actor before mutating `profile` /
+            // `isAuthenticated` so Combine doesn't flag it.
+            let fetched = try await api.fetchProfile()
+            await MainActor.run {
+                self.profile = fetched
+                self.isAuthenticated = true
+                // 1:1 with UIKit: when the app re-launches with a stored
+                // session, `ChooseOptionsDashboardViewController` re-fires
+                // `brazeLoginUser()` + `brazeUpdateProfile()` so Braze
+                // re-attaches every subsequent custom event to the
+                // correct user — even if the SDK was reinitialised mid-
+                // session. Mirroring here on the SwiftUI restore path
+                // keeps Braze's user-id in sync across app restarts.
+                self.syncBrazeUser(profile: self.profile)
+            }
         } catch {
             // Don't clear session on profile fetch failure — the token may
             // still be valid for recipe/mixlist APIs. Only clear on explicit
             // logout. UIKit never clears session here.
             if hasOryToken {
-                isAuthenticated = true  // Trust the stored Ory token
+                await MainActor.run {
+                    self.isAuthenticated = true  // Trust the stored Ory token
+                }
             }
         }
     }
@@ -871,7 +881,7 @@ final class AuthService: ObservableObject {
 
     func verifyOtp(phone: String, code: String) async throws {
         let p = try await api.verifyOtp(phone: phone, code: code)
-        applySignedInProfile(p)
+        await MainActor.run { applySignedInProfile(p) }
     }
 
     /// Used by callers that get a `UserProfile` directly from the API client
@@ -902,17 +912,27 @@ final class AuthService: ObservableObject {
     }
 
     func login(email: String, password: String) async throws {
-        profile = try await api.login(email: email, password: password)
-        preferences.sessionToken = UUID().uuidString
-        isAuthenticated = true
-        syncBrazeUser(profile: profile)
+        // Hop to main before publishing so the URLSession-side
+        // continuation doesn't write `@Published` properties from a
+        // background thread (Combine flags that as
+        // "Publishing changes from background threads is not allowed").
+        let fetched = try await api.login(email: email, password: password)
+        await MainActor.run {
+            self.profile = fetched
+            self.preferences.sessionToken = UUID().uuidString
+            self.isAuthenticated = true
+            self.syncBrazeUser(profile: self.profile)
+        }
     }
 
     func signUp(firstName: String, lastName: String, email: String, phone: String, dob: Date?) async throws {
-        profile = try await api.signUp(firstName: firstName, lastName: lastName, email: email, phone: phone, dob: dob)
-        preferences.sessionToken = UUID().uuidString
-        isAuthenticated = true
-        syncBrazeUser(profile: profile)
+        let fetched = try await api.signUp(firstName: firstName, lastName: lastName, email: email, phone: phone, dob: dob)
+        await MainActor.run {
+            self.profile = fetched
+            self.preferences.sessionToken = UUID().uuidString
+            self.isAuthenticated = true
+            self.syncBrazeUser(profile: self.profile)
+        }
     }
 
     func logout() {
@@ -2166,6 +2186,18 @@ final class AnalyticsService {
 // MARK: - CatalogService
 
 
+/// `@MainActor` so every `@Published` mutation in this service runs
+/// on the main thread. Without it, the continuations after the
+/// `await api.fetchRecipes()` / `fetchMixlists()` / `fetchFavorites()`
+/// calls inside `preload(force:)` resume on URLSession's background
+/// queue and then write `recipes` / `mixlists` / `isLoading` from a
+/// background thread — which Combine flags as
+/// "Publishing changes from background threads is not allowed". The
+/// `Task { await self?.handleConnectionRestored() }` started from the
+/// `.barsysConnectionRestored` observer also inherits this isolation
+/// now, so a network restoration re-runs `preload()` on the main
+/// queue rather than a background executor.
+@MainActor
 final class CatalogService: ObservableObject {
     @Published private(set) var recipes: [Recipe] = []
     @Published private(set) var mixlists: [Mixlist] = []
@@ -2188,7 +2220,11 @@ final class CatalogService: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { [weak self] in
+            // `Task { @MainActor in }` runs on the main actor from the
+            // start, matching the rest of `CatalogService`'s isolation
+            // and keeping every `@Published` write that happens inside
+            // `preload()` on the main thread.
+            Task { @MainActor [weak self] in
                 await self?.handleConnectionRestored()
             }
         }
