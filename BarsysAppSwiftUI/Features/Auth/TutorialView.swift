@@ -133,18 +133,29 @@ struct TutorialView: View {
                         playerHolder.cleanup()
                         finishTutorial()
                     } label: {
-                        // 15×15 visual icon inside a 30×30 tap target —
-                        // matches the back-button sizing pattern used
-                        // across MyProfile / Preferences / etc. while
-                        // preserving a comfortable hit area.
+                        // 15×15 visual icon inside a 44×44 glass-styled
+                        // circle — same `.ultraThinMaterial` + 1pt white
+                        // border recipe `NavigationRightGlassButtons`
+                        // (HomeView.swift:709) uses for the toolbar
+                        // back / favorites / profile chips, so the
+                        // Tutorial close button matches the iOS 26
+                        // Liquid Glass back-button look.
                         Image("crossIcon")
                             .resizable()
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 15, height: 15)
                             .foregroundStyle(Theme.Color.softWhiteText)
-                            .frame(width: 30, height: 30)
-                            .contentShape(Rectangle())
+                            .frame(width: 44, height: 44)
+                            .background(
+                                Circle()
+                                    .fill(.ultraThinMaterial)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                    )
+                            )
+                            .contentShape(Circle())
                     }
                     .buttonStyle(BounceButtonStyle())
                     .padding(.trailing, 20)
