@@ -671,10 +671,19 @@ struct DevicePairedView: View {
         ("190b93d2", "Espresso Martini", "Vodka, Coffee Liqueur, Simple Syrup, Espresso", "recommended_recipes_5")
     ]
 
-    private let partnerships: [(name: String, image: String)] = [
-        ("Bathtub Gin", "partnership_1"),
-        ("Dead Rabbit", "partnership_2"),
-        ("Ciel Social Club", "partnership_3")
+    /// Partnership tiles. The `url` field holds the bar's public Barsys
+    /// landing page (e.g. https://barsys.com/bar/bathtub-gin) — when set,
+    /// tapping the tile opens it in Safari instead of the legacy
+    /// "Coming Soon" popup. UIKit's `partnershipsCollectionView`
+    /// `didSelectItemAt` routed every tap to
+    /// `showUnderConstructionPopup()`; the SwiftUI port now matches the
+    /// product spec where Bathtub Gin and The Dead Rabbit each link to
+    /// their dedicated bar page, while remaining partnerships stay on
+    /// the Coming Soon popup until their pages ship.
+    private let partnerships: [(name: String, image: String, url: String?)] = [
+        ("Bathtub Gin",      "partnership_1", "https://barsys.com/bar/bathtub-gin"),
+        ("Dead Rabbit",      "partnership_2", "https://barsys.com/bar/the-dead-rabbit"),
+        ("Ciel Social Club", "partnership_3", nil)
     ]
 
     private let socialMedia: [String] = ["social_thumb_1", "social_thumb_2", "social_thumb_3"]
@@ -1016,14 +1025,23 @@ struct DevicePairedView: View {
                                         .frame(width: cardW)
                                         .multilineTextAlignment(.center)
                                 }
-                                // 1:1 UIKit `didSelectItemAt` for the
-                                // `partnershipsCollectionView` (L137-138)
-                                // — any partnership tap routes to
-                                // `showUnderConstructionPopup()`.
+                                // UIKit's `partnershipsCollectionView`
+                                // `didSelectItemAt` routed every tap to
+                                // `showUnderConstructionPopup()`. The
+                                // SwiftUI port deep-links Bathtub Gin
+                                // and The Dead Rabbit to their public
+                                // Barsys bar pages while keeping the
+                                // Coming Soon popup as the fallback for
+                                // any partnership without a public page.
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     HapticService.light()
-                                    presentComingSoonPopup()
+                                    if let urlString = p.url,
+                                       let url = URL(string: urlString) {
+                                        UIApplication.shared.open(url)
+                                    } else {
+                                        presentComingSoonPopup()
+                                    }
                                 }
                             }
                         }

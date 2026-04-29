@@ -440,8 +440,21 @@ final class OryAPIClient: APIClient {
                 }
             }
 
-            // Update observable store so UI refreshes
-            UserProfileStore.shared.reload()
+            // Update observable store so UI refreshes.
+            //
+            // Hop to the main actor first: the preceding
+            // `try await URLSession.shared.data(for:)` resumes its
+            // continuation on URLSession's background queue, and
+            // `UserProfileStore.reload()` mutates eight `@Published`
+            // properties (`name`, `email`, `phone`, `dob`,
+            // `profileImageURL`, `countryName`, `sessionToken`,
+            // `userId`). Without the hop Combine fires
+            // "Publishing changes from background threads is not
+            // allowed" once per non-empty field on every successful
+            // post-login profile fetch.
+            await MainActor.run {
+                UserProfileStore.shared.reload()
+            }
             print("[OryAPIClient] Profile fetched: \(profile.full_name ?? "N/A")")
         } catch {
             print("[OryAPIClient] Profile fetch error: \(error)")

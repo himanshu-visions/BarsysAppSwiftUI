@@ -324,15 +324,59 @@ struct ExploreRecipesView: View {
         if #available(iOS 26.0, *) { 20 } else { 37 }
     }
 
+    /// Source recipes for the Explore listing.
+    ///
+    /// Mirrors UIKit `DBQueries.fetchExploreAllRecipes()` which only
+    /// shows standalone Barsys recipes (`WHERE user_id IS NULL OR
+    /// TRIM(user_id) = ''`) — user-created My Drinks live on the
+    /// Favorites/My-Drinks tab, never the Explore feed.
+    ///
+    /// On top of that we de-dupe by display name (case-insensitive,
+    /// trimmed). UIKit's data model stores standalone recipes in
+    /// `recipes` and mixlist→recipe associations in
+    /// `mixlist_recipes` so a single bottle like "Long Island Iced
+    /// Tea" can only appear once in the Explore SQL. SwiftUI
+    /// upserts nested mixlist recipes into the same in-memory dict
+    /// in `CatalogService.preload()` — when the API hands the same
+    /// recipe back under a different `id` for the standalone copy
+    /// vs. the mixlist-nested copy, both land in the dict and the
+    /// list shows duplicates ("Long Island Iced Tea" appearing
+    /// multiple times was the user-reported regression). Collapsing
+    /// by displayName here brings the Explore listing back in line
+    /// with UIKit's one-row-per-recipe rendering without touching
+    /// storage (so `recipe(by:)` lookups from RecipePage / MixlistDetail
+    /// still resolve every id, regardless of which source inserted it).
+    private var dedupedRecipes: [Recipe] {
+        let onlyStandalone = catalog.recipes.filter { ($0.userId ?? "").isEmpty }
+        var seenNames = Set<String>()
+        var result: [Recipe] = []
+        result.reserveCapacity(onlyStandalone.count)
+        for recipe in onlyStandalone {
+            let key = recipe.displayName
+                .lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Don't dedupe nameless rows — fall through so a
+            // missing-name edge case can't silently drop a recipe.
+            if key.isEmpty {
+                result.append(recipe)
+                continue
+            }
+            if seenNames.insert(key).inserted {
+                result.append(recipe)
+            }
+        }
+        return result
+    }
+
     /// Filtered recipes — ports cacheRecipesSearchResults().
     /// UIKit uses `words.contains` (ANY word matches), not allSatisfy.
     /// Searches recipe name and ingredientNames string.
     private var filtered: [Recipe] {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return catalog.recipes
+            return dedupedRecipes
         }
         let words = query.lowercased().split(separator: " ").map(String.init)
-        return catalog.recipes.filter { r in
+        return dedupedRecipes.filter { r in
             let name = r.displayName.lowercased()
             let ingredients = (r.ingredientNames ?? "").lowercased()
             return words.contains { word in
