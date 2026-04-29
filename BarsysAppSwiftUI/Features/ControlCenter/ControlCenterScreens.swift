@@ -690,7 +690,7 @@ struct DevicePairedView: View {
         // `Assets.xcassets/Explore/`; until then SwiftUI renders an
         // empty tile but the tap URL is wired up so the partnership
         // ships as soon as the artwork lands.
-        ("Meili Vodka",      "partnership_3", "https://barsys.com/brand/meili-vodka")
+        ("Meili Vodka",      "partnership_4", "https://barsys.com/brand/meili-vodka")
     ]
 
     private let socialMedia: [String] = ["social_thumb_1", "social_thumb_2", "social_thumb_3"]
