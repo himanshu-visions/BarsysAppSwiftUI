@@ -2186,18 +2186,6 @@ final class AnalyticsService {
 // MARK: - CatalogService
 
 
-/// `@MainActor` so every `@Published` mutation in this service runs
-/// on the main thread. Without it, the continuations after the
-/// `await api.fetchRecipes()` / `fetchMixlists()` / `fetchFavorites()`
-/// calls inside `preload(force:)` resume on URLSession's background
-/// queue and then write `recipes` / `mixlists` / `isLoading` from a
-/// background thread — which Combine flags as
-/// "Publishing changes from background threads is not allowed". The
-/// `Task { await self?.handleConnectionRestored() }` started from the
-/// `.barsysConnectionRestored` observer also inherits this isolation
-/// now, so a network restoration re-runs `preload()` on the main
-/// queue rather than a background executor.
-@MainActor
 final class CatalogService: ObservableObject {
     @Published private(set) var recipes: [Recipe] = []
     @Published private(set) var mixlists: [Mixlist] = []
@@ -2220,10 +2208,14 @@ final class CatalogService: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // `Task { @MainActor in }` runs on the main actor from the
-            // start, matching the rest of `CatalogService`'s isolation
-            // and keeping every `@Published` write that happens inside
-            // `preload()` on the main thread.
+            // The notification fires on `.main` queue but a fresh
+            // `Task { ... }` defaults to a background executor, so
+            // explicitly hop the task onto the main actor. `preload()`
+            // wraps every `@Published` write in `MainActor.run { }`,
+            // so this is belt-and-suspenders — the explicit `@MainActor`
+            // annotation also keeps `handleConnectionRestored()`'s
+            // `lastAPICallTime` reset and `await preload()` invocation
+            // on the same main thread the user-facing fetch path uses.
             Task { @MainActor [weak self] in
                 await self?.handleConnectionRestored()
             }
@@ -2285,9 +2277,22 @@ final class CatalogService: ObservableObject {
     /// before the filter runs. Default `false` preserves the original
     /// rate-limiting for tab switches / pull-to-refresh.
     func preload(force: Bool = false) async {
-        // 1. Show cached data immediately
-        recipes = storage.allRecipes()
-        mixlists = storage.allMixlists()
+        // 1. Show cached data immediately.
+        //
+        // Wrap every `@Published` write in `await MainActor.run { }` so
+        // the publish always lands on the main thread, regardless of
+        // which queue the caller scheduled `preload()` on or which
+        // queue the `await` continuations resume on. Without this,
+        // Combine prints "Publishing changes from background threads
+        // is not allowed" — the continuations after
+        // `await api.fetchRecipes()` / `fetchMixlists()` /
+        // `fetchFavorites()` resume on URLSession's background queue.
+        let initialRecipes = storage.allRecipes()
+        let initialMixlists = storage.allMixlists()
+        await MainActor.run {
+            self.recipes = initialRecipes
+            self.mixlists = initialMixlists
+        }
 
         guard let api else {
             print("[CatalogService] preload — api is nil, skipping")
@@ -2346,7 +2351,7 @@ final class CatalogService: ObservableObject {
             print("[CatalogService] Storage empty — cleared timestamps for fresh API fetch")
         }
 
-        isLoading = true
+        await MainActor.run { self.isLoading = true }
         lastAPICallTime = Date()
 
         let currentTimestamp = Int(Date().timeIntervalSince1970)
@@ -2440,9 +2445,16 @@ final class CatalogService: ObservableObject {
                 print("[CatalogService] Favourites sync failed: \(error)")
             }
 
-            // 7. Reload published arrays
-            recipes = storage.allRecipes()
-            mixlists = storage.allMixlists()
+            // 7. Reload published arrays — main-thread hop so the
+            //    publish doesn't land from URLSession's background
+            //    queue (which is where the preceding `await api.*`
+            //    continuations resume).
+            let freshAllRecipes = storage.allRecipes()
+            let freshAllMixlists = storage.allMixlists()
+            await MainActor.run {
+                self.recipes = freshAllRecipes
+                self.mixlists = freshAllMixlists
+            }
 
             // 8. Save timestamps (ports saveUpdatedDataTimeStamp* methods)
             if hasRealData {
@@ -2461,11 +2473,15 @@ final class CatalogService: ObservableObject {
         } catch {
             print("[CatalogService] API fetch failed: \(error)")
             // On failure, keep existing data (don't clear what we have)
-            recipes = storage.allRecipes()
-            mixlists = storage.allMixlists()
+            let fallbackRecipes = storage.allRecipes()
+            let fallbackMixlists = storage.allMixlists()
+            await MainActor.run {
+                self.recipes = fallbackRecipes
+                self.mixlists = fallbackMixlists
+            }
         }
 
-        isLoading = false
+        await MainActor.run { self.isLoading = false }
         print("[CatalogService] Loaded \(recipes.count) recipes, \(mixlists.count) mixlists")
     }
 
