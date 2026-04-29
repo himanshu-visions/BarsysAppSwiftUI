@@ -591,11 +591,16 @@ struct DeviceListPopup: View {
 
     private var connectingState: some View {
         VStack(spacing: 12) {
+            // 24pt horizontal inset so a long device name (e.g.
+            // "Barsys_360_AB12CD34EF") doesn't graze the popup
+            // edges — the previous render hugged the leading and
+            // trailing of the glass card with no breathing room.
             Text("Connecting to \(selectedDeviceName ?? "")")
                 .font(.system(size: 18, weight: .light))
                 .foregroundStyle(Color("veryDarkGrayColor"))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+                .padding(.horizontal, 24)
             ProgressView()
                 .controlSize(.large)
         }
