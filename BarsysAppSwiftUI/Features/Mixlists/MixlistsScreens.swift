@@ -24,6 +24,7 @@ struct MixlistListView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var catalog: CatalogService
     @EnvironmentObject private var ble: BLEService
+    @Environment(\.dismiss) private var dismiss
 
     @State private var query = ""
 
@@ -205,6 +206,26 @@ struct MixlistListView: View {
             env.analytics.track(TrackEventName.viewMixlistsListing.rawValue)
         }
         .toolbar {
+            // Leading: back chevron — Cocktail Kits is pushed onto the
+            // navigation stack from ControlCenter ("Explore Cocktail
+            // Kits") and from ReadyToPour, so the user needs a way back.
+            // 15×15 image matches the reduced size used across
+            // PairYourDevice / MyProfile / Preferences.
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    HapticService.light()
+                    dismiss()
+                } label: {
+                    Image("back")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 15, height: 15)
+                        .foregroundStyle(Color("appBlackColor"))
+                }
+                .accessibilityLabel("Back")
+            }
+
             // Center: device ICON ONLY (only when connected).
             //
             // UIKit parity — MixlistViewController.swift:86 sets
@@ -395,6 +416,7 @@ struct MixlistDetailView: View {
     /// orange RGB so the button stays readable in dark mode.
     /// Light mode is untouched.
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
 
     @State private var selectedTab: MixlistDetailTab = .recipes
     @State private var showMoreSheet: Bool = false
@@ -541,6 +563,7 @@ struct MixlistDetailView: View {
         }
         .background(Theme.Color.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar { toolbarContent }
         .onAppear {
             // 1:1 with UIKit `MixlistDetailViewModel` L219 Braze call
@@ -1003,6 +1026,25 @@ struct MixlistDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // Leading: custom 15×15 `back` chevron — same styling used on
+        // MyProfile / Preferences / PairYourDevice / Cocktail Kits /
+        // ExploreRecipes / RecipePage / Crafting / Favorites.
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                HapticService.light()
+                dismiss()
+            } label: {
+                Image("back")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 15, height: 15)
+                    .foregroundStyle(Color("appBlackColor"))
+            }
+            .buttonStyle(BounceButtonStyle())
+            .accessibilityLabel("Back")
+        }
+
         // UIKit parity — icon only, 25×25, name label hidden
         // (MixlistDetailViewController.swift:103 sets
         // `lblDeviceName.isHidden = true` and never reverses it).

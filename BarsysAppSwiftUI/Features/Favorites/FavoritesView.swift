@@ -111,6 +111,7 @@ struct FavoritesView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    @Environment(\.dismiss) private var dismiss
     /// Reactive theme awareness — used to tint the top-right profile
     /// icon to near-white ONLY in dark mode (light mode keeps the
     /// raw PNG so pixels stay bit-identical to the existing design).
@@ -239,6 +240,7 @@ struct FavoritesView: View {
         .refreshable { await refresh() }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar { toolbarContent }
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
@@ -616,6 +618,25 @@ struct FavoritesView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // Leading: custom 15×15 `back` chevron — same styling used on
+        // MyProfile / Preferences / PairYourDevice / Cocktail Kits /
+        // ExploreRecipes / Crafting.
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                HapticService.light()
+                dismiss()
+            } label: {
+                Image("back")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 15, height: 15)
+                    .foregroundStyle(Color("appBlackColor"))
+            }
+            .buttonStyle(BounceButtonStyle())
+            .accessibilityLabel("Back")
+        }
+
         // UIKit parity — icon only, 25×25, name label hidden
         // (FavouritesRecipesAndDrinksViewController.swift:207 sets
         // `lblDeviceName.isHidden = true` in `setupView()` and never

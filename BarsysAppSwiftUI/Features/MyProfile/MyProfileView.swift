@@ -868,7 +868,7 @@ struct MyProfileView: View {
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 18, height: 18)
+                    .frame(width: 15, height: 15)
                     .foregroundStyle(Color("appBlackColor"))
             }
             .buttonStyle(BounceButtonStyle())

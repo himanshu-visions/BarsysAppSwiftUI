@@ -795,13 +795,20 @@ struct DevicePairedView: View {
                                 // 45pt visual scale of the 24×24 play_thumb
                                 // asset (was 60pt). White tint matches UIKit
                                 // `tintColor white="1" alpha="1"` on the
-                                // play button.
-                                Image("play_thumb")
-                                    .resizable()
-                                    .renderingMode(.template)
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 45, height: 45)
-                                    .foregroundStyle(Theme.Color.softWhiteText)
+                                // play button. UIKit hides the icon while
+                                // the player is playing (see
+                                // `DevicePairedViewController.updatePlayPauseIcon` —
+                                // image is set to `nil` when `isPlaying`),
+                                // so mirror that here by gating on the
+                                // PlayerHolder's published `isPlaying`.
+                                if !inlineTutorialPlayer.isPlaying {
+                                    Image("play_thumb")
+                                        .resizable()
+                                        .renderingMode(.template)
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 45, height: 45)
+                                        .foregroundStyle(Theme.Color.softWhiteText)
+                                }
                             }
                             .frame(height: 194)
                             .clipShape(RoundedRectangle(cornerRadius: 20))

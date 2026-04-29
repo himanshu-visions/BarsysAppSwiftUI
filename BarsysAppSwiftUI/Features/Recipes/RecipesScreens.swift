@@ -309,6 +309,7 @@ struct ExploreRecipesView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var catalog: CatalogService
     @EnvironmentObject private var ble: BLEService
+    @Environment(\.dismiss) private var dismiss
 
     @State private var query = ""
     @State private var isSearching = false
@@ -467,8 +468,27 @@ struct ExploreRecipesView: View {
             env.analytics.track(TrackEventName.viewRecipesListing.rawValue)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(false)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
+            // Leading: custom back chevron — same 15×15 `Image("back")`
+            // styling used on MyProfile / Preferences / PairYourDevice /
+            // Cocktail Kits.
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    HapticService.light()
+                    dismiss()
+                } label: {
+                    Image("back")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 15, height: 15)
+                        .foregroundStyle(Color("appBlackColor"))
+                }
+                .buttonStyle(BounceButtonStyle())
+                .accessibilityLabel("Back")
+            }
+
             // Center: device ICON ONLY (only when connected)
             //
             // UIKit parity: every BarsysApp controller's `updateDeviceInfo`
@@ -825,36 +845,8 @@ struct RecipeDetailView: View {
             content(recipe: recipe)
                 .background(Theme.Color.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
+                .navigationBarBackButtonHidden(true)
                 .toolbar { toolbarContent(for: recipe) }
-                // Intercept the DEFAULT system back button's tap via
-                // UIKit's `UINavigationItem.backAction` (iOS 16+) so we
-                // can run the UIKit-parity unsaved-changes guard
-                // (`RecipePageViewController.showUnsavedChangesAlertForBack`)
-                // WITHOUT replacing the back button's appearance. The
-                // default chevron / glass-circle / "Back"-title system
-                // button keeps rendering exactly as before.
-                .background(
-                    NavigationBackActionInterceptor { popIfAllowed in
-                        if hasUnsavedChanges {
-                            pendingUnsavedAction = .back
-                            unsavedPopup = .confirm(
-                                title: Constants.unsavedChangesForRecipe,
-                                message: nil,
-                                primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
-                                secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
-                                isDestructive: false,
-                                // UIKit `EditViewController.swift:353` is one
-                                // of the only three confirm sites that show
-                                // the X (`isCloseButtonHidden: false`); X-tap
-                                // dismisses without picking a side.
-                                isCloseHidden: false
-                            )
-                            // Don't pop — user must confirm via Discard.
-                        } else {
-                            popIfAllowed()
-                        }
-                    }
-                )
                 // Publish the local `hasUnsavedChanges` flag to the
                 // router so the tab-bar Binding in `MainTabView` can
                 // show the UIKit-parity "unsaved changes" confirmation
@@ -1801,6 +1793,45 @@ struct RecipeDetailView: View {
 
     @ToolbarContentBuilder
     private func toolbarContent(for recipe: Recipe) -> some ToolbarContent {
+        // Leading: custom 15×15 `back` chevron — same styling used on
+        // MyProfile / Preferences / PairYourDevice / Cocktail Kits /
+        // ExploreRecipes / Crafting / Favorites.
+        //
+        // Tapping runs the UIKit-parity unsaved-changes guard
+        // (`RecipePageViewController.showUnsavedChangesAlertForBack`):
+        //   • hasUnsavedChanges → set `pendingUnsavedAction = .back`
+        //     and surface the `unsavedChangesForRecipe` popup. The
+        //     popup's Discard handler (in `.barsysPopup(... onSecondary:)`)
+        //     resets edits then calls `dismiss()`.
+        //   • else → dismiss immediately.
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                HapticService.light()
+                if hasUnsavedChanges {
+                    pendingUnsavedAction = .back
+                    unsavedPopup = .confirm(
+                        title: Constants.unsavedChangesForRecipe,
+                        message: nil,
+                        primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                        secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                        isDestructive: false,
+                        isCloseHidden: false
+                    )
+                } else {
+                    dismiss()
+                }
+            } label: {
+                Image("back")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 15, height: 15)
+                    .foregroundStyle(Color("appBlackColor"))
+            }
+            .buttonStyle(BounceButtonStyle())
+            .accessibilityLabel("Back")
+        }
+
         // UIKit parity — icon only, 25×25, name label hidden
         // (RecipePageViewController.swift:228 sets
         // `lblDeviceName.isHidden = true` in `updateDeviceNameAndImage`

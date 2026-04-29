@@ -133,12 +133,18 @@ struct TutorialView: View {
                         playerHolder.cleanup()
                         finishTutorial()
                     } label: {
+                        // 15×15 visual icon inside a 30×30 tap target —
+                        // matches the back-button sizing pattern used
+                        // across MyProfile / Preferences / etc. while
+                        // preserving a comfortable hit area.
                         Image("crossIcon")
                             .resizable()
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 45, height: 45)
+                            .frame(width: 15, height: 15)
                             .foregroundStyle(Theme.Color.softWhiteText)
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(BounceButtonStyle())
                     .padding(.trailing, 20)

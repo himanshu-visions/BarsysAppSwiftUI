@@ -256,7 +256,7 @@ struct BarsysWebView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .foregroundStyle(Theme.Color.softWhiteText)
-                        .frame(width: 22, height: 22)
+                        .frame(width: 19, height: 19)
                         .frame(width: 50, height: 50)
                         .contentShape(Rectangle())
                 }

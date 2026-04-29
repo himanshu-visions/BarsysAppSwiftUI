@@ -1261,42 +1261,45 @@ struct CraftingView: View {
         }
         .navigationTitle("Crafting")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            // Custom 15×15 `back` chevron — same styling as
+            // MyProfile / Preferences / PairYourDevice / Cocktail Kits.
+            // Tapping it opens the same "Cancel Drink" confirmation
+            // popup the Cancel capsule uses; the popup's "Yes, Cancel"
+            // handler sends the BLE `.cancel` (202) command and waits
+            // for `dataFlushed` before `dismiss()` pops the screen.
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    HapticService.light()
+                    cancelDrinkPopup = .confirm(
+                        title: "Cancel Drink",
+                        message: "Are you sure you want to cancel the current drink?",
+                        primaryTitle: "Yes, Cancel",
+                        secondaryTitle: "No",
+                        primaryFillColor: "segmentSelectionColor"
+                    )
+                } label: {
+                    Image("back")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 15, height: 15)
+                        .foregroundStyle(Color("appBlackColor"))
+                }
+                .buttonStyle(BounceButtonStyle())
+                .accessibilityLabel("Back")
+            }
+        }
         // Hide the tab bar on the Crafting screen — the user is in a
         // focused craft flow with the only escape hatches being the
         // Cancel capsule at the bottom and the nav-bar back button
-        // (which now also routes through the same cancel-drink flow,
-        // see `NavigationBackActionInterceptor` below). The tab bar
-        // returns automatically when Crafting pops off the stack.
+        // (both route through the same cancel-drink popup above).
+        // The tab bar returns automatically when Crafting pops.
         .toolbar(.hidden, for: .tabBar)
         // Swipe-back is DISABLED so an accidental gesture mid-pour
         // can't pop the screen while the device is still dispensing.
-        // The nav-bar back button STAYS VISIBLE (default system
-        // chevron / glass circle) but its tap is intercepted via
-        // `UINavigationItem.backAction` — tapping it now opens the
-        // same "Cancel Drink" confirmation popup the Cancel capsule
-        // uses. The popup's "Yes, Cancel" handler sends the BLE
-        // `.cancel` (202) command and waits for `dataFlushed` before
-        // `dismiss()` actually pops the screen. So the back button
-        // and the Cancel capsule are functionally identical — just
-        // two entry points to the same cancel-drink flow.
         .interactiveDismissDisabled()
-        .background(
-            NavigationBackActionInterceptor { _ in
-                // Don't call `popIfAllowed` — the pop happens later
-                // via `dismiss()` once the BLE cancel has been
-                // acknowledged. Reuse the EXISTING cancelDrinkPopup
-                // state so the confirmation UX is bit-identical to
-                // the Cancel capsule tap (same title, message,
-                // primary/secondary titles, primaryFillColor).
-                cancelDrinkPopup = .confirm(
-                    title: "Cancel Drink",
-                    message: "Are you sure you want to cancel the current drink?",
-                    primaryTitle: "Yes, Cancel",
-                    secondaryTitle: "No",
-                    primaryFillColor: "segmentSelectionColor"
-                )
-            }
-        )
         // Publish "we're on the crafting screen" so the disconnect
         // handler shows the during-crafting alert copy + error haptic.
         // 1:1 port of UIKit
@@ -2200,13 +2203,13 @@ struct DrinkCompleteView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .foregroundStyle(Theme.Color.softWhiteText)
-                        .frame(width: 12, height: 20)
+                        .frame(width: 9, height: 17)
                         .frame(width: 30, height: 30)
                 } else {
                     Image("back")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 12, height: 20)
+                        .frame(width: 9, height: 17)
                         .frame(width: 30, height: 30)
                 }
             }

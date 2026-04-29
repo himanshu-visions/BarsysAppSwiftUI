@@ -3948,7 +3948,7 @@ struct QRReaderView: View {
                 Image("backWhite")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 21.33, height: 21.33)
+                    .frame(width: 18.33, height: 18.33)
                     .frame(width: 30, height: 30)
                     .contentShape(Rectangle())
             }
