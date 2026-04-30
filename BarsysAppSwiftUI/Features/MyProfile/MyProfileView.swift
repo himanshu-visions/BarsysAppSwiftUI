@@ -833,14 +833,18 @@ struct MyProfileView: View {
         .onReceive(profileStore.$name) { _ in
             if !viewModel.isEdit { viewModel.loadFromDefaults() }
         }
-        // UIKit equivalent of `showActionSheetForImagePicker()`.
-        .confirmationDialog("Select Image",
-                            isPresented: $showImageSourceSheet,
-                            titleVisibility: .hidden) {
-            Button("Camera")      { imagePickerSource = .camera;       showImagePicker = true }
-            Button("Photo Library") { imagePickerSource = .photoLibrary; showImagePicker = true }
-            Button("Cancel", role: .cancel) { }
+        // UIKit equivalent of `showActionSheetForImagePicker()` —
+        // centered alert popup matching the storyboard:
+        //   • Title: "Please select an option"
+        //   • Buttons: "Camera", "Photos"
+        // Tinted with `appBlackColor` so the title and button labels
+        // render in the brand black instead of system blue.
+        .alert("Please select an option",
+               isPresented: $showImageSourceSheet) {
+            Button("Camera") { imagePickerSource = .camera;       showImagePicker = true }
+            Button("Photos") { imagePickerSource = .photoLibrary; showImagePicker = true }
         }
+        .tint(Color("appBlackColor"))
         .sheet(isPresented: $showImagePicker) {
             BarBotImagePicker(image: $viewModel.selectedImage, source: imagePickerSource)
                 .ignoresSafeArea()

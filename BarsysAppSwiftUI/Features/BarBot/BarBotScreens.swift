@@ -3898,7 +3898,14 @@ struct QRReaderView: View {
         .toolbarBackground(.hidden, for: .tabBar)
         .navigationBarBackButtonHidden(true)
         .statusBarHidden(false)
-        .preferredColorScheme(.dark)
+        // Scope dark mode to this view's subtree only.
+        // Previously used `.preferredColorScheme(.dark)`, but that
+        // modifier propagates UP to the host scene/window, so on
+        // dismiss it leaked into the parent NavigationStack and left
+        // HomeView's background black and the bottom tab icons black
+        // until the next color-scheme change. `\.colorScheme` is
+        // scoped to this subtree and does not leak to parents.
+        .environment(\.colorScheme, .dark)
         // Camera-permission-denied alert — UIKit `showDisabledCameraAlert()`.
         .alert("Camera Access Required",
                isPresented: $showDeniedCameraAlert) {
