@@ -706,6 +706,16 @@ struct DevicePairedView: View {
         ("Meili Vodka",      "partnership_4", "https://barsys.com/brand/meili-vodka")
     ]
 
+    /// Barsys product tiles. Each tile deep-links to the product's
+    /// detail page on barsys.com. Asset names match
+    /// `Assets.xcassets/Explore/Product*Image.imageset`.
+    private let barsysProducts: [(name: String, image: String, url: String)] = [
+        ("Barsys 360",         "ProductBarsys360Image",            "https://barsys.com/us/product/barsys-360"),
+        ("Coaster 2.0",        "ProductBarsysCossterImage",        "https://barsys.com/us/product/barsys-360"),
+        ("Barsys Shaker Pro",  "ProductBarsysShakerProImage",      "https://barsys.com/us/product/barsys-shaker-pro"),
+        ("Wireless Mixer",     "ProductBarsysWirelessMixerImage",  "https://barsys.com/us/product/wireless-mixer")
+    ]
+
     private let socialMedia: [String] = ["social_thumb_1", "social_thumb_2", "social_thumb_3"]
 
     // MARK: - Device info helpers
@@ -1020,52 +1030,83 @@ struct DevicePairedView: View {
                 .padding(.top, 12)
 
                 // ══════════════════════════════════════════════════
-                // SOCIAL MEDIA (SocialMediaCollectionViewCell)
-                // Cell: responsive width, h=285, full-bleed image, 12pt corners
+                // BARSYS PRODUCTS — mirrors Partnerships layout but each
+                // tile deep-links to the product's barsys.com page.
                 // ══════════════════════════════════════════════════
-                sectionHeader("Connect with Barsys online")
-                    .padding(.top, 16)
+                sectionHeader("Barsys Products")
+                    .padding(.top, 24)
 
                 GeometryReader { geo in
-                    // Same clamp rationale as the Partnerships section
-                    // above — keeps the social-media cards at a sensible
-                    // size on iPad pre-iOS 26 so their visual footprint
-                    // matches Partnerships and the layout stays
-                    // consistent across both sections on iPad.
+                    // Same clamp rationale as the Partnerships section —
+                    // keeps cards at a sensible size on iPad pre-iOS 26.
                     let rawCardW = (geo.size.width - 24 - 32) / 2.15
                     let cardW = shouldClampCatalogCard ? min(180, rawCardW) : rawCardW
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
-                            ForEach(Array(socialMedia.enumerated()), id: \.offset) { _, img in
-                                Image(img)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: cardW, height: 285)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                                    // 1:1 UIKit `didSelectItemAt` for
-                                    // the `socialMediaCollectionView`
-                                    // (L139-140) — any social card tap
-                                    // routes to `showUnderConstructionPopup()`.
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        HapticService.light()
-                                        presentComingSoonPopup()
+                            ForEach(Array(barsysProducts.enumerated()), id: \.offset) { _, p in
+                                VStack(spacing: 8) {
+                                    Image(p.image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: cardW, height: cardW)
+                                        .background(Color.white)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    Text(p.name)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(Color("charcoalGrayColor"))
+                                        .frame(width: cardW)
+                                        .multilineTextAlignment(.center)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    HapticService.light()
+                                    if let url = URL(string: p.url) {
+                                        UIApplication.shared.open(url)
                                     }
+                                }
                             }
                         }
                         .padding(.horizontal, 24)
                     }
                 }
-                .frame(height: 285)
+                .frame(height: 210)
                 .padding(.top, 12)
-                // Pre-iOS 26 the tab bar is opaque + has a hairline,
-                // so 30pt left the social-media row grazing it. Branch
-                // so pre-iOS 26 gets 50pt of breathing room while iOS
-                // 26+ keeps the tighter 30pt that matched the glass
-                // tab bar it blurs over. Same pattern as
-                // `MyBarView.bottomBarBottomInset` /
-                // `HomeView.speakeasyCardBottomInset`.
                 .padding(.bottom, devicePairedBottomInset)
+
+                // ══════════════════════════════════════════════════
+                // SOCIAL MEDIA (SocialMediaCollectionViewCell)
+                // Hidden per product update — kept in source so it can
+                // be re-enabled by flipping `showSocialMediaSection`.
+                // ══════════════════════════════════════════════════
+                if false {
+                    sectionHeader("Connect with Barsys online")
+                        .padding(.top, 16)
+
+                    GeometryReader { geo in
+                        let rawCardW = (geo.size.width - 24 - 32) / 2.15
+                        let cardW = shouldClampCatalogCard ? min(180, rawCardW) : rawCardW
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(Array(socialMedia.enumerated()), id: \.offset) { _, img in
+                                    Image(img)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: cardW, height: 285)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            HapticService.light()
+                                            presentComingSoonPopup()
+                                        }
+                                }
+                            }
+                            .padding(.horizontal, 24)
+                        }
+                    }
+                    .frame(height: 285)
+                    .padding(.top, 12)
+                    .padding(.bottom, devicePairedBottomInset)
+                }
             }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
