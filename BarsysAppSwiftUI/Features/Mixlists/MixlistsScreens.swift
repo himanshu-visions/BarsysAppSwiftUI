@@ -572,6 +572,15 @@ struct MixlistDetailView: View {
         .interactivePopGestureEnabled()
         .toolbar { toolbarContent }
         .onAppear {
+            // Re-project favourites from storage on every appear so a
+            // RecipeDetail toggle (pushed from one of these mixlist
+            // rows) refreshes the heart icons when the user pops back.
+            // The `recipes` computed property reads
+            // `favouritesRefreshTick` as a dependency, so the bump
+            // forces a re-evaluation that re-reads each row from
+            // `env.storage.recipe(by: id)` (which has the latest
+            // `isFavourite` flag the detail view just wrote).
+            favouritesRefreshTick &+= 1
             // 1:1 with UIKit `MixlistDetailViewModel` L219 Braze call
             // — fires every time the Mixlist detail lands. Property
             // dictionary mirrors UIKit L219-226:

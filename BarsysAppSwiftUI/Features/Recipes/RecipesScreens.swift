@@ -314,6 +314,19 @@ struct ExploreRecipesView: View {
     @State private var query = ""
     @State private var isSearching = false
 
+    /// Bumped on every `.onAppear` so the `exploreRecipes` computed
+    /// property re-evaluates against the live storage state. Required
+    /// because `MockStorageService` is not `ObservableObject` — when
+    /// `RecipeDetailView` toggles a favourite (via direct
+    /// `env.storage.setFavorite` / `upsert` calls) and the user pops
+    /// back, neither the storage mutation nor the catalog republish
+    /// reliably trips a re-render of this hidden-then-revealed view.
+    /// Reading the tick inside `exploreRecipes` registers it as a
+    /// dependency, so bumping it on appear forces the heart icons to
+    /// reflect the latest `isFavourite` flags. Mirrors UIKit's
+    /// `viewWillAppear` → `tableView.reloadData()` pattern.
+    @State private var favouritesRefreshTick: Int = 0
+
     private var isConnected: Bool { ble.isAnyDeviceConnected }
 
     /// Bottom breathing room above the tab bar on the Explore Recipes
@@ -349,21 +362,44 @@ struct ExploreRecipesView: View {
     ///     standalone-record semantics keeps every populated recipe
     ///     visible.
     private var exploreRecipes: [Recipe] {
-        catalog.recipes.filter { recipe in
+        // Reading the tick registers it as a dependency so SwiftUI
+        // re-runs this computed property (and the `RecipeRowCell`
+        // ForEach inside the body) on every `.onAppear` bump — the
+        // hook that lets the heart icons refresh after a child
+        // RecipeDetail toggle.
+        let _ = favouritesRefreshTick
+        // Source from `env.storage.allRecipes()` (not `catalog.recipes`)
+        // so each pop-back from RecipeDetail picks up the live
+        // `isFavourite` flag the detail view just wrote via
+        // `setFavorite` / `upsert`. `catalog.recipes` is also republished
+        // by `RecipeDetailView` for free, but storage is the
+        // source-of-truth dictionary the storage layer mutates in place.
+        let favs = env.storage.favorites()
+        return env.storage.allRecipes().compactMap { stored in
             // Standalone-only (UIKit user_id filter).
-            guard (recipe.userId ?? "").isEmpty else { return false }
+            guard (stored.userId ?? "").isEmpty else { return nil }
             // Hide empty-ingredient rows. "Empty" mirrors UIKit's
             // ingredient subquery semantics: at least one ingredient
             // whose primary category isn't `garnish` /
             // `additionals` / `additional`. Garnish-only entries
             // count as empty and are suppressed.
-            let realIngredients = (recipe.ingredients ?? []).filter { ingredient in
+            let realIngredients = (stored.ingredients ?? []).filter { ingredient in
                 let primary = (ingredient.category?.primary ?? "").lowercased()
                 return primary != "garnish"
                     && primary != "additionals"
                     && primary != "additional"
             }
-            return !realIngredients.isEmpty
+            guard !realIngredients.isEmpty else { return nil }
+            // Re-project the authoritative favs Set onto the recipe's
+            // `isFavourite` flag. The storage `recipes` dict already
+            // mirrors the favs Set when `setFavorite` runs, but this
+            // belt-and-braces re-projection covers the edge case where
+            // a `preload()` upsert from the API replaced the recipe
+            // record with one whose `isFavourite` came back as `nil`
+            // / `false` while the favs Set still has the id.
+            var r = stored
+            r.isFavourite = favs.contains(stored.id)
+            return r
         }
     }
 
@@ -490,6 +526,14 @@ struct ExploreRecipesView: View {
                                         // Favorites already show it).
                                         let willBeFav = !env.storage.favorites().contains(recipe.id)
                                         catalog.toggleFavourite(recipeId: recipe.id)
+                                        // Bump the tick so `exploreRecipes`
+                                        // (which now sources from
+                                        // `env.storage.allRecipes()` and reads
+                                        // the tick as a SwiftUI dependency)
+                                        // re-evaluates immediately on tap and
+                                        // the heart icon swaps from hollow ↔
+                                        // filled in the same render pass.
+                                        favouritesRefreshTick &+= 1
                                         env.analytics.track(
                                             (willBeFav ? TrackEventName.favouriteRecipeAdded
                                                        : TrackEventName.favouriteRecipeRemoved).rawValue
@@ -530,6 +574,15 @@ struct ExploreRecipesView: View {
             //       eventName: TrackEventName.viewRecipesListing.rawValue)
             // Fires every time the All Recipes tab becomes visible.
             env.analytics.track(TrackEventName.viewRecipesListing.rawValue)
+            // Re-project favourites from storage on every appear so a
+            // RecipeDetail toggle (popped back via the nav stack)
+            // refreshes the heart icons here. Mirrors UIKit's
+            // `viewWillAppear` → `tableView.reloadData()` behaviour
+            // and `ReadyToPourView.refreshFavouritesFromStorage()` on
+            // the home screen. Bumping the tick is what forces
+            // SwiftUI to re-evaluate `exploreRecipes` (which reads
+            // `favouritesRefreshTick` to register a dependency).
+            favouritesRefreshTick &+= 1
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
