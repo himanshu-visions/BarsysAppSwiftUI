@@ -836,13 +836,18 @@ struct MyProfileView: View {
         // UIKit equivalent of `showActionSheetForImagePicker()` —
         // centered alert popup matching the storyboard:
         //   • Title: "Please select an option"
-        //   • Buttons: "Camera", "Photos"
+        //   • Buttons: "Camera", "Photos", "Cancel" — stacked vertically.
+        // SwiftUI alerts only stack buttons vertically when there are
+        // three or more buttons (two render horizontally), so the
+        // Cancel button is required to force the vertical layout shown
+        // in the design.
         // Tinted with `appBlackColor` so the title and button labels
         // render in the brand black instead of system blue.
         .alert("Please select an option",
                isPresented: $showImageSourceSheet) {
             Button("Camera") { imagePickerSource = .camera;       showImagePicker = true }
             Button("Photos") { imagePickerSource = .photoLibrary; showImagePicker = true }
+            Button("Cancel", role: .cancel) { }
         }
         .tint(Color("appBlackColor"))
         .sheet(isPresented: $showImagePicker) {
