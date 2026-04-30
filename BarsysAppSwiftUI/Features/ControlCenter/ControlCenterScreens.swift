@@ -942,7 +942,7 @@ struct DevicePairedView: View {
                 // Heart: 30×30, 6pt from top-right of image
                 // ══════════════════════════════════════════════════
                 sectionHeader("We think you'll love these")
-                    .padding(.top, 24)
+                    .padding(.top, 0)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 16) {
