@@ -265,8 +265,27 @@ final class SignUpViewModel: ObservableObject {
                              alerts: AlertQueue,
                              analytics: AnalyticsService,
                              isResend: Bool = false) async {
-        guard isSignUpDetailsValid(alerts: alerts) else { return }
+        // Re-entry guard — bail immediately if a previous Get-OTP
+        // task is still running. Without this, rapid taps on the
+        // "Get OTP" button stack identical validation alerts on top
+        // of one another (QA: "Sign Up > The validation alert for
+        // the Terms and Conditions and Privacy Policy appears twice,
+        // overlapping, when the Get OTP button is tapped multiple
+        // times"). The button has `.disabled(viewModel.isWorking)`,
+        // but the previous order — validate FIRST, then set
+        // `isWorking = true` AFTER — left a race window where every
+        // queued tap reached `isSignUpDetailsValid(...)` (which
+        // surfaces the validation alert) before any of them flipped
+        // the flag. Guarding on `isWorking` at the top closes that
+        // window, and the `isWorking = true` set BEFORE validation
+        // ensures every subsequent tap (button-disable race or
+        // not) takes the early-return branch.
+        guard !isWorking else { return }
         isWorking = true
+        guard isSignUpDetailsValid(alerts: alerts) else {
+            isWorking = false
+            return
+        }
         defer { isWorking = false }
         do {
             // If the live OryAPIClient is wired, use the dedicated registration

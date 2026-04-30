@@ -136,6 +136,17 @@ final class LoginViewModel: ObservableObject {
                  alerts: AlertQueue,
                  analytics: AnalyticsService,
                  isResend: Bool = false) async {
+        // Re-entry guard — same rationale as
+        // `SignUpViewModel.sendRegistrationOtp`: bail if a previous
+        // Get-OTP task is still running so rapid double-taps can't
+        // stack identical validation alerts. The button has
+        // `.disabled(viewModel.isWorking)`, but validation runs
+        // BEFORE `isWorking` was previously flipped, so multiple
+        // queued taps all hit the early-return alert path. Setting
+        // `isWorking = true` up-front and resetting on validation
+        // failure closes that race.
+        guard !isWorking else { return }
+        isWorking = true
         let validation = validatePhone()
         guard validation.isValid else {
             phoneError = validation.errorMessage
@@ -144,10 +155,10 @@ final class LoginViewModel: ObservableObject {
             // fails validation before the alert is shown.
             HapticService.error()
             alerts.show(message: validation.errorMessage ?? Constants.invalidPhoneNumber)
+            isWorking = false
             return
         }
         phoneError = nil
-        isWorking = true
         defer { isWorking = false }
 
         // Test phone shortcut: skip the API and immediately show the OTP view.

@@ -2624,6 +2624,27 @@ final class AlertQueue: ObservableObject {
               primary: String = "OK",
               action: (() -> Void)? = nil,
               hideClose: Bool = true) {
+        // Dedupe — if the same alert content is already on screen,
+        // ignore this call. Without this guard, rapid double / triple
+        // taps on a button that surfaces a validation alert (e.g. the
+        // Sign Up "Get OTP" path with the T&C / Privacy Policy
+        // checkbox unchecked) re-assign `current` with a fresh
+        // `AppAlertItem.id` each time, and SwiftUI's `.animation(...,
+        // value: queue.current?.id)` re-runs the transition on every
+        // assignment — visibly stacking the same popup on top of
+        // itself. Skipping the assignment when the live alert already
+        // matches the requested title / message / primary leaves the
+        // existing instance in place so the user sees ONE popup, not
+        // two or three. Single-button alerts only — the two-button
+        // variant intentionally allows replacement so a decision
+        // alert can supersede an info alert.
+        if let existing = current,
+           existing.title == title,
+           existing.message == message,
+           existing.primaryActionTitle == primary,
+           existing.secondaryActionTitle == nil {
+            return
+        }
         current = AppAlertItem(
             title: title,
             message: message,
