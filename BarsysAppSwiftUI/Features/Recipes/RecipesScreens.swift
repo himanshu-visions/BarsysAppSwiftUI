@@ -625,6 +625,19 @@ struct RecipeRowCell: View {
         return raw.getImageUrl()
     }
 
+    /// UIKit BarsysRecipeTableViewCell L63-77: iOS 26 uses 40×40 glass buttons
+    /// with black@0.3 tint; pre-26 uses 30×30 plain buttons with white tint.
+    private var favButtonSize: CGFloat {
+        if #available(iOS 26.0, *) { return 40 } else { return 30 }
+    }
+    private var favButtonTint: Color {
+        if #available(iOS 26.0, *) {
+            return Color.black.opacity(0.3)
+        } else {
+            return Theme.Color.softWhiteText
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             // Left half — title + ingredients (Craft button hidden in Explore).
@@ -659,6 +672,7 @@ struct RecipeRowCell: View {
                     .background(Color("lightBorderGrayColor"))
                     .clipped()
 
+                // Favourite button — UIKit: 30×30 (40×40 iOS 26+), prominentGlass
                 Button {
                     HapticService.light()
                     onFavourite()
@@ -667,10 +681,10 @@ struct RecipeRowCell: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 22, height: 22)
-                        .frame(width: 30, height: 30)
-                        .foregroundStyle(Theme.Color.softWhiteText)
-                        .background(Color.black.opacity(0.001)) // ensures hit area
+                        .frame(width: favButtonSize, height: favButtonSize)
+                        .foregroundStyle(favButtonTint)
                 }
+                .glassButtonIfAvailable(size: favButtonSize)
                 .buttonStyle(BounceButtonStyle())
                 .padding(.top, 5)
                 .padding(.trailing, 5)
