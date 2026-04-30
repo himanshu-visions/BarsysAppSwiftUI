@@ -7,6 +7,27 @@
 //
 
 import SwiftUI
+import SafariServices
+
+// MARK: - SafariSheetView
+//
+// Thin `UIViewControllerRepresentable` wrapper around
+// `SFSafariViewController`. Used for the Barsys Products and
+// Partnerships tile taps so the URL opens in the standard system
+// Safari sheet (X button + domain title + reader/share controls)
+// instead of a pushed nav stack or our custom `BarsysWebView`.
+struct SafariSheetView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let config = SFSafariViewController.Configuration()
+        config.entersReaderIfAvailable = false
+        config.barCollapsingEnabled = true
+        return SFSafariViewController(url: url, configuration: config)
+    }
+
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+}
 
 // MARK: - ControlCenterItem (ports ControlCenterModel.swift)
 
@@ -530,6 +551,12 @@ struct DevicePairedView: View {
     /// inline play card. Mirrors UIKit's `present(tutorialVc, animated: true)`.
     @State private var showTutorialPlayer = false
 
+    /// Drives the bottom-sheet `BarsysWebView` presentation when a
+    /// Barsys Products tile is tapped. Sheet (action-sheet style)
+    /// instead of pushing onto the nav stack so the user stays in
+    /// the Explore tab and can swipe down to dismiss.
+    @State private var activeProductSheet: ProductWebSheet?
+
     /// Inline AVPlayer that powers the Explore tutorial card preview —
     /// 1:1 with UIKit `playerView?.setupPlayer(with: videoURL, on:
     /// containerView, fillMode: .resizeAspectFill, shouldRepeat: true)`
@@ -705,6 +732,14 @@ struct DevicePairedView: View {
         // ships as soon as the artwork lands.
         ("Meili Vodka",      "partnership_4", "https://barsys.com/brand/meili-vodka")
     ]
+
+    /// Identifiable wrapper for `.sheet(item:)` so a Barsys Products
+    /// tap can drive `BarsysWebView` as a bottom sheet.
+    fileprivate struct ProductWebSheet: Identifiable {
+        let id = UUID()
+        let url: URL
+        let title: String
+    }
 
     /// Barsys product tiles. Each tile deep-links to the product's
     /// detail page on barsys.com. Asset names match
@@ -1016,7 +1051,7 @@ struct DevicePairedView: View {
                                     HapticService.light()
                                     if let urlString = p.url,
                                        let url = URL(string: urlString) {
-                                        UIApplication.shared.open(url)
+                                        activeProductSheet = ProductWebSheet(url: url, title: p.name)
                                     } else {
                                         presentComingSoonPopup()
                                     }
@@ -1061,7 +1096,7 @@ struct DevicePairedView: View {
                                 .onTapGesture {
                                     HapticService.light()
                                     if let url = URL(string: p.url) {
-                                        UIApplication.shared.open(url)
+                                        activeProductSheet = ProductWebSheet(url: url, title: p.name)
                                     }
                                 }
                             }
@@ -1161,6 +1196,15 @@ struct DevicePairedView: View {
                 videoURL: tutorialVideoURL,
                 onDismiss: { showTutorialPlayer = false }
             )
+        }
+        // Barsys Products / Partnerships tile → system Safari sheet
+        // (`SFSafariViewController`) so the URL opens with the
+        // standard X / domain-title / reader-share top bar shown
+        // in product spec instead of our branded `BarsysWebView`.
+        // Swipe-down or the X button dismisses.
+        .sheet(item: $activeProductSheet) { item in
+            SafariSheetView(url: item.url)
+                .ignoresSafeArea()
         }
         // Mirrors `ExploreRecipesView.task` so the "We think you'll
         // love these" carousel hydrates from the same Explore feed
