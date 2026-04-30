@@ -434,18 +434,31 @@ struct DeviceListPopup: View {
     }
 
     // MARK: - State 1: Searching
-    // UIKit: activityIndicator spinning, lblDeviceDetectedOrSearching = "Searching for Device"
+    // UIKit: lblDeviceDetectedOrSearching pinned ~60pt from popup top
+    // ("Searching for Device"), activityIndicator centered horizontally
+    // and vertically inside the 295×295 popup container. The previous
+    // SwiftUI port stacked the two views tightly with `spacing: 12`
+    // and `.frame(maxHeight: .infinity)`, which centered the *pair*
+    // — making the title float into the middle and the spinner sit
+    // below it. ZStack keeps the spinner at the geometric center
+    // while the title rides at the top, matching the storyboard.
 
     private var searchingState: some View {
-        VStack(spacing: 12) {
-            Text("Searching for Device")
-                .font(.system(size: 18, weight: .light))
-                .foregroundStyle(Color("veryDarkGrayColor"))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .accessibilityAddTraits(.isHeader)
+        ZStack {
+            VStack(spacing: 0) {
+                Text("Searching for Device")
+                    .font(.system(size: 18, weight: .light))
+                    .foregroundStyle(Color("veryDarkGrayColor"))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 60)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+            }
+
             ProgressView()
                 .controlSize(.large)
+                .tint(Color("mediumGrayColor"))
                 .accessibilityLabel("Scanning for devices")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
