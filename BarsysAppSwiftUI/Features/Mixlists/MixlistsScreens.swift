@@ -1569,7 +1569,9 @@ struct MixlistDetailRecipeRow: View {
                 .background(Color("lightBorderGrayColor"))
                 .clipped()
 
-                // Favourite button — UIKit: 30×30 (40×40 iOS 26+), prominentGlass
+                // Favourite button — UIKit: 30×30 (40×40 iOS 26+), prominentGlass.
+                // Glass background lives INSIDE the label so it scales with
+                // the BounceButtonStyle press animation.
                 Button {
                     HapticService.light()
                     onFavorite()
@@ -1580,8 +1582,8 @@ struct MixlistDetailRecipeRow: View {
                         .frame(width: 22, height: 22)
                         .frame(width: favButtonSize, height: favButtonSize)
                         .foregroundStyle(favButtonTint)
+                        .glassButtonIfAvailable(size: favButtonSize)
                 }
-                .glassButtonIfAvailable(size: favButtonSize)
                 .buttonStyle(BounceButtonStyle())
                 .padding(.top, 5)
                 .padding(.trailing, 5)

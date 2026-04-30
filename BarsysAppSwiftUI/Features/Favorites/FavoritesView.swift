@@ -1194,6 +1194,8 @@ struct BarsysRecipeRow: View {
                 .clipped()
                 // Favourite button — TOP-RIGHT corner of the image
                 // (UIKit `aHb-2f-Xkm` constraints: top=5, trailing=5).
+                // Glass background lives INSIDE the label so it scales
+                // with the BounceButtonStyle press animation.
                 .overlay(alignment: .topTrailing) {
                     Button {
                         onFavourite()
@@ -1204,8 +1206,8 @@ struct BarsysRecipeRow: View {
                             .frame(width: 22, height: 22)
                             .frame(width: favButtonSize, height: favButtonSize)
                             .foregroundStyle(favButtonTint)
+                            .glassButtonIfAvailable(size: favButtonSize)
                     }
-                    .glassButtonIfAvailable(size: favButtonSize)
                     .buttonStyle(BounceButtonStyle())
                     .accessibilityLabel(isFavourite
                                         ? "Remove from favourites"
@@ -1229,8 +1231,8 @@ struct BarsysRecipeRow: View {
                                 .frame(width: 22, height: 22)
                                 .frame(width: favButtonSize, height: favButtonSize)
                                 .foregroundStyle(favButtonTint)
+                                .glassButtonIfAvailable(size: favButtonSize)
                         }
-                        .glassButtonIfAvailable(size: favButtonSize)
                         .buttonStyle(BounceButtonStyle())
                         .accessibilityLabel("More options for \(recipe.displayName)")
                         .padding(.bottom, 5)
@@ -1411,22 +1413,48 @@ struct BarsysRecipeRow: View {
     }
 }
 
-// MARK: - Glass button modifier for iOS 26+ (ports .prominentGlass() config)
+// MARK: - Glass button modifier (ports UIKit `addGlassEffectToUIButton`)
+//
+// 1:1 port of UIKit `addGlassEffectToUIButton(isBorderEnabled:false,
+// cornerRadius: h/2, alpha:1, effect:"regular")` (UIViewClass+GlassEffects.swift).
+// UIKit applies this on BOTH iOS 26+ (real `UIGlassEffect(style: .regular)`
+// with `isInteractive = true`) AND pre-26 (`UIBlurEffect(style: .regular)`),
+// so the heart-button glass must render on every supported deployment target.
+//
+// iOS 26+ uses the native SwiftUI `.glassEffect(.regular.interactive(), in:)`
+// modifier — same recipe as `TutorialCloseGlassBackground` and the system
+// toolbar back chevron — which gives the proper Liquid Glass press
+// refraction / bounce that `.ultraThinMaterial + Circle().fill(...)` cannot
+// reproduce. Pre-26 falls back to `.regularMaterial` + 1pt white stroke.
 
 extension View {
-    /// On iOS 26+, wraps the view in a glass-effect background circle
-    /// (ports UIKit `.prominentGlass()` button configuration).
-    /// Pre-26: no-op (buttons remain flat on the image).
+    /// Wraps the view in a circular interactive glass capsule. iOS 26+
+    /// uses `.glassEffect(.regular.interactive(), in: .circle)` for the
+    /// native Liquid Glass press refraction the system back chevron has.
+    /// Pre-26 falls back to `Circle().fill(.regularMaterial)` — the
+    /// SwiftUI equivalent of `UIBlurEffect(style: .regular)` UIKit applies
+    /// via `addGlassEffectToUIButton`.
     @ViewBuilder
     func glassButtonIfAvailable(size: CGFloat) -> some View {
         if #available(iOS 26.0, *) {
+            // Native Liquid Glass — same modifier the system toolbar back
+            // chevron and TutorialCloseGlassBackground use. `.interactive()`
+            // gives the press refraction / bounce that `.ultraThinMaterial`
+            // alone cannot reproduce.
+            self.glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            // Pre-iOS 26 fallback: `.regularMaterial` circle + 1pt white
+            // stroke — SwiftUI equivalent of `UIBlurEffect(style: .regular)`
+            // UIKit applies via `addGlassEffectToUIButton`.
             self.background(
                 Circle()
-                    .fill(.ultraThinMaterial)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                    )
                     .frame(width: size, height: size)
             )
-        } else {
-            self
         }
     }
 }
