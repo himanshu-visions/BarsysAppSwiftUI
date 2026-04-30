@@ -467,8 +467,7 @@ struct DevicePairedView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService
-
-    @State private var favourites: Set<Int> = []
+    @EnvironmentObject private var catalog: CatalogService
 
     /// Bottom breathing room above the tab bar. iOS 26+ glass blurs
     /// over content (30pt is enough and was the pre-existing value);
@@ -663,13 +662,27 @@ struct DevicePairedView: View {
         ]
     }
 
-    private let recommendedRecipes: [(id: String, title: String, desc: String, image: String)] = [
-        ("1de7b1b0", "Long Island Iced Tea", "Gin, White Rum, Tequila, Triple sec, Cola, Vodka", "recommended_recipes_1"),
-        ("db9bf71f", "Negroni", "Gin, Campari, Vermouth", "recommended_recipes_2"),
-        ("8f8970ee", "Perfect Patrón Margarita", "Patrón, Cointreau, Fresh Lime Juice, Simple Syrup", "recommended_recipes_3"),
-        ("463c492d", "Aperol Spritz", "Prosecco, Aperol, Soda Water", "recommended_recipes_4"),
-        ("190b93d2", "Espresso Martini", "Vodka, Coffee Liqueur, Simple Syrup, Espresso", "recommended_recipes_5")
-    ]
+    /// First 5 recipes from the same Explore feed that powers
+    /// `ExploreRecipesView` — standalone Barsys recipes (`user_id`
+    /// nil/empty) with at least one non-garnish ingredient, ordered
+    /// newest-first by `CatalogService.allRecipes()`. Drives the
+    /// "We think you'll love these" carousel so the section reflects
+    /// live catalog data instead of a hardcoded sample list.
+    private var recommendedRecipes: [Recipe] {
+        catalog.recipes
+            .filter { recipe in
+                guard (recipe.userId ?? "").isEmpty else { return false }
+                let realIngredients = (recipe.ingredients ?? []).filter { ingredient in
+                    let primary = (ingredient.category?.primary ?? "").lowercased()
+                    return primary != "garnish"
+                        && primary != "additionals"
+                        && primary != "additional"
+                }
+                return !realIngredients.isEmpty
+            }
+            .prefix(5)
+            .map { $0 }
+    }
 
     /// Partnership tiles. The `url` field holds the bar's public Barsys
     /// landing page (e.g. https://barsys.com/bar/bathtub-gin) — when set,
@@ -923,70 +936,18 @@ struct DevicePairedView: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 16) {
-                        ForEach(Array(recommendedRecipes.enumerated()), id: \.offset) { idx, recipe in
-                            ZStack(alignment: .topTrailing) {
-                                HStack(spacing: 0) {
-                                    // Left text area (50%)
-                                    VStack(alignment: .leading, spacing: 12) {
-                                        Text(recipe.title)
-                                            .font(.system(size: 16))
-                                            .foregroundStyle(Color("charcoalGrayColor"))
-                                            .lineLimit(3)
-                                        Text(recipe.desc)
-                                            .font(.system(size: 11))
-                                            // `unSelectedColor` light value is sRGB(0.584,
-                                            // 0.584, 0.584) — bit-identical to the previous
-                                            // hard-coded `Color(red: 0.584, …)` (#959595), so
-                                            // light mode renders the EXACT same description
-                                            // pixels. Dark mode picks up the adaptive
-                                            // mid-gray (#8E8E93) so the ingredient line
-                                            // stays legible against the dark recommended-row
-                                            // surface. This was always the UIKit asset name —
-                                            // see comment at L743 ("ingredients 11pt unSelectedColor").
-                                            .foregroundStyle(Color("unSelectedColor"))
-                                            .lineLimit(4)
-                                    }
-                                    .padding(14)
-                                    .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                                    // Right image (50% = 150pt of 300)
-                                    Image(recipe.image)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 150, height: 170)
-                                        .clipped()
-                                }
-
-                                // Heart/favourite button (30×30, 6pt from top-right)
-                                Button {
+                        ForEach(recommendedRecipes) { recipe in
+                            RecommendedRecipeCard(
+                                recipe: recipe,
+                                onTap: {
                                     HapticService.light()
-                                    if favourites.contains(idx) {
-                                        favourites.remove(idx)
-                                    } else {
-                                        favourites.insert(idx)
-                                    }
-                                } label: {
-                                    Image(favourites.contains(idx) ? "favIconRecipeSelected" : "favIconRecipe")
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 22, height: 20)
-                                        .frame(width: 30, height: 30)
+                                    router.push(.recipeDetail(recipe.id))
+                                },
+                                onFavourite: {
+                                    HapticService.light()
+                                    catalog.toggleFavourite(recipeId: recipe.id)
                                 }
-                                .padding(.top, 6)
-                                .padding(.trailing, 6)
-                            }
-                            .frame(width: 300, height: 170)
-                            .background(Color("warmBackgroundColor"))
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            // 1:1 UIKit `didSelectItemAt` for the
-                            // `recommendedCollectionView` (L135-136) —
-                            // any tap on a recommended row routes to
-                            // `showUnderConstructionPopup()`.
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                HapticService.light()
-                                presentComingSoonPopup()
-                            }
+                            )
                         }
                     }
                     .padding(.horizontal, 24)
@@ -1160,6 +1121,13 @@ struct DevicePairedView: View {
                 onDismiss: { showTutorialPlayer = false }
             )
         }
+        // Mirrors `ExploreRecipesView.task` so the "We think you'll
+        // love these" carousel hydrates from the same Explore feed
+        // (CatalogService.refreshIfStale → preload). Bypasses the work
+        // when the cache is fresh (<1h old).
+        .task {
+            await catalog.refreshIfStale()
+        }
         // 1:1 with UIKit `DevicePairedViewController.viewDidLoad`
         // → `setupTutorialVideoIfNeeded()`: snapshot the show/hide
         // decision AND flip the per-device "seen" flag exactly once
@@ -1267,6 +1235,93 @@ struct DevicePairedView: View {
             action: nil,
             hideClose: true
         )
+    }
+}
+
+// MARK: - RecommendedRecipeCard
+//
+// 300×170 horizontal card that powers the "We think you'll love these"
+// carousel on `DevicePairedView`. Visual layout is identical to the
+// previous hardcoded version (left text 50% / right image 50%, 16pt
+// corners, heart 6pt from the top-right) — only the data source has
+// changed: it now binds to a live `Recipe` from `CatalogService`
+// (first 5 of the Explore feed) instead of a static asset list.
+private struct RecommendedRecipeCard: View {
+    let recipe: Recipe
+    let onTap: () -> Void
+    let onFavourite: () -> Void
+
+    private var optimizedImageURL: URL? {
+        guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
+        return raw.getImageUrl()
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(recipe.displayName)
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color("charcoalGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                    if let names = recipe.ingredientNames, !names.isEmpty {
+                        Text(names)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color("unSelectedColor"))
+                            .lineLimit(4)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                thumbnail
+                    .frame(width: 150, height: 170)
+                    .clipped()
+            }
+
+            Button {
+                onFavourite()
+            } label: {
+                Image(recipe.isFavourite == true ? "favIconRecipeSelected" : "favIconRecipe")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 22, height: 20)
+                    .frame(width: 30, height: 30)
+            }
+            .padding(.top, 6)
+            .padding(.trailing, 6)
+        }
+        .frame(width: 300, height: 170)
+        .background(Color("warmBackgroundColor"))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let url = optimizedImageURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().aspectRatio(contentMode: .fill)
+                case .empty, .failure:
+                    Image("myDrink")
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .padding(16)
+                @unknown default:
+                    Image("myDrink")
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .padding(16)
+                }
+            }
+        } else {
+            Image("myDrink")
+                .resizable().aspectRatio(contentMode: .fit)
+                .padding(16)
+        }
     }
 }
 
