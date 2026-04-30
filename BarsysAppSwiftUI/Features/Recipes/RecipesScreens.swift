@@ -475,7 +475,28 @@ struct ExploreRecipesView: View {
                                     recipe: recipe,
                                     cellHeight: rowHeight,
                                     onFavourite: {
+                                        // Determine the toggle direction BEFORE
+                                        // mutating storage so the success-alert
+                                        // copy matches the action the user just
+                                        // performed. Mirrors UIKit
+                                        // ExploreRecipesViewController's
+                                        // post-likeUnlikeApi behaviour where
+                                        // `showDefaultAlert(message: responseMessage)`
+                                        // surfaces the "added to / removed from
+                                        // My Favourites" toast — the SwiftUI
+                                        // explore listing was the only entry
+                                        // point still missing this alert
+                                        // (RecipeDetail / Ready-to-Pour /
+                                        // Favorites already show it).
+                                        let willBeFav = !env.storage.favorites().contains(recipe.id)
                                         catalog.toggleFavourite(recipeId: recipe.id)
+                                        env.analytics.track(
+                                            (willBeFav ? TrackEventName.favouriteRecipeAdded
+                                                       : TrackEventName.favouriteRecipeRemoved).rawValue
+                                        )
+                                        env.alerts.show(message: willBeFav
+                                                        ? Constants.likeSuccessMessage
+                                                        : Constants.unlikeSuccessMessage)
                                     }
                                 )
                             }
