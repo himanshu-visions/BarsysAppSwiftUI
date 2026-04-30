@@ -322,6 +322,11 @@ final class AppRouter: ObservableObject {
     /// Same pattern for `PairDeviceView` (Pair Your Device screen).
     @Published var isShowingPairDevice: Bool = false
 
+    /// Same pattern for `MyProfileView` — prevents stacking a second
+    /// profile screen when the user taps "Edit Profile" from the side
+    /// menu while the profile screen is already open.
+    @Published var isShowingMyProfile: Bool = false
+
     // One NavigationStack path per tab.
     @Published var barBotPath = NavigationPath()
     @Published var explorePath = NavigationPath()

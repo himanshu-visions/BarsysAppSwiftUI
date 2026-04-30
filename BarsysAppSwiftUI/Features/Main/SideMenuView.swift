@@ -602,6 +602,11 @@ private struct SideMenuPanel: View {
                     // Internal text padding centered (UIButton default).
                     Button {
                         HapticService.light()
+                        // Already on MyProfile → just close the side menu, no push.
+                        if router.isShowingMyProfile {
+                            onDismiss()
+                            return
+                        }
                         onDismiss()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                             router.push(.myProfile)

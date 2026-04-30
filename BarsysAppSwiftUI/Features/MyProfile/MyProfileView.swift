@@ -804,6 +804,7 @@ struct MyProfileView: View {
         // Guard with `isProfileChanged` so we DON'T clobber an in-flight
         // local image pick (mirrors the `isSeletedImageForProfile` flag).
         .onAppear {
+            router.isShowingMyProfile = true
             viewModel.loadFromDefaults()
             if !viewModel.isProfileChanged {
                 Task { await viewModel.fetchProfile() }
@@ -822,6 +823,7 @@ struct MyProfileView: View {
             env.analytics.track(TrackEventName.viewProfile.rawValue,
                                 properties: props)
         }
+        .onDisappear { router.isShowingMyProfile = false }
         // Re-sync whenever the shared profile store publishes new
         // values (login, side-menu edit, other screens). This runs on
         // main actor and is safe because `loadFromDefaults()` is idempotent.
