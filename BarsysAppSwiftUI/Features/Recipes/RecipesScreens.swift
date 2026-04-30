@@ -1297,10 +1297,23 @@ struct RecipeDetailView: View {
                     infoRow(title: "Glass", value: g.capitalized,
                             topInset: 12)
                 }
-                // 3. Crafting Instructions — "Step 1: … | Step 2: …"
-                //    (UIKit `formatStandardInstructions`).
-                if !recipe.instructions.isEmpty {
-                    instructionsSection(steps: recipe.instructions)
+                // 3. Crafting Instructions — vertical list of
+                //    "Step N: …" blocks. 1:1 port of UIKit
+                //    `RecipePageViewController.updateInstructionsUI`:
+                //
+                //        viewInstructions.isHidden =
+                //            (lblInstruction.text ?? "").isEmpty
+                //            || lblGlass.text?.lowercased()
+                //               == Constants.notAvailable.lowercased()
+                //
+                //    where `Constants.notAvailable = "N/A"`. Hide when
+                //    the formatted text is empty OR when the glass
+                //    row reads "N/A". Context-aware formatting (My
+                //    Drinks vs standard) is handled inside
+                //    `instructionsSection(for:)` via
+                //    `formattedInstructionSteps(for:)`.
+                if shouldShowInstructions(for: recipe) {
+                    instructionsSection(for: recipe)
                 }
                 // Bottom buffer grows by the live keyboard height so
                 // the Crafting Instructions section can scroll all the
@@ -1520,20 +1533,53 @@ struct RecipeDetailView: View {
     //     below the text (`K4f-LP-yt2` constant=40) — reproduced via
     //     the `Color.clear.frame(height: 120)` below the bottom CTA
     //     which owns the floating action bar clearance.
-    private func instructionsSection(steps: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func instructionsSection(for recipe: Recipe) -> some View {
+        // Render the heading, then render EACH formatted step as its
+        // own `Text` inside a `VStack`. Earlier ports joined every step
+        // into one big "\n\n"-delimited string and handed it to a single
+        // `Text`; that path kept clipping to a single line on the
+        // device because SwiftUI sizes a multi-line `Text` against the
+        // first proposed width pass and doesn't re-wrap reliably inside
+        // a `VStack(alignment: .leading)` + `ScrollView` chain — even
+        // with the recommended `.frame(maxWidth:) → .fixedSize(...)`
+        // modifier order. Splitting the steps into sibling `Text` views
+        // makes each step a fully independent layout participant: the
+        // VStack lays them out vertically, each Text grows to fit its
+        // own content, and there is zero shared wrapping state. Visually
+        // identical to UIKit's `lblInstruction` (numberOfLines = 0)
+        // — UIKit's `\n\n` separator becomes the 14pt VStack spacing
+        // here.
+        let formattedSteps = Self.formattedInstructionSteps(for: recipe)
+        return VStack(alignment: .leading, spacing: 12) {
             Text("Crafting Instructions")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color("appBlackColor"))
-            // UIKit `formatStandardInstructions` — "Step 1: … | Step 2: …"
-            let formatted = steps.enumerated()
-                .map { "Step \($0.offset + 1): \($0.element)" }
-                .joined(separator: " | ")
-            Text(formatted)
-                .font(.system(size: 11))
-                .foregroundStyle(Color("appBlackColor"))
-                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if !formattedSteps.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(formattedSteps.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .lineSpacing(2)
+                            .multilineTextAlignment(.leading)
+                            // Modifier order matters — the wide frame
+                            // proposes the full available width FIRST,
+                            // then `.fixedSize(vertical: true)`
+                            // measures the wrapped vertical height
+                            // against that bound. This is what makes
+                            // each Text behave like a UIKit label with
+                            // `numberOfLines = 0` + leading/trailing
+                            // pinned to its parent: it grows
+                            // vertically with content, never clips.
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24)
         // Storyboard constraint `y4e-UG-x99`: Pd3-56-bQz.top =
         // cdY-8H-RMr.top + 25, and cdY starts immediately below
@@ -1541,6 +1587,255 @@ struct RecipeDetailView: View {
         // inset from the Glass row bottom to the "Crafting
         // Instructions" heading is 25pt.
         .padding(.top, 25)
+    }
+
+    /// 1:1 port of UIKit
+    /// `RecipePageViewController.updateInstructionsUI`:
+    ///
+    ///     viewInstructions.isHidden =
+    ///         (lblInstruction.text ?? "").isEmpty
+    ///         || lblGlass.text?.lowercased()
+    ///            == Constants.notAvailable.lowercased()
+    ///
+    /// where `Constants.notAvailable = "N/A"` (verified verbatim from
+    /// `BarsysApp/Helpers/Constants/Constants.swift:290`). Hide the
+    /// whole crafting-instructions container when the formatted text
+    /// is empty OR when the glass row reads "N/A" (case-insensitive).
+    ///
+    /// SwiftUI port additionally hides when the glass type is empty —
+    /// the SwiftUI glass row is suppressed entirely on empty input
+    /// (rather than UIKit's "show 'N/A' string" fallback), so an
+    /// empty glass type is the SwiftUI equivalent of UIKit's
+    /// `lblGlass.text == "N/A"` state.
+    private func shouldShowInstructions(for recipe: Recipe) -> Bool {
+        let formatted = Self.formattedInstructionSteps(for: recipe)
+        guard !formatted.isEmpty else { return false }
+        let glassType = recipe.glassware?.type ?? ""
+        let glassUnknown = glassType.isEmpty
+            || glassType.lowercased() == "n/a"
+        if glassUnknown { return false }
+        return true
+    }
+
+    /// Dispatcher mirroring UIKit
+    /// `RecipePageViewModel.instructionsDisplayText`:
+    ///
+    ///     let instructionsArr = recipe?.instructions
+    ///         .filter({ !$0.isEmpty }) ?? []
+    ///     if currentContext == .myDrinks {
+    ///         return formatMyDrinksInstructions(instructionsArr)
+    ///     } else {
+    ///         return formatStandardInstructions(instructionsArr)
+    ///     }
+    ///
+    /// UIKit carries `currentContext: RecipePageContext` set by every
+    /// caller (`.standard` for Explore, `.myDrinks` for the Favorites
+    /// "My Drinks" tab, `.barBotMixlist` / `.barBotRecipe` /
+    /// `.customize` for the BarBot flows). The SwiftUI route doesn't
+    /// thread that enum through, so we infer `.myDrinks` from the
+    /// recipe payload itself: a non-empty `userId` (user-created
+    /// recipe) OR a non-nil `isMyDrinkFavourite` flag — exactly the
+    /// pair already used by `RecipeDetailView.bottomActions` to
+    /// branch the favourite logic between Barsys recipes and My
+    /// Drinks. Everything else (Explore, Mixlist Detail, BarBot)
+    /// falls through to the standard formatter, matching UIKit's
+    /// default-`else` semantics.
+    private static func formattedInstructionSteps(for recipe: Recipe) -> [String] {
+        // 1) UIKit's `instructionsArr = recipe?.instructions
+        //    .filter({ !$0.isEmpty }) ?? []` — drop empty rows the
+        //    server / DB sometimes hands back so they don't shift
+        //    indices or break the "count != 1" branch.
+        let cleaned = recipe.instructions.filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return [] }
+
+        let isMyDrinks = (recipe.userId.map { !$0.isEmpty } ?? false)
+            || recipe.isMyDrinkFavourite != nil
+        if isMyDrinks {
+            return formatMyDrinksInstructionSteps(cleaned)
+        } else {
+            return formatStandardInstructionSteps(cleaned, recipeID: recipe.id)
+        }
+    }
+
+    /// 1:1 port of UIKit
+    /// `RecipePageViewModel+CraftAndAnalytics.formatMyDrinksInstructions(_:)`
+    /// (lines 221-243).
+    ///
+    /// UIKit source (verbatim):
+    /// ```
+    /// var instructionsText: String = ""
+    /// for i in 0..<(instructionsArr.count) {
+    ///     var text = instructionsArr[i]
+    ///     text = "Step \(i+1): " + text.replacingOccurrences(of: "@", with: "")
+    ///     if i == 0 {
+    ///         instructionsText = text
+    ///     } else {
+    ///         instructionsText = instructionsText + "\n\n\(text)"
+    ///     }
+    /// }
+    /// if instructionsText.contains(" | ") {
+    ///     let steps = instructionsText.components(separatedBy: " | ")
+    ///     instructionsText = steps.enumerated().map { index, step in
+    ///         if step.contains("Step \(index + 1):") {
+    ///             return "\(step)"
+    ///         } else {
+    ///             return "Step \(index + 1): \(step)"
+    ///         }
+    ///     }.joined(separator: "\n\n")
+    /// }
+    /// return instructionsText.isEmpty ? nil : instructionsText
+    /// ```
+    ///
+    /// Differences vs `formatStandardInstructions`:
+    ///   • Iterates the WHOLE array (no recipe-id gate, no first-only
+    ///     fallback) — every element gets prefixed with "Step N: ".
+    ///   • Strips `@` symbols (legacy My-Drinks "@mention" markers
+    ///     never make it into the rendered label).
+    ///   • Re-split on `" | "` only as a fallback if the joined text
+    ///     happens to contain pipes — and that pass preserves an
+    ///     existing `"Step N:"` prefix instead of doubling it.
+    ///
+    /// Returns the per-step strings as an array for the SwiftUI
+    /// VStack/ForEach render.
+    private static func formatMyDrinksInstructionSteps(_ instructionsArr: [String]) -> [String] {
+        // Phase 1 — iterate every element, strip `@`, prefix
+        // "Step N: ", build a `\n\n`-joined buffer (UIKit's
+        // intermediate `instructionsText`).
+        var lines: [String] = []
+        for i in 0..<instructionsArr.count {
+            let text = "Step \(i + 1): "
+                + instructionsArr[i].replacingOccurrences(of: "@", with: "")
+            lines.append(text)
+        }
+        let joined = lines.joined(separator: "\n\n")
+
+        // Phase 2 — UIKit's pipe-fallback re-split. If any line
+        // contained `" | "`, the joined buffer will too; UIKit
+        // re-splits and re-prefixes, but preserves an
+        // already-present `"Step N:"` prefix instead of doubling it.
+        if joined.contains(" | ") {
+            let split = joined.components(separatedBy: " | ")
+            return split.enumerated().map { index, step in
+                if step.contains("Step \(index + 1):") {
+                    return step
+                } else {
+                    return "Step \(index + 1): \(step)"
+                }
+            }
+        }
+
+        return lines
+    }
+
+    /// 1:1 port of UIKit
+    /// `RecipePageViewModel.instructionsDisplayText` ➜
+    /// `formatStandardInstructions(_:)`.
+    ///
+    /// UIKit source (verbatim, RecipePageViewModel+CraftAndAnalytics.swift):
+    /// ```
+    /// var instructionsDisplayText: String? {
+    ///     let instructionsArr = recipe?.instructions.filter({ !$0.isEmpty }) ?? []
+    ///     if currentContext == .myDrinks {
+    ///         return formatMyDrinksInstructions(instructionsArr)
+    ///     } else {
+    ///         return formatStandardInstructions(instructionsArr)
+    ///     }
+    /// }
+    ///
+    /// func formatStandardInstructions(_ instructionsArr: [String]) -> String? {
+    ///     guard let rawInstruction = instructionsArr.first else { return nil }
+    ///     if instructionsArr.first?.contains(" | ") == false
+    ///        && (recipe?.id == nil || recipe?.id.isEmpty == true)
+    ///        && instructionsArr.count != 1 {
+    ///         return instructionsArr.enumerated().map { index, step in
+    ///             if step.contains("\(index + 1). ") {
+    ///                 return "Step \(index + 1): \(step.replacingOccurrences(of: "\(index + 1). ", with: ""))"
+    ///             } else {
+    ///                 return "Step \(index + 1): \(step)"
+    ///             }
+    ///         }.joined(separator: "\n\n")
+    ///     } else {
+    ///         let steps = rawInstruction.components(separatedBy: " | ")
+    ///         return steps.enumerated().map { index, step in … }.joined(separator: "\n\n")
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Two ports of UIKit semantics that the previous SwiftUI version
+    /// was missing and are why only "Step 1" was rendering for Barsys
+    /// recipes whose API payload arrives as a multi-element array
+    /// (e.g. Martini Negroni:
+    /// `["Add ingredients to mixing vessel", "Mix according to technique",
+    ///   "Serve in appropriate glass"]`):
+    ///
+    ///   1. **Empty-string pre-filter** — `instructionsDisplayText`
+    ///      drops empty entries before formatting; we mirror that
+    ///      with `.filter { !$0.isEmpty }` up-front so blank rows
+    ///      from the API never count toward `count != 1` or push the
+    ///      "real" first step into a non-zero index.
+    ///
+    ///   2. **Data-shape-driven branch** — UIKit's literal condition
+    ///      gates the "use array directly" path on
+    ///      `recipe?.id.isEmpty`. In UIKit production data the gate
+    ///      held because Barsys API recipes always returned
+    ///      instructions as a single pipe-separated string (count
+    ///      == 1) and only user-created My Drinks were multi-element.
+    ///      The SwiftUI port's storage / decoder serves Barsys
+    ///      recipes as a multi-element array AS WELL, so the strict
+    ///      UIKit gate would discard every step past the first. We
+    ///      relax the branch to be driven by the data shape itself
+    ///      (which is what UIKit's gate was approximating): if the
+    ///      array already has the steps split out AND the first
+    ///      element doesn't contain ` | `, treat it as the
+    ///      pre-split form regardless of whether the recipe has an
+    ///      ID. This is the SAME end result UIKit produces for
+    ///      every payload shape that exists in practice — it just
+    ///      stops swallowing multi-element Barsys arrays.
+    ///
+    /// Returns the array of `"Step N: …"` strings instead of UIKit's
+    /// `"\n\n"`-joined string so each step renders as its own `Text`
+    /// view in a `VStack` — UIKit gets multi-line vertical stacking
+    /// for free with `lblInstruction.numberOfLines = 0`, but
+    /// SwiftUI's single-`Text`-with-newlines path repeatedly clipped
+    /// to one line on device. Per-step `Text` views give the same
+    /// visual result with no shared wrapping state.
+    private static func formatStandardInstructionSteps(_ instructionsArr: [String],
+                                                       recipeID: RecipeID) -> [String] {
+        // The empty-string filter from UIKit's `instructionsDisplayText`
+        // is applied by the caller (`formattedInstructionSteps(for:)`)
+        // before this function runs — so `instructionsArr` is already
+        // free of empty entries.
+        guard let rawInstruction = instructionsArr.first else { return [] }
+
+        // Data-shape-driven branch (relaxes UIKit's
+        // `recipe?.id.isEmpty` gate — see method docs above).
+        // Treat as a pre-split array when we already have multiple
+        // non-empty elements AND the first element isn't itself a
+        // pipe-separated payload.
+        let stepsToFormat: [String]
+        if instructionsArr.count > 1 && rawInstruction.contains(" | ") == false {
+            stepsToFormat = instructionsArr
+        } else {
+            // Single-element / pipe-separated payload — split on
+            // ` | ` exactly as UIKit's `components(separatedBy:)`
+            // does. For a count-1 array with no pipe this returns
+            // `[rawInstruction]` unchanged, preserving UIKit's
+            // single-step rendering.
+            stepsToFormat = rawInstruction.components(separatedBy: " | ")
+        }
+
+        return stepsToFormat.enumerated().map { index, step in
+            // Strip an inline "N. " marker (UIKit's
+            // `replacingOccurrences(of: "\(index + 1). ", with: "")`)
+            // so legacy data like "1. Mix the gin" doesn't render
+            // as the duplicated "Step 1: 1. Mix the gin".
+            let inlineMarker = "\(index + 1). "
+            if step.contains(inlineMarker) {
+                return "Step \(index + 1): \(step.replacingOccurrences(of: inlineMarker, with: ""))"
+            } else {
+                return "Step \(index + 1): \(step)"
+            }
+        }
     }
 
     // Storyboard `eH4-x3-txk`: boldSystem 11pt `appBlackColor`, text set

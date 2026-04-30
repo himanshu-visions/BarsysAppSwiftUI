@@ -264,22 +264,21 @@ struct BarsysSearchBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Search / close toggle — UIKit `searchAndCloseButton`
-            // (storyboard id `Rgp-rv-h72`): 44×44, buttonType=system,
-            // tintColor=grayBorderColor, image swaps between
-            // `exploreSearch` and `crossIcon` based on whether the field
-            // has content.
+            // LEADING magnifier — `exploreSearch` icon stays put
+            // regardless of whether the field has content. Tapping it
+            // focuses the text field (matches UIKit
+            // `searchAndCloseButton`'s "tap when empty →
+            // becomeFirstResponder" behaviour). The clear-text
+            // affordance lives on the trailing edge as a separate
+            // button (1:1 with `txtSearch.clearButtonMode = .always`),
+            // so this leading icon never swaps to a cross — the
+            // previous SwiftUI port toggled the image here, which the
+            // user reported as the cross being on the wrong side.
             Button {
                 HapticService.light()
-                if !query.isEmpty {
-                    // Image is crossIcon → tap clears.
-                    query = ""
-                } else {
-                    // Image is exploreSearch → tap activates the field.
-                    isFocused = true
-                }
+                isFocused = true
             } label: {
-                Image(query.isEmpty ? "exploreSearch" : "crossIcon")
+                Image("exploreSearch")
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -288,13 +287,10 @@ struct BarsysSearchBar: View {
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(query.isEmpty ? "Search" : "Clear search")
+            .accessibilityLabel("Search")
 
             // Text field — `Wl4-tx-sp4`: placeholder="Search", system 14pt,
-            // textColor=appBlackColor, leftView=30pt padding (we consume
-            // that slot by the 44×44 button + small interior gap so the
-            // typed text visually starts at ~44pt from the container edge,
-            // which is identical to what UIKit renders).
+            // textColor=appBlackColor.
             TextField("", text: $query,
                       prompt: Text(placeholder)
                         .foregroundColor(Color("grayBorderColor")))
@@ -305,8 +301,47 @@ struct BarsysSearchBar: View {
                 .focused($isFocused)
                 .submitLabel(.search)
                 .onSubmit { onSubmit?() }
-                .padding(.trailing, 10) // storyboard trailing constraint constant=10
+
+            // TRAILING clear button — 1:1 with UIKit
+            // `txtSearch.clearButtonMode = .always`. UIKit's native
+            // `UITextField.clearButtonMode = .always` paints a small "×"
+            // glyph inside the field's right margin whenever the field
+            // has text, giving the user a second one-tap-to-clear
+            // affordance positioned at the trailing edge — exactly
+            // where iOS users expect it. SwiftUI's `TextField` has no
+            // equivalent, so we synthesise it as a sibling button.
+            // Hidden (not just disabled) when empty so it consumes no
+            // space — matches UIKit, where the native clear button only
+            // appears while editing with content.
+            if !query.isEmpty {
+                Button {
+                    HapticService.light()
+                    query = ""
+                } label: {
+                    Image("crossIcon")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        // 14pt glyph inside a 44pt-tall hit area —
+                        // matches UIKit's native clear button visual
+                        // size and the standard 44pt iOS hit target.
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(Color("grayBorderColor"))
+                        .frame(width: 36, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+                .transition(.opacity)
+            }
+
+            // Storyboard `JXF-Zi-7p5`: `txtSearch.trailing` is 10pt
+            // from the container's trailing edge. When the clear button
+            // is hidden the text field consumes this slot; when shown,
+            // we still keep a 10pt outer gutter so the cross sits
+            // 10pt from the rounded-corner border, matching UIKit.
+            Spacer().frame(width: 10)
         }
+        .animation(.easeInOut(duration: 0.18), value: query.isEmpty)
         // Container: 44pt tall, cornerRadius 12, 1pt `barbotBorderColor`
         // stroke (ExploreRecipesViewController.setupView L153:
         //   viewSearch.makeBorder(width: 1.0, color: .barbotBorderColor))
