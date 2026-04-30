@@ -2531,6 +2531,23 @@ final class CatalogService: ObservableObject {
             }
         }
     }
+
+    /// Re-read recipes from storage and republish.
+    ///
+    /// Used by screens that mutate favourite / drink state via direct
+    /// `env.storage.setFavorite` or `env.storage.upsert` calls instead
+    /// of going through `toggleFavourite(recipeId:)` — most notably
+    /// `RecipeDetailView.bottomActions` which has its own My-Drinks /
+    /// Barsys-recipe split logic plus optimistic-revert error handling.
+    /// Without re-publishing here, listings that observe
+    /// `catalog.recipes` (Explore Recipes, Mixlist Detail's recipes
+    /// list) would render stale heart icons after a pop-back from the
+    /// detail screen, because `MockStorageService` is not
+    /// `ObservableObject` and its dictionary mutations don't broadcast.
+    @MainActor
+    func reloadRecipesFromStorage() {
+        recipes = storage.allRecipes()
+    }
 }
 
 // MARK: - Loading / Alerts

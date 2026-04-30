@@ -1638,6 +1638,15 @@ struct RecipeDetailView: View {
                     } else {
                         env.storage.setFavorite(recipe.id, isFavorite: true)
                     }
+                    // Republish `catalog.recipes` from storage so any
+                    // listing screen the user pops back to (Explore
+                    // Recipes, Mixlist Detail's recipes list, etc.)
+                    // re-renders the heart icon with the fresh state.
+                    // `MockStorageService` is not `ObservableObject`, so
+                    // its dictionary mutations don't broadcast on their
+                    // own — without this, the parent listings still
+                    // show the pre-tap heart on pop-back.
+                    env.catalog.reloadRecipesFromStorage()
                     Task {
                         do {
                             _ = try await env.api.likeUnlike(
@@ -1654,6 +1663,11 @@ struct RecipeDetailView: View {
                             } else {
                                 env.storage.setFavorite(recipe.id, isFavorite: false)
                             }
+                            // Mirror the optimistic-write republish on
+                            // the revert path so listings observing
+                            // `catalog.recipes` reflect the rolled-back
+                            // state too.
+                            await MainActor.run { env.catalog.reloadRecipesFromStorage() }
                         }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeAdded.rawValue)
@@ -1679,6 +1693,12 @@ struct RecipeDetailView: View {
                     } else {
                         env.storage.setFavorite(recipe.id, isFavorite: false)
                     }
+                    // Republish `catalog.recipes` so listings that
+                    // observe it (Explore Recipes, Mixlist Detail's
+                    // recipes list) re-render with the unfavourited
+                    // state on pop-back. See matching comment in the
+                    // `.addToFavourites` branch above.
+                    env.catalog.reloadRecipesFromStorage()
                     Task {
                         do {
                             _ = try await env.api.likeUnlike(
@@ -1695,6 +1715,7 @@ struct RecipeDetailView: View {
                             } else {
                                 env.storage.setFavorite(recipe.id, isFavorite: true)
                             }
+                            await MainActor.run { env.catalog.reloadRecipesFromStorage() }
                         }
                     }
                     env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)
