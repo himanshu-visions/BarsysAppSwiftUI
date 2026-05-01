@@ -3172,6 +3172,23 @@ struct EditRecipeView: View {
 
     @State private var name: String = ""
     @State private var ingredients: [Ingredient] = []
+    /// 1:1 with UIKit `EditViewController.garnishIngredientsArr`
+    /// (EditViewController.swift L40 + L69-71). The editable
+    /// `ingredients` array above only carries BASE / MIXER rows; garnish
+    /// and additional are stored separately so they survive the save
+    /// round-trip. UIKit re-injects them into `recipe.ingredients` on
+    /// save (L204-211: remove base/mixer → append garnish/additional →
+    /// append edited base/mixer). Without this snapshot the SwiftUI
+    /// port was overwriting `recipe.ingredients` with just the edited
+    /// base/mixer rows on save, silently losing every garnish and
+    /// optional-additional ingredient the recipe originally had.
+    @State private var savedGarnishIngredients: [Ingredient] = []
+    /// 1:1 with UIKit `EditViewController.additionalIngredientsArr`
+    /// (EditViewController.swift L41 + L70-72). UIKit treats Additional
+    /// Ingredients as `category.primary == "garnish" &&
+    /// ingredientOptional == true` (NOT a separate primary). Tracked
+    /// here so save can re-inject them alongside garnishes.
+    @State private var savedAdditionalIngredients: [Ingredient] = []
     /// Locally-picked image — set when user chooses a photo from the
     /// picker. Takes precedence over `remoteImageURL` for display.
     /// 1:1 with UIKit `EditViewModel.selectedImageForRecipe`.
@@ -3541,7 +3558,72 @@ struct EditRecipeView: View {
             }
             if let recipe = source {
                 name = recipe.name ?? ""
-                ingredients = recipe.ingredients ?? []
+
+                // QA: edit-recipe was showing garnish + additional rows
+                // in the editable ingredients table because the previous
+                // port did `ingredients = recipe.ingredients ?? []` —
+                // ALL ingredients dumped into the editable list. UIKit
+                // `EditViewController.viewSetup` (L68-103) splits the
+                // recipe's ingredients into THREE arrays:
+                //
+                //   • baseAndMixer (recipeIngredientsArrayToShow):
+                //       primary != "garnish" && primary != "additional",
+                //       deduped by lowercased name. THIS is what fills
+                //       the editable table.
+                //   • garnishIngredientsArr:
+                //       primary == "garnish" && ingredientOptional == false,
+                //       deduped by lowercased name. Read-only — preserved
+                //       for the save round-trip.
+                //   • additionalIngredientsArr:
+                //       primary == "garnish" && ingredientOptional == true,
+                //       deduped by lowercased name. Read-only — preserved
+                //       for the save round-trip.
+                //
+                // Note: UIKit treats "Additional Ingredients" as a SUBSET
+                // of garnish (same primary, distinguished by the
+                // `ingredientOptional` flag), NOT as a separate primary.
+                // The base/mixer filter still excludes both "additional"
+                // strings defensively because some legacy server
+                // payloads use `primary == "additional"` directly.
+                let allIngredients = recipe.ingredients ?? []
+
+                let baseAndMixerFiltered = allIngredients.filter { ing in
+                    let p = (ing.category?.primary ?? "").lowercased()
+                    return p != "garnish" && p != "additional" && p != "additionals"
+                }
+                var seenBase = Set<String>()
+                ingredients = baseAndMixerFiltered.filter {
+                    seenBase.insert($0.name.lowercased()).inserted
+                }
+
+                // 1:1 with UIKit's exact comparison semantics
+                // (EditViewController.swift L69-70):
+                //   `$0.ingredientOptional == false`  → garnish only
+                //   `$0.ingredientOptional == true`   → additional only
+                // The Optional<Bool> direct equality means a `nil`
+                // `ingredientOptional` is NEITHER garnish NOR additional
+                // and is silently dropped — same as UIKit. The
+                // RecipePageView read-only sections (lines 925-942) use
+                // this same pattern so the edit / view paths stay
+                // consistent.
+                let garnishFiltered = allIngredients.filter { ing in
+                    let p = (ing.category?.primary ?? "").lowercased()
+                    return p == "garnish" && ing.ingredientOptional == false
+                }
+                var seenGarnish = Set<String>()
+                savedGarnishIngredients = garnishFiltered.filter {
+                    seenGarnish.insert($0.name.lowercased()).inserted
+                }
+
+                let additionalFiltered = allIngredients.filter { ing in
+                    let p = (ing.category?.primary ?? "").lowercased()
+                    return p == "garnish" && ing.ingredientOptional == true
+                }
+                var seenAdditional = Set<String>()
+                savedAdditionalIngredients = additionalFiltered.filter {
+                    seenAdditional.insert($0.name.lowercased()).inserted
+                }
+
                 // 1:1 with UIKit `viewSetup` L131-146:
                 //   hasImage = !(image.url isEmpty || nil)
                 //   recipeImageUrl = image.url.getImageUrl()
@@ -4248,9 +4330,26 @@ struct EditRecipeView: View {
         isSaving = true
         let trimmed = name.trimmingCharacters(in: .whitespaces)
 
-        // UIKit EditViewModel+API.saveRecipe L26-28: filter ingredients
-        // with quantity > 0 before sending to API.
-        let filteredIngredients = ingredients.filter { ($0.quantity ?? 0) > 0 }
+        // UIKit EditViewModel+API.saveRecipe L26-28: filter base/mixer
+        // ingredients with quantity > 0 before sending to API.
+        let filteredBaseAndMixer = ingredients.filter { ($0.quantity ?? 0) > 0 }
+
+        // 1:1 with UIKit `EditViewController.didPressAddToFavouriteButton`
+        // L203-211 — re-assemble the recipe ingredients in this order:
+        //   1. retained garnish entries (primary == "garnish",
+        //      ingredientOptional == false)
+        //   2. retained additional entries (primary == "garnish",
+        //      ingredientOptional == true)
+        //   3. edited base/mixer entries with quantity > 0
+        // The previous SwiftUI port wrote `recipeToSave.ingredients =
+        // filteredIngredients` directly, which silently DROPPED every
+        // garnish and additional ingredient on save — surfacing as
+        // "ingredients come wrong" once the user edited a recipe with
+        // a non-empty garnish or additional list.
+        var filteredIngredients: [Ingredient] = []
+        filteredIngredients.append(contentsOf: savedGarnishIngredients)
+        filteredIngredients.append(contentsOf: savedAdditionalIngredients)
+        filteredIngredients.append(contentsOf: filteredBaseAndMixer)
 
         // Build the recipe to send to API.
         //
@@ -4537,11 +4636,30 @@ struct EditRecipeView: View {
         }
         let originalName = (original.name ?? "").trimmingCharacters(in: .whitespaces)
         if currentName != originalName { return true }
-        let originalIngredients = original.ingredients ?? []
-        if ingredients.count != originalIngredients.count { return true }
+
+        // Compare only the BASE / MIXER slice of the original recipe,
+        // because `ingredients` (the editable @State) was scoped to
+        // base/mixer in `.onAppear` per UIKit parity. Comparing against
+        // the unfiltered `original.ingredients ?? []` would always
+        // report the count mismatch as a change whenever the recipe
+        // had any garnish or additional entries — falsely triggering
+        // the "Your changes will not be saved" alert on craft / close
+        // even when the user touched nothing. Same dedupe rules used
+        // in `.onAppear` so the snapshots line up.
+        let originalAll = original.ingredients ?? []
+        let originalBaseAndMixerFiltered = originalAll.filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional" && p != "additionals"
+        }
+        var seenBase = Set<String>()
+        let originalBaseAndMixer = originalBaseAndMixerFiltered.filter {
+            seenBase.insert($0.name.lowercased()).inserted
+        }
+
+        if ingredients.count != originalBaseAndMixer.count { return true }
         // Compare by name + rounded ml (matches UIKit's loose equality).
         for (idx, ing) in ingredients.enumerated() {
-            let other = originalIngredients[idx]
+            let other = originalBaseAndMixer[idx]
             if ing.name != other.name { return true }
             let lhsQty = Int((ing.quantity ?? 0).rounded())
             let rhsQty = Int((other.quantity ?? 0).rounded())
