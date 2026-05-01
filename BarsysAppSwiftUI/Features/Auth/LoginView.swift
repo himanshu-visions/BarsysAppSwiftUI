@@ -149,15 +149,28 @@ final class LoginViewModel: ObservableObject {
         isWorking = true
         let validation = validatePhone()
         guard validation.isValid else {
-            // QA reported the validation alert "appearing twice" — the
-            // popup AND the inline `phoneError` row both surfaced the
-            // same message at once. UIKit `LoginViewController.swift:158`
-            // shows ONLY the `showCustomAlert(...)` popup with the
-            // error haptic; the storyboard phone row has no inline
-            // error label. Drop the `phoneError` assignment so the
-            // user sees just one validation prompt — the popup.
+            // 1:1 with UIKit `LoginViewController.isLoginDetailsValid`
+            // (LoginViewController.swift L443-457):
+            //   if cleanedNumber.isEmpty {
+            //       imgPhoneUnderLine.backgroundColor = .errorLabelColor
+            //       lblErrorPhoneNumber.isHidden = false
+            //       lblErrorPhoneNumber.text = Constants.pleaseEnterPhoneNumber
+            //       return false
+            //   } else if cleanedNumber.count < 8 || > 16 {
+            //       lblErrorPhoneNumber.isHidden = false
+            //       lblErrorPhoneNumber.text = Constants.invalidPhoneNumber
+            //       imgPhoneUnderLine.backgroundColor = .errorLabelColor
+            //       return false
+            //   }
+            // Phone validation is INLINE-ONLY — no `showDefaultAlert(...)`
+            // call sits in this branch. The earlier "duplicate alert"
+            // QA bug got mis-fixed by removing the inline label and
+            // keeping the popup; the correct port is to keep the inline
+            // label (red message + red underline) and DROP the popup.
+            // The popup path stays for OTP errors (`isOtpValid` L463/467
+            // shows `showDefaultAlert`).
+            phoneError = validation.errorMessage
             HapticService.error()
-            alerts.show(message: validation.errorMessage ?? Constants.invalidPhoneNumber)
             isWorking = false
             return
         }
@@ -533,11 +546,34 @@ struct LoginView: View {
             }
             .padding(.horizontal, 5)
 
-            // Underline (1pt silverGrayColor)
+            // Underline — 1:1 with UIKit `imgPhoneUnderLine`
+            // (LoginViewController.swift). Default state is the
+            // `silverGrayColor` storyboard tint; on validation failure
+            // UIKit flips the colour to `errorLabelColor` (lines 446
+            // and 449/454) so the underline reads red while the
+            // inline error label is shown.
             Rectangle()
-                .fill(Color("silverGrayColor"))
+                .fill(viewModel.phoneError == nil
+                      ? Color("silverGrayColor")
+                      : Color("errorLabelColor"))
                 .frame(height: 1)
                 .padding(.horizontal, 5)
+
+            // 1:1 with UIKit `lblErrorPhoneNumber`
+            // (LoginViewController.swift L23). System 13pt bold,
+            // `errorLabelColor`, hidden by default and shown only when
+            // `isLoginDetailsValid` flags an empty / invalid phone.
+            // The earlier port removed this label thinking the popup
+            // path was authoritative — UIKit ONLY surfaces phone
+            // validation inline, so the label is restored here. SignUp
+            // already follows this pattern (`SignUpView.phoneRow`
+            // shows `viewModel.errorPhone` below the underline).
+            if let err = viewModel.phoneError {
+                Text(err)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color("errorLabelColor"))
+                    .padding(.horizontal, 5)
+            }
         }
     }
 
