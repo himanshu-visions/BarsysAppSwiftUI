@@ -1009,6 +1009,24 @@ extension View {
     func chooseOptionsStyleNavBar() -> some View {
         modifier(ChooseOptionsStyleNavBar())
     }
+
+    /// iOS 26+ only: forces the top scroll-edge effect to `.hard` so
+    /// the toolbar's Liquid-Glass capsules (back-button circle +
+    /// favourites/profile pill) do NOT pick up colours from the scroll
+    /// content beneath them. Without this, full-bleed hero/banner
+    /// images on screens like RecipeDetail and MixlistDetail tint the
+    /// capsules grey/dark as the user scrolls — visibly inconsistent
+    /// with ExploreRecipes / Cocktail Kits whose scroll content begins
+    /// with light text. No-op on iOS < 26 since the modifier did not
+    /// exist there and pre-26 toolbars don't apply Liquid Glass anyway.
+    @ViewBuilder
+    func hardTopScrollEdgeIfAvailable() -> some View {
+        if #available(iOS 26.0, *) {
+            self.scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            self
+        }
+    }
 }
 
 // MARK: - NavigationLeadingGlassButton

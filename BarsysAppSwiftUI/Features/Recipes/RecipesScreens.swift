@@ -1329,6 +1329,22 @@ struct RecipeDetailView: View {
         .safeAreaInset(edge: .bottom) {
             bottomActions(for: recipe)
         }
+        // QA fix — iOS 26 Liquid-Glass toolbar items (back-button
+        // circle + favourites/profile pill) sample colours from the
+        // scroll view's edge effect. The default `.soft` style fades
+        // the scroll edge into the toolbar and lets the dark hero
+        // image bleed through, tinting the capsules grey on scroll.
+        // ExploreRecipes / Cocktail Kits work correctly because their
+        // scroll content starts with light text + a search bar (the
+        // image-bearing cells only reach the toolbar after deep
+        // scrolling). Recipe Detail's hero image is at the very top
+        // of the scroll content, so the issue is exposed immediately.
+        // Setting `.scrollEdgeEffectStyle(.hard, for: .top)` switches
+        // the system to a HARD scroll edge — no soft fade, no blur —
+        // so the toolbar items see only the opaque nav-bar background
+        // and stay visually identical to ExploreRecipes / Cocktail
+        // Kits regardless of how dark the hero image is.
+        .hardTopScrollEdgeIfAvailable()
         // Keep the floating "Save to My Drinks" + "Craft" bar pinned to
         // the physical bottom edge when the quantity-field keyboard
         // appears. SwiftUI's default behaviour grows the bottom safe

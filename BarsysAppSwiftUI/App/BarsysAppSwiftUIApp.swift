@@ -20,6 +20,42 @@ struct BarsysAppSwiftUIApp: App {
     @StateObject private var router = AppRouter()
     @StateObject private var userStore = UserProfileStore.shared
 
+    /// QA-flagged fix: on iOS 26 the Liquid-Glass toolbar items (back-
+    /// button circle + favourites/profile pill) sample their tint from
+    /// the bar's `scrollEdgeAppearance` while content is at the top,
+    /// then switch to `standardAppearance` once content scrolls beneath
+    /// the bar. SwiftUI's `.toolbarBackground` only writes one of those
+    /// slots reliably, so screens with dark imagery beneath the nav
+    /// bar (Recipe Detail's hero image, Mixlist Detail's banner,
+    /// BarBot, Crafting, etc.) tinted the capsules grey/dark as the
+    /// user scrolled.
+    ///
+    /// Configuring `UINavigationBar.appearance()` with an opaque
+    /// `primaryBackgroundColor` background across ALL FOUR appearance
+    /// slots (standard, scrollEdge, compact, compactScrollEdge) BEFORE
+    /// any view is created locks every navigation bar in the app to
+    /// the same flat canvas — the toolbar items now compose against
+    /// the opaque bar instead of the scroll content beneath, so the
+    /// back-button circle + favourites/profile pill stay visually
+    /// identical at all scroll positions on every screen.
+    /// `isTranslucent = false` is the belt-and-braces switch that
+    /// stops UIKit from blending its default blur into the bar.
+    init() {
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        if let bg = UIColor(named: "primaryBackgroundColor") {
+            appearance.backgroundColor = bg
+        }
+        appearance.shadowColor = .clear
+
+        let proxy = UINavigationBar.appearance()
+        proxy.standardAppearance = appearance
+        proxy.scrollEdgeAppearance = appearance
+        proxy.compactAppearance = appearance
+        proxy.compactScrollEdgeAppearance = appearance
+        proxy.isTranslucent = false
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

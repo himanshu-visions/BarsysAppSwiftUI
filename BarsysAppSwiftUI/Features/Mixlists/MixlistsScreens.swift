@@ -672,6 +672,15 @@ struct MixlistDetailView: View {
             .padding(.bottom, 16)
         }
         .safeAreaInset(edge: .bottom) { bottomButtonRow(for: mixlist) }
+        // QA fix — same as RecipeDetailView (RecipesScreens.swift):
+        // on iOS 26 the toolbar's Liquid-Glass capsules pick up dark
+        // colours from the banner image as it scrolls under the bar.
+        // Switching the top scroll-edge effect from the default
+        // `.soft` to `.hard` removes the system fade/blur at the
+        // edge, so the back-button circle + favourites/profile pill
+        // see only the opaque nav-bar background and stay identical
+        // to Cocktail Kits / Explore.
+        .hardTopScrollEdgeIfAvailable()
     }
 
     // MARK: - Banner — ports `imgMixlist` (`AWF-ly-2Vd`):
