@@ -277,6 +277,10 @@ private struct TutorialCloseGlassBackground: ViewModifier {
         if #available(iOS 26.0, *) {
             content
                 .glassEffect(.regular.interactive(), in: .circle)
+                .overlay(
+                    Circle()
+                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                )
         } else {
             content
                 .background(

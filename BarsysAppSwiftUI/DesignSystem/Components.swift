@@ -381,6 +381,12 @@ struct OTPBoxField: View {
     var length: Int = 6
 
     @FocusState private var focused: Bool
+    /// Drives the blinking caret that mimics UIKit's per-box cursor.
+    /// UIKit had 6 individual `OtpTextField`s, so the system caret
+    /// appeared inside the active box. The SwiftUI port uses a single
+    /// hidden field, so we render our own caret in the next-to-fill
+    /// box while focused.
+    @State private var caretVisible: Bool = true
 
     var body: some View {
         ZStack {
@@ -402,38 +408,61 @@ struct OTPBoxField: View {
                     boxAt(idx)
                 }
             }
+            .contentShape(Rectangle())
             .onTapGesture { focused = true }
         }
         .onAppear { focused = true }
+        .onChange(of: focused) { isFocused in
+            if isFocused {
+                caretVisible = true
+                withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
+                    caretVisible = false
+                }
+            }
+        }
     }
 
     private func boxAt(_ idx: Int) -> some View {
         let chars = Array(code)
         let value = idx < chars.count ? String(chars[idx]) : "0"
         let isFilled = idx < chars.count
+        // The currently-active box is the first unfilled slot. UIKit
+        // showed the system caret here; we render a 1pt brand-tinted
+        // bar with a blinking opacity to match that affordance.
+        let isActiveCaret = focused && idx == chars.count
         // Fixed square 32x32 — matches the storyboard runtime size of the
         // 6 OtpTextField boxes (form card 333pt − padding − 6 boxes with
         // 10pt spacing ≈ 28–32pt per box). Square via 1:1 aspect ratio.
-        return Text(value)
-            .font(.system(size: 18))
-            .foregroundStyle(isFilled
-                             ? Color("subtitleGrayColor")
-                             : Color("subtitleGrayColor").opacity(0.45))
-            .frame(width: 32, height: 32)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(0.001))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color("paleBlueGrayColor"), lineWidth: 1)
-            )
-            // 1:1 with UIKit `AccessibilityHelper.swift:142` —
-            // `configureOTPFields()` sets each box's `accessibilityLabel`
-            // to "OTP digit N" so VoiceOver users can identify the
-            // current digit position.
-            .accessibilityLabel("OTP digit \(idx + 1)")
-            .accessibilityValue(isFilled ? value : "")
+        return ZStack {
+            Text(value)
+                .font(.system(size: 18))
+                .foregroundStyle(isFilled
+                                 ? Color("subtitleGrayColor")
+                                 : Color("subtitleGrayColor").opacity(0.45))
+                .opacity(isActiveCaret ? 0 : 1)
+
+            if isActiveCaret {
+                RoundedRectangle(cornerRadius: 1, style: .continuous)
+                    .fill(Theme.Color.brand)
+                    .frame(width: 2, height: 18)
+                    .opacity(caretVisible ? 1 : 0)
+            }
+        }
+        .frame(width: 32, height: 32)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.001))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color("paleBlueGrayColor"), lineWidth: 1)
+        )
+        // 1:1 with UIKit `AccessibilityHelper.swift:142` —
+        // `configureOTPFields()` sets each box's `accessibilityLabel`
+        // to "OTP digit N" so VoiceOver users can identify the
+        // current digit position.
+        .accessibilityLabel("OTP digit \(idx + 1)")
+        .accessibilityValue(isFilled ? value : "")
     }
 }
 
