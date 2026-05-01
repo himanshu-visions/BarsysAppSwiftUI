@@ -520,7 +520,21 @@ struct SignUpView: View {
         .sheet(isPresented: $showCountryPicker) {
             CountryPickerView(selected: Binding(
                 get: { viewModel.selectedCountry ?? .unitedStates },
-                set: { viewModel.selectedCountry = $0 }
+                set: { newCountry in
+                    // QA: when the user picks a country whose minimum
+                    // age differs, the previously-shown age error
+                    // ("You must be at least 18+ years old…") was
+                    // sticking around even though the validation
+                    // context just changed. The error message
+                    // references the OLD country's age threshold and
+                    // is no longer accurate, so clear it on every
+                    // country change. The user can re-tap "Get OTP"
+                    // to re-validate against the new minimum age.
+                    if newCountry != viewModel.selectedCountry {
+                        viewModel.errorDob = nil
+                    }
+                    viewModel.selectedCountry = newCountry
+                }
             ))
         }
         .sheet(isPresented: $showDatePicker) {
