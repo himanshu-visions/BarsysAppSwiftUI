@@ -416,6 +416,20 @@ struct SignUpView: View {
     @State private var showDatePicker = false
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Bound to the form's text fields so the keyboard accessory
+    /// toolbar (`.keyboardDoneCancelToolbar`) attaches reliably.
+    /// Without an explicit `.focused(...)` link SwiftUI sometimes
+    /// races the keyboard appearance against the toolbar's
+    /// attachment, leaving the Cancel/Done bar missing on the first
+    /// tap into a field — the QA "toolbar not coming sometimes"
+    /// report. Binding gives SwiftUI an observable focus value to
+    /// re-evaluate the toolbar against.
+    @FocusState private var focusedField: FocusField?
+
+    enum FocusField: Hashable {
+        case fullName, email, phone, otp
+    }
+
     var body: some View {
         // Two-layer pattern identical to LoginView:
         //   1. Background — own `.ignoresSafeArea(.all)` so signUpBg never
@@ -610,9 +624,19 @@ struct SignUpView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Color("silverGrayColor"))
                 Button {
+                    // Hide keyboard FIRST so the dismiss animation
+                    // settles before popping back to Login —
+                    // otherwise the keyboard sliding down and the
+                    // pop transition fire at the same time, reading
+                    // as a glitchy double-animation. The pop is
+                    // delayed a tick so iOS finishes the
+                    // resignFirstResponder cycle first.
+                    hideKeyboard()
                     env.analytics.track(TrackEventName.tapSignupLogIn.rawValue)
                     viewModel.stopTimerInternal()
-                    path.removeLast()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        path.removeLast()
+                    }
                 } label: {
                     Text("Log in")
                         .font(.system(size: 11, weight: .semibold))
@@ -654,6 +678,7 @@ struct SignUpView: View {
                     .font(.system(size: 18, weight: .light))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(height: 40)
+                    .focused($focusedField, equals: .phone)
                     .onChange(of: viewModel.phone) { newValue in
                         let clamped = viewModel.clampPhone(newValue)
                         if clamped != newValue { viewModel.phone = clamped }
@@ -771,13 +796,24 @@ struct SignUpView: View {
                 .lineLimit(nil)
                 .multilineTextAlignment(.leading)
                 .onTapGesture {
+                    // Hide keyboard FIRST so the dismiss animation
+                    // settles before the web view pushes onto the
+                    // navigation stack — same rationale as the
+                    // "Create one" / "Log in" buttons. Without the
+                    // delay the keyboard sliding down and the new
+                    // screen sliding in fire simultaneously and read
+                    // as a glitchy double-animation.
+                    hideKeyboard()
+                    focusedField = nil
                     env.analytics.track(TrackEventName.tapSignupTermsOfService.rawValue)
                     // 1:1 port of UIKit `SignUpViewController+FormValidation.swift`
                     // L72-74: open the Terms URL in the IN-APP web view
                     // (matching the custom 50pt black header + white
                     // back button chrome), not an external Safari tab.
                     if let url = URL(string: WebViewURLs.termsOfUseWebUrl) {
-                        path.append(AuthRoute.web(url))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            path.append(AuthRoute.web(url))
+                        }
                     }
                 }
         }

@@ -473,8 +473,20 @@ struct LoginView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Color("silverGrayColor"))
                 Button {
+                    // Hide keyboard FIRST so the dismiss animation
+                    // settles before the SignUp screen pushes onto
+                    // the navigation stack — otherwise the keyboard
+                    // sliding down and the new screen sliding in
+                    // happen simultaneously and read as a glitchy
+                    // double-animation. The push is delayed a tick
+                    // so iOS finishes the resignFirstResponder cycle
+                    // before the navigation transition starts.
+                    hideKeyboard()
+                    focusedField = nil
                     env.analytics.track(TrackEventName.tapLoginCreateAccount.rawValue)
-                    path.append(AuthRoute.signUp)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        path.append(AuthRoute.signUp)
+                    }
                 } label: {
                     Text("Create one")
                         .font(.system(size: 11, weight: .semibold))
@@ -521,6 +533,20 @@ struct LoginView: View {
                 TextField("Phone no.", text: $viewModel.phone)
                     .keyboardType(.numberPad)
                     .textContentType(.telephoneNumber)
+                    // Bind to the screen-level FocusState so the
+                    // keyboard accessory toolbar (`.keyboardDoneCancelToolbar`)
+                    // attaches reliably. Without an explicit
+                    // `.focused(...)` link SwiftUI sometimes races the
+                    // keyboard's appearance against the toolbar's
+                    // attachment, leaving the Cancel/Done bar missing
+                    // on the first tap into the field — the QA
+                    // "toolbar not coming sometimes" report. Binding
+                    // it gives SwiftUI an observable focus value to
+                    // re-evaluate the toolbar against, plus lets the
+                    // onDone/onCancel handlers actually resign focus
+                    // (previously they set `focusedField = nil` while
+                    // nothing was bound, so the line was a no-op).
+                    .focused($focusedField, equals: .phone)
                     .font(.system(size: 18, weight: .light))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(height: 40)
