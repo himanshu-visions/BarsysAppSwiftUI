@@ -436,8 +436,17 @@ struct LoginView: View {
                     // Light mode continues to render the original image.
                     Color("primaryBackgroundColor")
                 } else {
-                    Image("loginBackgroundImage")
-                        .resizable()
+                    if UIDevice.current.userInterfaceIdiom == .pad {
+                        // iPad: preserve aspect ratio so the artwork is not
+                        // stretched on the wider/squarer iPad canvas. The
+                        // outer `.clipped()` crops any overflow.
+                        Image("loginBackgroundImage")
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Image("loginBackgroundImage")
+                            .resizable()
+                    }
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)

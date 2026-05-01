@@ -450,8 +450,17 @@ struct SignUpView: View {
                         // still renders the original image.
                         Color("primaryBackgroundColor")
                     } else {
-                        Image("signUpBg")
-                            .resizable()
+                        if UIDevice.current.userInterfaceIdiom == .pad {
+                            // iPad: preserve aspect ratio so the artwork is
+                            // not stretched on the wider/squarer iPad
+                            // canvas. The outer `.clipped()` crops overflow.
+                            Image("signUpBg")
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } else {
+                            Image("signUpBg")
+                                .resizable()
+                        }
                     }
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
