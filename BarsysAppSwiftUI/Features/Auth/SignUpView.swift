@@ -1003,7 +1003,10 @@ private struct DOBField: View {
                                          : Color("appBlackColor"))
                     Spacer()
                     Image(systemName: "calendar")
-                        .font(.system(size: iPadValue(17, 22)))
+                        // iPad-only override — iPhone keeps the SF Symbol
+                        // default (body style, Dynamic-Type aware) so users
+                        // with custom text sizes see the same icon as before.
+                        .iPadFont(.system(size: 22))
                         .foregroundStyle(Color("silverGrayColor"))
                 }
                 .frame(height: iPadValue(40, 50))

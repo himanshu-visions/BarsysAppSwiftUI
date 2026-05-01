@@ -786,3 +786,18 @@ func iPadValue<T>(_ phone: T, _ pad: T) -> T {
 func iPadMaxWidth(_ pad: CGFloat) -> CGFloat {
     UIDevice.current.userInterfaceIdiom == .pad ? pad : .infinity
 }
+
+extension View {
+    /// Applies `font` only on iPad and returns the receiver untouched on
+    /// iPhone — used for SF Symbol / icon sizing where the iPhone path
+    /// must keep its inherited / dynamic-type default rather than getting
+    /// hard-pinned to a fixed point size.
+    @ViewBuilder
+    func iPadFont(_ font: Font) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            self.font(font)
+        } else {
+            self
+        }
+    }
+}
