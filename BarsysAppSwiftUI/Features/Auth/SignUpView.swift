@@ -478,21 +478,28 @@ struct SignUpView: View {
                         Image("splashAppIcon")
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 219, height: 20)
+                            .frame(width: iPadValue(219, 440), height: iPadValue(20, 40))
                             .invertedInDarkMode(colorScheme == .dark)
-                            .padding(.top, 94)
+                            // iPad sits the entire form lower in the canvas so
+                            // it doesn't hug the top safe area on the taller
+                            // iPad screen — iPhone keeps the original 94pt.
+                            .padding(.top, iPadValue(94, 220))
 
                         Text("Let's create your account")
-                            .font(.system(size: 13))
+                            .font(.system(size: iPadValue(13, 17)))
                             .foregroundStyle(Color("appBlackColor"))
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal, 45)
-                            .padding(.top, 20)
+                            .padding(.horizontal, iPadValue(45, 80))
+                            .padding(.top, iPadValue(20, 30))
 
+                        // Form card — capped width on iPad so the
+                        // narrow phone-style form stays centered
+                        // instead of stretching across the iPad canvas.
                         formCard
+                            .frame(maxWidth: iPadMaxWidth(540))
                             .padding(.horizontal, 30)
-                            .padding(.top, 60)
-                            .padding(.bottom, 30)
+                            .padding(.top, iPadValue(60, 70))
+                            .padding(.bottom, iPadValue(30, 40))
                     }
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: proxy.size.height)
@@ -563,10 +570,10 @@ struct SignUpView: View {
     // MARK: - Form card
 
     private var formCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: iPadValue(18, 22)) {
 
             Text("Sign up with your Phone Number")
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: iPadValue(12, 16), weight: .bold))
                 .foregroundStyle(Color("appBlackColor"))
                 .padding(.leading, 5)
 
@@ -638,14 +645,14 @@ struct SignUpView: View {
                         ProgressView().tint(Color("appBlackColor"))
                     } else {
                         Text(primaryButtonTitle)
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: iPadValue(12, 16), weight: .bold))
                             .foregroundStyle(Color("appBlackColor"))
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 43)
+                .frame(height: iPadValue(43, 54))
                 .background(Color("lightSilverColor"))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: iPadValue(8, 10)))
             }
             .disabled(viewModel.isWorking)
             .padding(.top, 4)
@@ -654,7 +661,7 @@ struct SignUpView: View {
             HStack(spacing: 0) {
                 Spacer()
                 Text("Already have an account? ")
-                    .font(.system(size: 11))
+                    .font(.system(size: iPadValue(11, 14)))
                     .foregroundStyle(Color("silverGrayColor"))
                 Button {
                     // Hide keyboard FIRST so the dismiss animation
@@ -672,7 +679,7 @@ struct SignUpView: View {
                     }
                 } label: {
                     Text("Log in")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: iPadValue(11, 14), weight: .semibold))
                         .foregroundStyle(Color("appBlackColor"))
                 }
                 Spacer()
@@ -693,13 +700,13 @@ struct SignUpView: View {
                     showCountryPicker = true
                 } label: {
                     HStack(spacing: 4) {
-                        Text(viewModel.countryFlag).font(.system(size: 28))
+                        Text(viewModel.countryFlag).font(.system(size: iPadValue(28, 36)))
                         Image("downArrowSmall")
-                            .resizable().scaledToFit().frame(width: 14)
+                            .resizable().scaledToFit().frame(width: iPadValue(14, 18))
                             .foregroundStyle(Color("appBlackColor"))
                             .invertedInDarkMode(colorScheme == .dark)
                         Text(viewModel.countryDialCodeDisplay)
-                            .font(.system(size: 17, weight: .light))
+                            .font(.system(size: iPadValue(17, 22), weight: .light))
                             .foregroundStyle(Color("appBlackColor"))
                     }
                 }
@@ -708,9 +715,9 @@ struct SignUpView: View {
                 TextField("Phone no.", text: $viewModel.phone)
                     .keyboardType(.numberPad)
                     .textContentType(.telephoneNumber)
-                    .font(.system(size: 18, weight: .light))
+                    .font(.system(size: iPadValue(18, 22), weight: .light))
                     .foregroundStyle(Color("appBlackColor"))
-                    .frame(height: 40)
+                    .frame(height: iPadValue(40, 50))
                     .focused($focusedField, equals: .phone)
                     .onChange(of: viewModel.phone) { newValue in
                         let clamped = viewModel.clampPhone(newValue)
@@ -733,7 +740,7 @@ struct SignUpView: View {
 
             if let err = viewModel.errorPhone {
                 Text(err)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: iPadValue(13, 16), weight: .bold))
                     .foregroundStyle(Color("errorLabelColor"))
                     .padding(.horizontal, 5)
             }
@@ -749,11 +756,11 @@ struct SignUpView: View {
     //     (matches enableDisableResendButton in SignUpViewController)
 
     private var otpSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: iPadValue(12, 16)) {
             // Row 1: OTP label + boxes
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: iPadValue(12, 16)) {
                 Text("OTP")
-                    .font(.system(size: 18, weight: .light))
+                    .font(.system(size: iPadValue(18, 22), weight: .light))
                     .foregroundStyle(Color("silverGrayColor"))
                 OTPBoxField(code: $viewModel.otp)
             }
@@ -763,7 +770,7 @@ struct SignUpView: View {
             HStack(alignment: .center) {
                 if viewModel.isTimerRunning && viewModel.timeLimit > 0 {
                     Text(viewModel.timerDisplayText)
-                        .font(.system(size: 11))
+                        .font(.system(size: iPadValue(11, 14)))
                         .foregroundStyle(Color("silverGrayColor"))
                 } else {
                     Color.clear.frame(width: 1, height: 1)
@@ -774,7 +781,7 @@ struct SignUpView: View {
                 let isResendEnabled = !(viewModel.isTimerRunning && viewModel.timeLimit > 0)
                 HStack(spacing: 0) {
                     Text("Didn't receive a verification code? ")
-                        .font(.system(size: 11))
+                        .font(.system(size: iPadValue(11, 14)))
                         .foregroundStyle(Color("silverGrayColor"))
                     Button {
                         Task {
@@ -785,7 +792,7 @@ struct SignUpView: View {
                         }
                     } label: {
                         Text("Resend")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: iPadValue(11, 14), weight: .semibold))
                             .foregroundStyle(isResendEnabled
                                              ? Color("appBlackColor")
                                              : Color("silverGrayColor"))
@@ -801,31 +808,38 @@ struct SignUpView: View {
     // MARK: - Terms row (storyboard "qFD-1z-eAX": checkbox 22x22 + textView)
 
     private var termsRow: some View {
-        HStack(alignment: .top, spacing: 10) {
+        // iPad centers the checkbox vertically against the wrapped terms
+        // text so the box sits in the middle of the multi-line block;
+        // iPhone keeps `.top` alignment so the box lines up with the
+        // first line on the original phone-width single-line layout.
+        HStack(alignment: iPadValue(.top, .center), spacing: iPadValue(10, 14)) {
             Button {
                 viewModel.isTermsAccepted.toggle()
             } label: {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: iPadValue(4, 6))
                         .stroke(Color("brandTanColor"),
                                 lineWidth: viewModel.isTermsAccepted ? 4 : 2)
-                        .frame(width: 22, height: 22)
+                        .frame(width: iPadValue(22, 28), height: iPadValue(22, 28))
                     if viewModel.isTermsAccepted {
                         // Tick PNG is dark — invert in dark mode so the
                         // checkmark stays visible inside the tan outline box.
                         Image("tickIcon")
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 14, height: 14)
+                            .frame(width: iPadValue(14, 18), height: iPadValue(14, 18))
                             .invertedInDarkMode(colorScheme == .dark)
                     }
                 }
             }
             .buttonStyle(.plain)
-            .padding(.top, 2)
+            // iPhone-only top nudge to align the box with the first line
+            // of single-line terms text — on iPad the HStack is centered
+            // so the offset is dropped.
+            .padding(.top, iPadValue(CGFloat(2), 0))
 
             termsAttributedText
-                .font(.system(size: 11))
+                .font(.system(size: iPadValue(11, 14)))
                 .lineLimit(nil)
                 .multilineTextAlignment(.leading)
                 .onTapGesture {
@@ -858,13 +872,14 @@ struct SignUpView: View {
     /// type-checker doesn't time out on a long `Text + Text + …` expression.
     private var termsAttributedText: Text {
         let black = Color("appBlackColor")
+        let boldSize = iPadValue(CGFloat(11), CGFloat(14))
         let prefix = Text("By continuing, you agree to our ").foregroundColor(black)
         let terms = Text("Terms of Service")
-            .font(.system(size: 11, weight: .bold))
+            .font(.system(size: boldSize, weight: .bold))
             .foregroundColor(black)
         let and = Text(" and ").foregroundColor(black)
         let privacy = Text("Privacy Policy")
-            .font(.system(size: 11, weight: .bold))
+            .font(.system(size: boldSize, weight: .bold))
             .foregroundColor(black)
         let dot = Text(".").foregroundColor(black)
         return prefix + terms + and + privacy + dot
@@ -950,9 +965,9 @@ private struct UnderlinedField: View {
                 .textContentType(contentType)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(keyboard == .emailAddress ? .never : .words)
-                .font(.system(size: 18, weight: .light))
+                .font(.system(size: iPadValue(18, 22), weight: .light))
                 .foregroundStyle(Color("appBlackColor"))
-                .frame(height: 40)
+                .frame(height: iPadValue(40, 50))
                 .padding(.horizontal, 5)
 
             Rectangle()
@@ -962,7 +977,7 @@ private struct UnderlinedField: View {
 
             if let err = error {
                 Text(err)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: iPadValue(13, 16), weight: .bold))
                     .foregroundStyle(Color("errorLabelColor"))
                     .padding(.horizontal, 5)
             }
@@ -982,15 +997,16 @@ private struct DOBField: View {
             Button(action: onTap) {
                 HStack {
                     Text(text.isEmpty ? "MM/DD/YYYY" : text)
-                        .font(.system(size: 18, weight: .light))
+                        .font(.system(size: iPadValue(18, 22), weight: .light))
                         .foregroundStyle(text.isEmpty
                                          ? Color("inputPlaceholderColor")
                                          : Color("appBlackColor"))
                     Spacer()
                     Image(systemName: "calendar")
+                        .font(.system(size: iPadValue(17, 22)))
                         .foregroundStyle(Color("silverGrayColor"))
                 }
-                .frame(height: 40)
+                .frame(height: iPadValue(40, 50))
                 .padding(.horizontal, 5)
                 .contentShape(Rectangle())
             }
@@ -1003,7 +1019,7 @@ private struct DOBField: View {
 
             if let err = error {
                 Text(err)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: iPadValue(13, 16), weight: .bold))
                     .foregroundStyle(Color("errorLabelColor"))
                     .padding(.horizontal, 5)
             }

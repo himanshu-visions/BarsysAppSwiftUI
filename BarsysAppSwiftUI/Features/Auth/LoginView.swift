@@ -332,24 +332,27 @@ struct LoginView: View {
                         Image("splashAppIcon")
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 219, height: 20)
+                            .frame(width: iPadValue(219, 440), height: iPadValue(20, 40))
                             .invertedInDarkMode(colorScheme == .dark)
-                            .padding(.top, 94)
+                            .padding(.top, iPadValue(94, 130))
 
                         // Tagline
                         Text("Log in to explore smart cocktail recipes and effortless drink-making with Barsys.")
-                            .font(.system(size: 13))
+                            .font(.system(size: iPadValue(13, 17)))
                             .foregroundStyle(Color("appBlackColor"))
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal, 45)
-                            .padding(.top, 20)
+                            .padding(.horizontal, iPadValue(45, 80))
+                            .padding(.top, iPadValue(20, 30))
 
-                        Spacer(minLength: 32)
+                        Spacer(minLength: iPadValue(32, 50))
 
-                        // Bottom login card
+                        // Bottom login card — capped width on iPad so the
+                        // narrow phone-style form stays centered instead of
+                        // stretching edge-to-edge on the iPad canvas.
                         loginCard
+                            .frame(maxWidth: iPadMaxWidth(540))
                             .padding(.horizontal, 30)
-                            .padding(.bottom, 50)
+                            .padding(.bottom, iPadValue(50, 60))
                     }
                     // Make the VStack fill the screen height so the Spacer
                     // actually pushes the login card down — otherwise the
@@ -459,10 +462,10 @@ struct LoginView: View {
     // MARK: - Login card (mirrors FTr-d8-3bm in storyboard)
 
     private var loginCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: iPadValue(18, 22)) {
 
             Text("Log in with your Phone Number")
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: iPadValue(12, 16), weight: .bold))
                 .foregroundStyle(Color("appBlackColor"))
                 .padding(.top, 8)
                 .padding(.leading, 5)
@@ -483,14 +486,14 @@ struct LoginView: View {
                         ProgressView().tint(Color("appBlackColor"))
                     } else {
                         Text(primaryButtonTitle)
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: iPadValue(12, 16), weight: .bold))
                             .foregroundStyle(Color("appBlackColor"))
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 43)
+                .frame(height: iPadValue(43, 54))
                 .background(Color("lightSilverColor"))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: iPadValue(8, 10)))
             }
             .disabled(viewModel.isWorking)
 
@@ -498,7 +501,7 @@ struct LoginView: View {
             HStack(spacing: 0) {
                 Spacer()
                 Text("Don't have an account? ")
-                    .font(.system(size: 11))
+                    .font(.system(size: iPadValue(11, 14)))
                     .foregroundStyle(Color("silverGrayColor"))
                 Button {
                     // Hide keyboard FIRST so the dismiss animation
@@ -517,7 +520,7 @@ struct LoginView: View {
                     }
                 } label: {
                     Text("Create one")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: iPadValue(11, 14), weight: .semibold))
                         .foregroundStyle(Color("appBlackColor"))
                 }
                 Spacer()
@@ -541,17 +544,17 @@ struct LoginView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(viewModel.selectedCountry.flag)
-                            .font(.system(size: 28))
+                            .font(.system(size: iPadValue(28, 36)))
                         // Chevron PNG ships as a dark asset — invert in dark
                         // mode so it stays visible against the dark surface.
                         Image("downArrowSmall")
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 14)
+                            .frame(width: iPadValue(14, 18))
                             .foregroundStyle(Color("appBlackColor"))
                             .invertedInDarkMode(colorScheme == .dark)
                         Text(viewModel.countryDialCodeDisplay)
-                            .font(.system(size: 17, weight: .light))
+                            .font(.system(size: iPadValue(17, 22), weight: .light))
                             .foregroundStyle(Color("appBlackColor"))
                     }
                 }
@@ -575,9 +578,9 @@ struct LoginView: View {
                     // (previously they set `focusedField = nil` while
                     // nothing was bound, so the line was a no-op).
                     .focused($focusedField, equals: .phone)
-                    .font(.system(size: 18, weight: .light))
+                    .font(.system(size: iPadValue(18, 22), weight: .light))
                     .foregroundStyle(Color("appBlackColor"))
-                    .frame(height: 40)
+                    .frame(height: iPadValue(40, 50))
                     // 1:1 with UIKit `LoginViewController+Accessibility.swift:19-20`:
                     // VoiceOver users hear the field's purpose + the OTP-flow hint.
                     .accessibilityLabel("Phone number")
@@ -624,7 +627,7 @@ struct LoginView: View {
             // shows `viewModel.errorPhone` below the underline).
             if let err = viewModel.phoneError {
                 Text(err)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: iPadValue(13, 16), weight: .bold))
                     .foregroundStyle(Color("errorLabelColor"))
                     .padding(.horizontal, 5)
             }
@@ -646,11 +649,11 @@ struct LoginView: View {
     //     timer expired — exactly enableDisableResendButton(isEnable:).
 
     private var otpSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: iPadValue(12, 16)) {
             // Row 1: OTP label + 6 square boxes
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: iPadValue(12, 16)) {
                 Text("OTP")
-                    .font(.system(size: 18, weight: .light))
+                    .font(.system(size: iPadValue(18, 22), weight: .light))
                     .foregroundStyle(Color("silverGrayColor"))
                 OTPBoxField(code: $viewModel.otp)
             }
@@ -660,7 +663,7 @@ struct LoginView: View {
             HStack(alignment: .center) {
                 if viewModel.timeRemaining > 0 {
                     Text(viewModel.timerDisplayText)
-                        .font(.system(size: 11))
+                        .font(.system(size: iPadValue(11, 14)))
                         .foregroundStyle(Color("silverGrayColor"))
                 } else {
                     // Empty placeholder when timer is done so Resend stays
@@ -682,7 +685,7 @@ struct LoginView: View {
     private var resendStack: some View {
         HStack(spacing: 0) {
             Text("Didn't receive a verification code? ")
-                .font(.system(size: 11))
+                .font(.system(size: iPadValue(11, 14)))
                 .foregroundStyle(viewModel.timeRemaining > 0
                                  ? Color("silverGrayColor")
                                  : Color("silverGrayColor"))
@@ -695,7 +698,7 @@ struct LoginView: View {
                 }
             } label: {
                 Text("Resend")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: iPadValue(11, 14), weight: .semibold))
                     .foregroundStyle(viewModel.timeRemaining > 0
                                      ? Color("silverGrayColor")
                                      : Color("appBlackColor"))
@@ -763,4 +766,23 @@ extension View {
             self
         }
     }
+}
+
+// MARK: - iPad sizing helper
+//
+// Login and Sign-Up are storyboard ports sized for an iPhone canvas; on
+// iPad those phone-spec values look tiny against the larger screen. The
+// helpers below pick a separate value when running on iPad and return
+// the original iPhone value otherwise, so the existing iPhone layout
+// stays bit-identical while iPad gets bumped fonts / frames / paddings.
+
+/// Returns `pad` on iPad, `phone` on iPhone.
+func iPadValue<T>(_ phone: T, _ pad: T) -> T {
+    UIDevice.current.userInterfaceIdiom == .pad ? pad : phone
+}
+
+/// Returns `pad` on iPad, `.infinity` on iPhone — used to cap form-card
+/// width on iPad so it doesn't stretch edge-to-edge on the wide canvas.
+func iPadMaxWidth(_ pad: CGFloat) -> CGFloat {
+    UIDevice.current.userInterfaceIdiom == .pad ? pad : .infinity
 }
