@@ -480,10 +480,14 @@ struct SignUpView: View {
                             .scaledToFit()
                             .frame(width: iPadValue(219, 440), height: iPadValue(20, 40))
                             .invertedInDarkMode(colorScheme == .dark)
-                            // iPad sits the entire form lower in the canvas so
-                            // it doesn't hug the top safe area on the taller
-                            // iPad screen — iPhone keeps the original 94pt.
-                            .padding(.top, iPadValue(94, 220))
+                            // Top padding tightens in dark mode so the
+                            // inline cocktail artwork + form card + new
+                            // account text all fit within the visible
+                            // viewport. Light mode keeps the original
+                            // 94pt iPhone / 220pt iPad — UNCHANGED.
+                            .padding(.top, colorScheme == .dark
+                                     ? iPadValue(30, 80)
+                                     : iPadValue(94, 220))
 
                         Text("Let's create your account")
                             .font(.system(size: iPadValue(13, 17)))
@@ -492,13 +496,73 @@ struct SignUpView: View {
                             .padding(.horizontal, iPadValue(45, 80))
                             .padding(.top, iPadValue(20, 30))
 
+                        // Dark-mode-only cocktail artwork placed between
+                        // the "Let's create your account" tagline and the
+                        // form card. Mirrors the same visual pattern used
+                        // on the Login screen — light mode renders the
+                        // full-screen `signUpBg` background only and
+                        // never sees this inline asset.
+                        //
+                        // Two render paths because iPhone and iPad need
+                        // different sizing strategies:
+                        //
+                        //   • iPhone: `.scaledToFit()` so the image
+                        //     ALWAYS fits within its proposed frame —
+                        //     no overflow possible. Width is bounded
+                        //     by `.padding(.horizontal, 30)` (screen
+                        //     width − 60pt) so the image sits clearly
+                        //     inset from the screen edges. `.frame(
+                        //     maxWidth: .infinity, alignment: .center)`
+                        //     makes horizontal centering explicit.
+                        //   • iPad: `.aspectRatio(.fill)` + 440pt
+                        //     height capped at 640pt wide, mirroring
+                        //     the Login screen's confirmed-correct
+                        //     iPad sizing.
+                        if colorScheme == .dark {
+                            Group {
+                                if UIDevice.current.userInterfaceIdiom == .pad {
+                                    Image("signUpBackgroundImageDark")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(height: 440)
+                                        .frame(maxWidth: 640)
+                                        .clipped()
+                                } else {
+                                    // iPhone: explicit height frame so the
+                                    // image always has a definite render
+                                    // size — `.scaledToFit()` alone in a
+                                    // height-unbounded ScrollView context
+                                    // can occasionally collapse to zero.
+                                    // 30pt horizontal padding gives clear
+                                    // leading + trailing margin against
+                                    // the main view.
+                                    Image("signUpBackgroundImageDark")
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(height: 240)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.horizontal, 30)
+                                }
+                            }
+                            .padding(.top, iPadValue(20, 30))
+                            .accessibilityHidden(true)
+                        }
+
                         // Form card — capped width on iPad so the
                         // narrow phone-style form stays centered
                         // instead of stretching across the iPad canvas.
+                        //
+                        // Top padding: dark mode tightens to 20/30pt
+                        // because the inline cocktail artwork above
+                        // already provides visual breathing room
+                        // between the tagline and the form. Light mode
+                        // keeps the original 60/70pt — UNCHANGED.
                         formCard
                             .frame(maxWidth: iPadMaxWidth(540))
                             .padding(.horizontal, 30)
-                            .padding(.top, iPadValue(60, 70))
+                            .padding(.top, colorScheme == .dark
+                                     ? iPadValue(20, 30)
+                                     : iPadValue(60, 70))
                             .padding(.bottom, iPadValue(30, 40))
                     }
                     .frame(maxWidth: .infinity)
