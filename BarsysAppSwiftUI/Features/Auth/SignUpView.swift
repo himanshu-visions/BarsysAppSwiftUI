@@ -496,17 +496,27 @@ struct SignUpView: View {
                 .animation(.spring(response: 0.35, dampingFraction: 0.85), value: viewModel.otpSent)
             }
         }
-        // Hide the system navigation bar entirely — matches LoginView,
-        // which also runs `.navigationBarHidden(true)`. The white nav
-        // bar with a back chevron was leaking through on Sign Up; the
-        // user reaches Login via the "Already have an account? Log in"
-        // button at the bottom of the form, so the chevron is redundant.
-        .navigationBarHidden(true)
         // Keyboard accessory toolbar — ports SignUpViewController+TextFieldDelegate.setupToolbar
         // (Cancel + flexibleSpace + Done over phone / name / email /
         // OTP fields). Shared modifier swaps text labels for
         // `xmark` / `checkmark` icons on iOS 26 glass.
+        //
+        // CRITICAL ordering: `.keyboardDoneCancelToolbar` MUST sit
+        // BEFORE `.toolbar(.hidden, for: .navigationBar)` and before
+        // `.sheet(...)`. SwiftUI resolves toolbar placements against
+        // the nearest enclosing context — when a sheet or a hidden
+        // nav-bar modifier sits between the field and the
+        // `.toolbar { ToolbarItemGroup(placement: .keyboard) }` call,
+        // the keyboard placement can get re-rooted into a context
+        // that doesn't render input accessories, leaving the
+        // Cancel/Done bar missing on first tap.
         .keyboardDoneCancelToolbar()
+        // Hide the system navigation bar — use the iOS 16+
+        // `.toolbar(.hidden, for: .navigationBar)` form (targets ONLY
+        // the navigation bar surface) instead of the deprecated
+        // `.navigationBarHidden(true)`, which could cascade and
+        // suppress sibling toolbar items in the same chain.
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showCountryPicker) {
             CountryPickerView(selected: Binding(
                 get: { viewModel.selectedCountry ?? .unitedStates },

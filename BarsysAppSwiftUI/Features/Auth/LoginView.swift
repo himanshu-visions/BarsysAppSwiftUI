@@ -369,21 +369,40 @@ struct LoginView: View {
                 .animation(.easeInOut(duration: 0.25), value: viewModel.otpSent)
             }
         }
-        .navigationBarHidden(true)
-        .sheet(isPresented: $showCountryPicker) {
-            CountryPickerView(selected: $viewModel.selectedCountry)
-        }
         // Keyboard accessory toolbar (ports BarsysApp/Controllers/Login/
         // LoginViewController+Toolbar.setupToolbar). Uses the shared
         // `keyboardDoneCancelToolbar` modifier so the styling stays in
         // sync with every other Cancel+Done accessory in the app —
         // notably the iOS 26 glass variant swaps the text labels for
         // `xmark` / `checkmark` icons.
+        //
+        // CRITICAL ordering: `.keyboardDoneCancelToolbar` MUST sit
+        // BEFORE `.toolbar(.hidden, for: .navigationBar)` and before
+        // `.sheet(...)`. SwiftUI resolves toolbar placements against
+        // the nearest enclosing context — when a sheet or a hidden
+        // nav-bar modifier sits between the field and the
+        // `.toolbar { ToolbarItemGroup(placement: .keyboard) }` call,
+        // the keyboard placement can get re-rooted into a context that
+        // doesn't render input accessories, leaving the Cancel/Done
+        // bar missing on first tap (the QA "toolbar not coming"
+        // report). Putting the keyboard toolbar first ensures it
+        // attaches to the original view hierarchy that contains the
+        // text fields.
         .keyboardDoneCancelToolbar(onDone: {
             focusedField = nil
         }, onCancel: {
             focusedField = nil
         })
+        // Use the iOS 16+ `.toolbar(.hidden, for: .navigationBar)`
+        // instead of the deprecated `.navigationBarHidden(true)` —
+        // the former targets ONLY the navigation bar surface, leaving
+        // the keyboard toolbar (`.keyboard` placement) untouched. The
+        // older modifier could occasionally cascade and suppress
+        // sibling toolbar items in the same view chain.
+        .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showCountryPicker) {
+            CountryPickerView(selected: $viewModel.selectedCountry)
+        }
         .onAppear {
             // 1:1 with UIKit `UIViewController+Navigation.swift` L14-19:
             //   if UIApplication.shared.topViewController() is LoginViewController {
