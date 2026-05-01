@@ -341,6 +341,12 @@ struct LoginView: View {
                             .font(.system(size: iPadValue(13, 17)))
                             .foregroundStyle(Color("appBlackColor"))
                             .multilineTextAlignment(.center)
+                            // iPad keeps the tagline on a single line —
+                            // the wide iPad canvas easily fits it, and the
+                            // wrap-to-two-lines that happened with the
+                            // bigger iPad font reads as awkward. iPhone
+                            // keeps the original 0-line wrapping behaviour.
+                            .iPadOnly { $0.lineLimit(1).minimumScaleFactor(0.8) }
                             .padding(.horizontal, iPadValue(45, 80))
                             .padding(.top, iPadValue(20, 30))
 
@@ -796,6 +802,19 @@ extension View {
     func iPadFont(_ font: Font) -> some View {
         if UIDevice.current.userInterfaceIdiom == .pad {
             self.font(font)
+        } else {
+            self
+        }
+    }
+
+    /// Runs `transform` against `self` only on iPad and returns the
+    /// receiver untouched on iPhone — lets us layer iPad-only modifiers
+    /// (`lineLimit`, `minimumScaleFactor`, etc.) without affecting the
+    /// iPhone view tree at all.
+    @ViewBuilder
+    func iPadOnly<Transformed: View>(_ transform: (Self) -> Transformed) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            transform(self)
         } else {
             self
         }
