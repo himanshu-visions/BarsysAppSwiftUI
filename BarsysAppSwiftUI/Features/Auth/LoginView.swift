@@ -149,10 +149,13 @@ final class LoginViewModel: ObservableObject {
         isWorking = true
         let validation = validatePhone()
         guard validation.isValid else {
-            phoneError = validation.errorMessage
-            // 1:1 with UIKit `LoginViewController.swift:158`:
-            // `HapticService.shared.error()` fires when the phone number
-            // fails validation before the alert is shown.
+            // QA reported the validation alert "appearing twice" — the
+            // popup AND the inline `phoneError` row both surfaced the
+            // same message at once. UIKit `LoginViewController.swift:158`
+            // shows ONLY the `showCustomAlert(...)` popup with the
+            // error haptic; the storyboard phone row has no inline
+            // error label. Drop the `phoneError` assignment so the
+            // user sees just one validation prompt — the popup.
             HapticService.error()
             alerts.show(message: validation.errorMessage ?? Constants.invalidPhoneNumber)
             isWorking = false
@@ -535,13 +538,6 @@ struct LoginView: View {
                 .fill(Color("silverGrayColor"))
                 .frame(height: 1)
                 .padding(.horizontal, 5)
-
-            if let err = viewModel.phoneError {
-                Text(err)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color("errorLabelColor"))
-                    .padding(.horizontal, 5)
-            }
         }
     }
 
