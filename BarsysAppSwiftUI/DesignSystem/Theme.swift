@@ -1001,48 +1001,56 @@ private struct BarsysPopupModifier: ViewModifier {
     let onPickIngredient: (String) -> Void
 
     func body(content: Content) -> some View {
-        content.overlay {
-            if let current = popup {
-                ZStack {
-                    // UIKit: btnTransparent backgroundColor = black.withAlphaComponent(0.5)
-                    Color.black.opacity(0.50)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            if !current.isBlocking { popup = nil }
-                        }
-                    BarsysPopupCard(
-                        popup: current,
-                        onPrimary: { popup = nil; onPrimary() },
-                        onSecondary: { popup = nil; onSecondary() },
-                        onPickIngredient: { name in
-                            popup = nil
-                            onPickIngredient(name)
-                        },
-                        // UIKit `crossButtonClicked(_:)` for every popup
-                        // (AlertPopUpViewController / Horizontal stack /
-                        // ManualStartSpining / MultipleIngredients): just
-                        // dismiss. Distinct from the secondary button so
-                        // callers can tell "user explicitly closed" from
-                        // "user picked Cancel" via `.onChange(of: popup)`.
-                        onClose: { popup = nil }
-                    )
+        content
+            .overlay {
+                if let current = popup {
+                    ZStack {
+                        // UIKit: btnTransparent backgroundColor = black.withAlphaComponent(0.5)
+                        Color.black.opacity(0.50)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                if !current.isBlocking { popup = nil }
+                            }
+                        BarsysPopupCard(
+                            popup: current,
+                            onPrimary: { popup = nil; onPrimary() },
+                            onSecondary: { popup = nil; onSecondary() },
+                            onPickIngredient: { name in
+                                popup = nil
+                                onPickIngredient(name)
+                            },
+                            // UIKit `crossButtonClicked(_:)` for every popup
+                            // (AlertPopUpViewController / Horizontal stack /
+                            // ManualStartSpining / MultipleIngredients): just
+                            // dismiss. Distinct from the secondary button so
+                            // callers can tell "user explicitly closed" from
+                            // "user picked Cancel" via `.onChange(of: popup)`.
+                            onClose: { popup = nil }
+                        )
+                    }
+                    // 1:1 with UIKit `present(alertPopUpVc!, animated: true)`
+                    // + `modalPresentationStyle = .overFullScreen` — the
+                    // default `.coverVertical` modal animation slides the
+                    // popup view (dim + card together) up from the bottom
+                    // edge. Previously the dim faded in and the card scaled
+                    // in place; the rating popup now matches the rest of
+                    // the custom popups (logout, terms-and-conditions,
+                    // device-disconnected) which all flow through the same
+                    // bottom-up slide.
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(50)
                 }
-                // 1:1 with UIKit `present(alertPopUpVc!, animated: true)`
-                // + `modalPresentationStyle = .overFullScreen` — the
-                // default `.coverVertical` modal animation slides the
-                // popup view (dim + card together) up from the bottom
-                // edge. Previously the dim faded in and the card scaled
-                // in place; the rating popup now matches the rest of
-                // the custom popups (logout, terms-and-conditions,
-                // device-disconnected) which all flow through the same
-                // bottom-up slide.
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                // Bumped from 0.2s → 0.35s so the slide is visible at
-                // UIKit's default `coverVertical` perceptual cadence.
-                .animation(.easeInOut(duration: 0.35), value: popup)
-                .zIndex(50)
             }
-        }
+            // CRITICAL: `.animation(_:value:)` must sit on the parent
+            // (`content`) — NOT inside the overlay closure on the inner
+            // ZStack. SwiftUI binds transitions to the closest enclosing
+            // animation context that observes the toggling value; placing
+            // it inside the conditional block left the transition without
+            // a driver, so the popup snapped in/out instead of sliding.
+            // This is the same arrangement `AppAlertModifier` uses for
+            // the logout / phone-validation / terms popups, which is why
+            // those slide correctly.
+            .animation(.easeInOut(duration: 0.35), value: popup)
     }
 }
 
