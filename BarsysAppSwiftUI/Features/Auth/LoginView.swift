@@ -350,7 +350,103 @@ struct LoginView: View {
                             .padding(.horizontal, iPadValue(45, 80))
                             .padding(.top, iPadValue(20, 30))
 
-                        Spacer(minLength: iPadValue(32, 50))
+                        // Dark-mode-only cocktail artwork placed BETWEEN the
+                        // tagline and the login card.
+                        //
+                        // Two flexible `Spacer`s — one above and one below the
+                        // image — split the empty vertical space equally, so
+                        // the artwork sits VERTICALLY CENTERED between the
+                        // tagline and the "Log in with your Phone Number"
+                        // header. Light mode keeps the original single
+                        // `Spacer(minLength: 32/50)` which pushes the login
+                        // card to the bottom of the screen.
+                        //
+                        // Sizing: explicit width/height frame using
+                        // `.aspectRatio(.fill)` so the cocktail glass is a
+                        // prominent visual anchor rather than a small inset
+                        // banner. The source image is 1.53:1 landscape; with
+                        // `.fill` the frame controls both dimensions and any
+                        // overflow is cropped at the dark surrounds (the
+                        // glass itself is centered in the source so the
+                        // crop never touches it).
+                        if colorScheme == .dark {
+                            // Top spacer — flexible.
+                            Spacer(minLength: iPadValue(8, 16))
+
+                            // Cocktail artwork sized as a prominent visual
+                            // anchor between the tagline and the "Log in
+                            // with your Phone Number" header. Two render
+                            // paths because iPhone and iPad need different
+                            // sizing strategies:
+                            //
+                            //   • iPhone: `.scaledToFit()` so the image
+                            //     ALWAYS fits within its proposed frame —
+                            //     no overflow possible. Width is bounded
+                            //     by `.padding(.horizontal, 20)` (screen
+                            //     width − 40pt). The previous attempt with
+                            //     `.aspectRatio(.fill)` + a fixed height
+                            //     pushed the image's layout frame past the
+                            //     screen width on iPhone because the
+                            //     fill-mode rendered size (height ×
+                            //     1.53) exceeded the screen, and the
+                            //     stacked `.clipped()` did not always
+                            //     tame the overflow visually. Fit-mode
+                            //     side-steps the entire class of bug.
+                            //   • iPad: untouched — `.aspectRatio(.fill)`
+                            //     + 440pt height capped at 640pt wide,
+                            //     no horizontal padding. The iPad layout
+                            //     was confirmed correct.
+                            Group {
+                                if UIDevice.current.userInterfaceIdiom == .pad {
+                                    Image("loginBackgroundImageDark")
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(height: 440)
+                                        .frame(maxWidth: 640)
+                                        .clipped()
+                                } else {
+                                    // iPhone (dark mode only):
+                                    // `.scaledToFit()` guarantees the image
+                                    // never overflows its proposed frame.
+                                    // 30pt leading + trailing padding
+                                    // against the MAIN VIEW so the image
+                                    // sits clearly inset from the screen
+                                    // edges. `.frame(maxWidth: .infinity,
+                                    // alignment: .center)` makes the
+                                    // horizontal centering explicit so the
+                                    // image stays HORIZONTALLY CENTERED
+                                    // even if a parent layout proposes a
+                                    // wider-than-needed slot.
+                                    Image("loginBackgroundImageDark")
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(maxWidth: .infinity, alignment: .center)
+                                        .padding(.horizontal, 30)
+                                }
+                            }
+                            // 8pt top padding compensates for the
+                            // loginCard's first item
+                            // (`Text("Log in with your Phone Number")`)
+                            // having its own `.padding(.top, 8)`. The two
+                            // flexible spacers above and below the image
+                            // are equal-sized by default, but the visible
+                            // BOTTOM gap (image_bottom → header_top) picks
+                            // up that 8pt of internal card padding while
+                            // the TOP gap doesn't. Mirroring the same 8pt
+                            // above the image makes the visible top /
+                            // bottom gaps match.
+                            .padding(.top, 8)
+                            .accessibilityHidden(true)
+
+                            // Bottom spacer — flexible, equal-sized to top.
+                            Spacer(minLength: iPadValue(8, 16))
+                        } else {
+                            // Light mode is unchanged: a single Spacer
+                            // pushes the login card to the bottom of the
+                            // screen exactly as before this dark-mode
+                            // visual was added.
+                            Spacer(minLength: iPadValue(32, 50))
+                        }
 
                         // Bottom login card — capped width on iPad so the
                         // narrow phone-style form stays centered instead of
@@ -442,7 +538,9 @@ struct LoginView: View {
                     // near-white adaptive text unreadable. Swap for the
                     // adaptive `primaryBackgroundColor` (dark surface) so the
                     // existing adaptive text/border colors stay legible.
-                    // Light mode continues to render the original image.
+                    // The dark cocktail artwork (`loginBackgroundImageDark`)
+                    // is rendered inline between the tagline and the login
+                    // card instead — see `body`'s VStack.
                     Color("primaryBackgroundColor")
                 } else {
                     if UIDevice.current.userInterfaceIdiom == .pad {
