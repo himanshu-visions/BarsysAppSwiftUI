@@ -550,6 +550,9 @@ struct DevicePairedView: View {
     /// Drives the modal `TutorialView` cover when the user taps the
     /// inline play card. Mirrors UIKit's `present(tutorialVc, animated: true)`.
     @State private var showTutorialPlayer = false
+    /// 1:1 with UIKit `DevicePairedViewController.isMuted` (default true).
+    /// Drives the inline mute/unmute button icon AND `AVPlayer.isMuted`.
+    @State private var isInlineTutorialMuted: Bool = true
 
     /// Drives the bottom-sheet `BarsysWebView` presentation when a
     /// Barsys Products tile is tapped. Sheet (action-sheet style)
@@ -823,73 +826,123 @@ struct DevicePairedView: View {
                             .padding(.top, 4)
 
                         // 1:1 with UIKit `SX9-es-vHC` — full-frame
-                        // play/pause button (345×194). UIKit storyboard
-                        // wires this to `didPressPlayPauseButton:` which
-                        // routes to the inline VideoPlayerManager. We
-                        // present the modal `TutorialView` instead so the
-                        // user gets the same tutorial experience as the
-                        // Control Center → Tutorial menu (no inline
-                        // player needed).
+                        // play/pause button (345×194) AND
+                        // `0nG-47-tZC` — bottom-right mute/unmute button
+                        // (35×35, trailing/bottom 20pt) on the SAME
+                        // inline tutorial card. UIKit storyboard wired
+                        // `didPressPlayPauseButton:` to
+                        // `viewModel.playerView?.togglePlayPause()` and
+                        // `muteUnmuteAction:` to flip
+                        // `viewModel.playerView?.player?.isMuted`. Both
+                        // controls operate on the SAME inline player —
+                        // tap to toggle play/pause, mute toggles audio
+                        // — they do NOT open a modal.
                         //
-                        // The URL was already captured by
-                        // `decideTutorialOnAppear()` (which also flipped
-                        // the per-device "seen" flag). The tap just
-                        // presents the modal — NO second mark-shown call.
-                        Button {
-                            HapticService.light()
-                            // Fallback to live-resolved URL if the cached
-                            // value is somehow nil (defensive — shouldn't
-                            // happen since `decideTutorialOnAppear` runs
-                            // before the card is rendered).
-                            if tutorialVideoURL == nil {
-                                tutorialVideoURL = tutorialVideoURLForCurrentDevice
-                            }
-                            showTutorialPlayer = true
-                        } label: {
-                            ZStack {
-                                // 1:1 with UIKit `viewTutorial` — instead of
-                                // a static black rectangle, render the same
-                                // device-specific instructional video the
-                                // modal uses, muted + looping. UIKit wired
-                                // its inline `playerView?.setupPlayer(with:
-                                // videoURL, ...)` here (see the
-                                // `setupTutorialVideoIfNeeded()` snippet in
-                                // the @State doc block above). Without an
-                                // inline player the card renders as a flat
-                                // black thumbnail which the user reads as
-                                // "tutorials always show a black screen".
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color.black)
-                                if let player = inlineTutorialPlayer.player {
-                                    VideoPlayerView(player: player,
-                                                    fillMode: .resizeAspectFill)
-                                        .clipShape(RoundedRectangle(cornerRadius: 20))
-                                        .allowsHitTesting(false)
+                        // (QA bug: the user was unable to play/pause or
+                        // mute/unmute the tutorial on Explore because
+                        // the prior SwiftUI port routed the tap to a
+                        // modal `TutorialView` and omitted the mute
+                        // button entirely.)
+                        ZStack(alignment: .bottomTrailing) {
+                            // ─── Full-frame play/pause button ───
+                            // 1:1 with UIKit `playPauseButton` IBAction
+                            // `didPressPlayPauseButton:`:
+                            //   • haptic: `HapticService.shared.selection()`
+                            //   • guards `timeControlStatus !=
+                            //     .waitingToPlayAtSpecifiedRate` so taps
+                            //     during initial buffering are ignored
+                            //   • toggles inline player
+                            //   • play_thumb icon hidden while playing
+                            Button {
+                                HapticService.selection()
+                                // 1:1 with UIKit guard against tapping
+                                // while the player is still buffering
+                                // (`timeControlStatus !=
+                                // .waitingToPlayAtSpecifiedRate`).
+                                if inlineTutorialPlayer.player?.timeControlStatus
+                                    != .waitingToPlayAtSpecifiedRate {
+                                    if inlineTutorialPlayer.isPlaying {
+                                        inlineTutorialPlayer.pause()
+                                    } else {
+                                        inlineTutorialPlayer.play()
+                                    }
                                 }
-                                // 45pt visual scale of the 24×24 play_thumb
-                                // asset (was 60pt). White tint matches UIKit
-                                // `tintColor white="1" alpha="1"` on the
-                                // play button. UIKit hides the icon while
-                                // the player is playing (see
-                                // `DevicePairedViewController.updatePlayPauseIcon` —
-                                // image is set to `nil` when `isPlaying`),
-                                // so mirror that here by gating on the
-                                // PlayerHolder's published `isPlaying`.
-                                if !inlineTutorialPlayer.isPlaying {
-                                    Image("play_thumb")
-                                        .resizable()
-                                        .renderingMode(.template)
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 45, height: 45)
-                                        .foregroundStyle(Theme.Color.softWhiteText)
+                            } label: {
+                                ZStack {
+                                    // 1:1 with UIKit `viewTutorial` —
+                                    // black background under the inline
+                                    // AVPlayer. UIKit wired
+                                    // `playerView?.setupPlayer(with:
+                                    // videoURL, on: containerView,
+                                    // fillMode: .resizeAspectFill,
+                                    // shouldRepeat: true)` here.
+                                    RoundedRectangle(cornerRadius: 20)
+                                        .fill(Color.black)
+                                    if let player = inlineTutorialPlayer.player {
+                                        VideoPlayerView(player: player,
+                                                        fillMode: .resizeAspectFill)
+                                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                                            .allowsHitTesting(false)
+                                    }
+                                    // 45pt visual scale of the 24×24
+                                    // play_thumb asset. White tint
+                                    // matches UIKit `tintColor white="1"
+                                    // alpha="1"`. UIKit hides the icon
+                                    // while playing (see
+                                    // `DevicePairedViewController.updatePlayPauseIcon`
+                                    // — image is set to `nil` when
+                                    // `isPlaying`).
+                                    if !inlineTutorialPlayer.isPlaying {
+                                        Image("play_thumb")
+                                            .resizable()
+                                            .renderingMode(.template)
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 45, height: 45)
+                                            .foregroundStyle(Theme.Color.softWhiteText)
+                                    }
                                 }
+                                .frame(height: 194)
+                                .clipShape(RoundedRectangle(cornerRadius: 20))
+                                .contentShape(RoundedRectangle(cornerRadius: 20))
                             }
-                            .frame(height: 194)
-                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(inlineTutorialPlayer.isPlaying
+                                                ? "Pause tutorial video"
+                                                : "Play tutorial video")
+
+                            // ─── Bottom-right mute/unmute button ───
+                            // 1:1 with UIKit `btnMuteUnMute` IBAction
+                            // `muteUnmuteAction:`:
+                            //   • haptic: `HapticService.shared.selection()`
+                            //   • flips `viewModel.isMuted`
+                            //   • sets `playerView?.player?.isMuted` to
+                            //     the new value
+                            //   • icon: `mute` when muted, `unmute` when
+                            //     unmuted (UIKit asset names preserved)
+                            // Storyboard frame: 35×35, trailing 20pt,
+                            // bottom 20pt. ZStack draws this AFTER the
+                            // play/pause button so its hit region wins
+                            // over the underlying full-frame button.
+                            Button {
+                                HapticService.selection()
+                                isInlineTutorialMuted.toggle()
+                                inlineTutorialPlayer.player?.isMuted = isInlineTutorialMuted
+                            } label: {
+                                Image(isInlineTutorialMuted ? "mute" : "unmute")
+                                    .resizable()
+                                    .renderingMode(.template)
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 35, height: 35)
+                                    .foregroundStyle(Theme.Color.softWhiteText)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 20)
+                            .accessibilityLabel(isInlineTutorialMuted
+                                                ? "Unmute tutorial video"
+                                                : "Mute tutorial video")
                         }
-                        .buttonStyle(BounceButtonStyle())
-                        .accessibilityLabel("Play tutorial video")
-                        .accessibilityHint("Opens the tutorial video for the connected device")
                         .padding(.top, 15)
                     }
                     .padding(.horizontal, 24)
@@ -1222,14 +1275,16 @@ struct DevicePairedView: View {
         .onAppear {
             decideTutorialOnAppear()
             // Boot the inline tutorial preview if the card is showing —
-            // 1:1 with UIKit `setupTutorialVideoIfNeeded()`. Muted +
-            // looping so the card animates without audio while the
-            // user reads the surrounding labels. The modal handles
-            // sound + full controls when the card is tapped.
+            // 1:1 with UIKit `setupTutorialVideoIfNeeded()`. Looping +
+            // initial mute state mirrors the user's last `isInlineTutorialMuted`
+            // toggle (default `true`, matching UIKit
+            // `DevicePairedViewController.isMuted = true`). The user
+            // can toggle play/pause and mute/unmute directly via the
+            // inline buttons on the card.
             if isConnected, !hideTutorialThisSession,
                let url = tutorialVideoURL ?? tutorialVideoURLForCurrentDevice {
                 inlineTutorialPlayer.load(url: url, repeatPlayback: true)
-                inlineTutorialPlayer.player?.isMuted = true
+                inlineTutorialPlayer.player?.isMuted = isInlineTutorialMuted
                 inlineTutorialPlayer.play()
             }
         }
@@ -1254,7 +1309,7 @@ struct DevicePairedView: View {
                 if !hideTutorialThisSession,
                    let url = tutorialVideoURL ?? tutorialVideoURLForCurrentDevice {
                     inlineTutorialPlayer.load(url: url, repeatPlayback: true)
-                    inlineTutorialPlayer.player?.isMuted = true
+                    inlineTutorialPlayer.player?.isMuted = isInlineTutorialMuted
                     inlineTutorialPlayer.play()
                 }
             } else {
