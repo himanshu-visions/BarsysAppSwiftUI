@@ -127,27 +127,15 @@ struct HomeView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
 
-                // ─── 1. "Hi {name}" greeting (lUD-VJ-a4r) ───
-                //
-                // Previously this lived inside a custom top-bar HStack,
-                // alongside the Explore / Favorites / Profile buttons.
-                // The custom top bar has been removed: those buttons are
-                // now hosted in the system `.toolbar` below so they pick
-                // up iOS 26's native Liquid Glass wrapping — matching
-                // PairYourDevice / Explore / MyBar / etc. pixel-for-pixel.
-                // With the top bar gone, the greeting moves into the
-                // content `VStack` as the first row. This mirrors the
-                // pattern PairYourDevice uses for its "Pair your device"
-                // title (DeviceScreens.swift:33-47).
-                Text("Hi \(displayName)")
-                    .font(.system(size: 17))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .accessibilityAddTraits(.isHeader)
+                // ─── "Hi {name}" greeting moved to the top-bar (`.toolbar`)
+                // — sits as a plain-text `ToolbarItem` immediately
+                // after the Explore button (10pt leading padding) so it
+                // mirrors UIKit `ChooseOptionsDashboardViewController`'s
+                // top-bar HStack `dbg-mw-KqI` where `lblHiUserName`
+                // (`lUD-VJ-a4r`) sits beside `imgExploreSmall`
+                // (`O3O-bl-vqo`). NO glass capsule wraps the text — only
+                // the existing circular Explore button keeps its
+                // auto-glass treatment.
 
                 // ─── 2. "Welcome to Barsys AI," (Jlh-K8-Gez) ───
                 Text("Welcome to Barsys AI,")
@@ -232,6 +220,41 @@ struct HomeView: View {
                         .foregroundStyle(Color("appBlackColor"))
                 }
                 .accessibilityLabel("Explore")
+            }
+
+            // 1:1 with UIKit `lblHiUserName` (`lUD-VJ-a4r`) — system
+            // 17pt greeting hosted in the navigation title slot
+            // (`.principal`) so iOS 26 renders it as a PLAIN label
+            // with NO Liquid Glass capsule. The principal slot spans
+            // the space between the leading Explore button and the
+            // trailing favourites/profile pill, so:
+            //   • `.padding(.leading, 10)`  → 10pt gap after the
+            //                                   Explore button
+            //   • `.padding(.trailing, 10)` → 10pt gap before the
+            //                                   right glass pill
+            //   • `.frame(maxWidth: .infinity, alignment: .leading)`
+            //     stretches the Text into the full principal width so
+            //     wrapping has room to breathe (without it, the slot
+            //     hugs the text's intrinsic width and the trailing
+            //     padding has nothing to push against).
+            //   • `.lineLimit(1...3)` lets the label grow up to 3
+            //     lines for long names (e.g. "Hi Ankit Singh Rajpoot
+            //     Of Some Royal House"), wrapping at word boundaries.
+            //   • `.fixedSize(horizontal: false, vertical: true)`
+            //     allows the height to expand at runtime based on how
+            //     many lines the text actually needs (1 line for
+            //     short names, 2-3 for long).
+            ToolbarItem(placement: .principal) {
+                Text("Hi \(displayName)")
+                    .font(.system(size: 17))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .lineLimit(1...3)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 10)
+                    .accessibilityAddTraits(.isHeader)
             }
 
             // Shared 100×48 glass pill — identical call to
