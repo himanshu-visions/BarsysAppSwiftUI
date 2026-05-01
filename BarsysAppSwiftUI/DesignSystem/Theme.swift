@@ -1010,7 +1010,6 @@ private struct BarsysPopupModifier: ViewModifier {
                         .onTapGesture {
                             if !current.isBlocking { popup = nil }
                         }
-                        .transition(.opacity)
                     BarsysPopupCard(
                         popup: current,
                         onPrimary: { popup = nil; onPrimary() },
@@ -1027,9 +1026,20 @@ private struct BarsysPopupModifier: ViewModifier {
                         // "user picked Cancel" via `.onChange(of: popup)`.
                         onClose: { popup = nil }
                     )
-                    .transition(.scale.combined(with: .opacity))
                 }
-                .animation(.easeInOut(duration: 0.2), value: popup)
+                // 1:1 with UIKit `present(alertPopUpVc!, animated: true)`
+                // + `modalPresentationStyle = .overFullScreen` — the
+                // default `.coverVertical` modal animation slides the
+                // popup view (dim + card together) up from the bottom
+                // edge. Previously the dim faded in and the card scaled
+                // in place; the rating popup now matches the rest of
+                // the custom popups (logout, terms-and-conditions,
+                // device-disconnected) which all flow through the same
+                // bottom-up slide.
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                // Bumped from 0.2s → 0.35s so the slide is visible at
+                // UIKit's default `coverVertical` perceptual cadence.
+                .animation(.easeInOut(duration: 0.35), value: popup)
                 .zIndex(50)
             }
         }

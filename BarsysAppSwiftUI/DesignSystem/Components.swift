@@ -740,10 +740,29 @@ struct AppAlertModifier: ViewModifier {
             .overlay {
                 if let item = queue.current {
                     BarsysAlertOverlay(item: item, onDismiss: { queue.dismiss() })
-                        .transition(.opacity)
+                        // 1:1 with UIKit `showCustomAlert` /
+                        // `showCustomAlertMultipleButtons`
+                        // (UIViewController.swift:241/264) which call
+                        // `present(alertPopUpVc!, animated: true)` with
+                        // `modalPresentationStyle = .overFullScreen` —
+                        // UIKit's default modal animation is
+                        // `.coverVertical`, i.e. the popup slides up
+                        // from the bottom edge over a dimmed backdrop.
+                        // The previous `.opacity` fade made the card
+                        // pop in place, which read as a different
+                        // affordance. Combining `.move(edge: .bottom)`
+                        // with `.opacity` matches UIKit's slide-up +
+                        // brief fade, producing the same physical
+                        // motion the user remembers from the UIKit
+                        // build.
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: queue.current?.id)
+            // Bump from 0.2s → 0.35s so the slide is actually visible.
+            // UIKit's default `coverVertical` modal animation runs in
+            // ~0.35–0.45s, so this lands in the same perceptual range
+            // without feeling sluggish.
+            .animation(.easeInOut(duration: 0.35), value: queue.current?.id)
     }
 }
 
