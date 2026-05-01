@@ -482,24 +482,17 @@ struct SignUpView: View {
                 .animation(.spring(response: 0.35, dampingFraction: 0.85), value: viewModel.otpSent)
             }
         }
-        .navigationBarBackButtonHidden(true)
+        // Hide the system navigation bar entirely — matches LoginView,
+        // which also runs `.navigationBarHidden(true)`. The white nav
+        // bar with a back chevron was leaking through on Sign Up; the
+        // user reaches Login via the "Already have an account? Log in"
+        // button at the bottom of the form, so the chevron is redundant.
+        .navigationBarHidden(true)
         // Keyboard accessory toolbar — ports SignUpViewController+TextFieldDelegate.setupToolbar
         // (Cancel + flexibleSpace + Done over phone / name / email /
         // OTP fields). Shared modifier swaps text labels for
         // `xmark` / `checkmark` icons on iOS 26 glass.
         .keyboardDoneCancelToolbar()
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    env.analytics.track(TrackEventName.tapSignupLogIn.rawValue)
-                    viewModel.stopTimerInternal()
-                    path.removeLast()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .foregroundStyle(Color("appBlackColor"))
-                }
-            }
-        }
         .sheet(isPresented: $showCountryPicker) {
             CountryPickerView(selected: Binding(
                 get: { viewModel.selectedCountry ?? .unitedStates },
