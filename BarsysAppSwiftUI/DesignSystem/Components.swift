@@ -1017,7 +1017,16 @@ struct BarsysAlertOverlay: View {
     ///            translucent card than the rest of the app's glass
     ///            popups (especially in dark mode where the two
     ///            materials diverge visibly).
-    ///   Pre-26: UIColor.white.withAlphaComponent(0.95), cornerRadius=12
+    ///   Pre-26: UIColor.white.withAlphaComponent(0.95), cornerRadius=12.
+    ///           Routed through `Theme.Color.surface` (light = pure
+    ///           sRGB(1,1,1), bit-identical to the previous hard-coded
+    ///           `Color.white`, so light mode renders the EXACT same
+    ///           card; dark = elevated dark surface #2C2C2E) so the
+    ///           "Unable to create account…" / generic Barsys popups
+    ///           don't render as a stark white slab over the dark sign-up
+    ///           flow with the now-near-white adaptive `appBlackColor` /
+    ///           `veryDarkGrayColor` title and message text becoming
+    ///           illegible.
     @ViewBuilder
     private var alertCardBackground: some View {
         if #available(iOS 26.0, *) {
@@ -1025,7 +1034,7 @@ struct BarsysAlertOverlay: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.95))
+                .fill(Theme.Color.surface.opacity(0.95))
         }
     }
 
