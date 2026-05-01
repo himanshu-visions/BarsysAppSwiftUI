@@ -249,12 +249,30 @@ struct VideoPlayerView: UIViewRepresentable {
         view.backgroundColor = .black
         view.playerLayer.player = player
         view.playerLayer.videoGravity = fillMode
+        // 1:1 with UIKit `VideoPlayerManager.setupPlayer(with:on:...)`
+        // L47: `view.layer.insertSublayer(layer, at: 0)`. UIKit attaches
+        // the AVPlayerLayer as a SUBLAYER of the host view's `layer` —
+        // a CALayer doesn't participate in UIKit hit testing, so taps
+        // pass through to the play/pause and mute buttons stacked on
+        // top. The SwiftUI port wraps the layer inside a UIView host
+        // that defaults to `isUserInteractionEnabled = true`, so UIKit
+        // hit testing routes touches to THIS view and the SwiftUI
+        // buttons sitting above never fire (QA: "user is unable to
+        // play/pause or mute/unmute the tutorial video on Explore").
+        // Disabling user interaction makes the host UIView invisible
+        // to hit testing, matching UIKit. SwiftUI's `.allowsHitTesting`
+        // alone doesn't reliably propagate to UIKit-level hit testing.
+        view.isUserInteractionEnabled = false
         return view
     }
 
     func updateUIView(_ uiView: PlayerHostView, context: Context) {
         uiView.playerLayer.player = player
         uiView.playerLayer.videoGravity = fillMode
+        // Re-assert in case SwiftUI recreates the view with a stale
+        // interaction-enabled flag (defensive — `makeUIView` already
+        // sets it).
+        uiView.isUserInteractionEnabled = false
     }
 
     final class PlayerHostView: UIView {

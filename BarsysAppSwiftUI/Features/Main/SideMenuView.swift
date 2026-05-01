@@ -993,14 +993,25 @@ private struct SideMenuPanel: View {
     /// action; `continueButton` is the **secondary** slot (left-hand
     /// neutral bordered button) and is a pure no-op.
     private func presentLogoutConfirmation() {
-        env.alerts.show(
-            title: Constants.doYouWantToLogout,
-            primaryTitle: ConstantButtonsTitle.logoutButtonTitle,
-            secondaryTitle: ConstantButtonsTitle.noButtonTitle,
-            onPrimary: { performLogout() },
-            onSecondary: nil,
-            hideClose: true
-        )
+        // QA: the logout confirmation popup was overlapping the still-
+        // open side menu. Close the side menu FIRST so the popup
+        // surfaces against the regular screen background, then show
+        // the alert after the slide-out animation finishes (~0.3s
+        // matches the SideMenuContainer commit spring). UIKit's
+        // `logoutAction` flow ran on the device-paired screen with no
+        // panel visible at the time of the alert, so this matches that
+        // baseline.
+        onDismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            env.alerts.show(
+                title: Constants.doYouWantToLogout,
+                primaryTitle: ConstantButtonsTitle.logoutButtonTitle,
+                secondaryTitle: ConstantButtonsTitle.noButtonTitle,
+                onPrimary: { performLogout() },
+                onSecondary: nil,
+                hideClose: true
+            )
+        }
     }
 
     private func performLogout() {
