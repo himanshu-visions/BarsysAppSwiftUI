@@ -901,7 +901,13 @@ struct DevicePairedView: View {
                                             .foregroundStyle(Theme.Color.softWhiteText)
                                     }
                                 }
-                                .frame(height: 194)
+                                // iPad gets a taller player area —
+                                // the iPhone-spec 194pt frame reads
+                                // as a thin band on the wider iPad
+                                // canvas. iPhone is unchanged so
+                                // the storyboard-matching 194pt
+                                // height stays bit-identical there.
+                                .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 380 : 194)
                                 .clipShape(RoundedRectangle(cornerRadius: 20))
                                 .contentShape(RoundedRectangle(cornerRadius: 20))
                             }
