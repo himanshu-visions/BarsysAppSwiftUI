@@ -219,11 +219,15 @@ struct HomeView: View {
                     HapticService.light()
                     router.selectedTab = .explore
                 } label: {
+                    // iPad bumps the toolbar Explore icon 18×22 →
+                    // 26×32 so it scales with the larger right-side
+                    // pill. iPhone keeps storyboard 18×22 bit-identically.
                     Image("imgExploreSmall")
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 18, height: 22)
+                        .frame(width: UIDevice.current.userInterfaceIdiom == .pad ? 26 : 18,
+                               height: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 22)
                         .foregroundStyle(Color("appBlackColor"))
                 }
                 .accessibilityLabel("Explore")
@@ -732,8 +736,18 @@ struct NavigationRightGlassButtons: View {
     }
 
     /// Storyboard exact size: favoriteButton=21×24, profileButton=24×24.
-    private static let leadingIconSize = CGSize(width: 21, height: 24)
-    private static let profileIconSize = CGSize(width: 24, height: 24)
+    /// iPad bumps both icons so they read at a comfortable scale on the
+    /// wider canvas. iPhone keeps storyboard sizes bit-identically.
+    private static var leadingIconSize: CGSize {
+        UIDevice.current.userInterfaceIdiom == .pad
+            ? CGSize(width: 28, height: 32)
+            : CGSize(width: 21, height: 24)
+    }
+    private static var profileIconSize: CGSize {
+        UIDevice.current.userInterfaceIdiom == .pad
+            ? CGSize(width: 32, height: 32)
+            : CGSize(width: 24, height: 24)
+    }
 
     // MARK: - Shared glass styling helpers
     //
@@ -790,13 +804,22 @@ struct NavigationRightGlassButtons: View {
             // — matches the UIKit runtime layout where the
             // stackView `KMo-iR-2JY` is 61pt wide inside the
             // 71pt pill.
-            HStack(spacing: 7) {
+            //
+            // iPad bumps the pill 71×48 → 110×68 with proportionally
+            // larger inner padding so the larger heart + profile
+            // glyphs sit comfortably inside. The taller pill also
+            // nudges the toolbar height upward (iOS inline toolbar
+            // sizes to its tallest item) — extra breathing room
+            // above the page divider line on iPad. iPhone keeps the
+            // exact storyboard 71×48 pill bit-identically.
+            let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+            HStack(spacing: isIPad ? 11 : 7) {
                 leadingButton
                 profileButton
             }
-            .padding(.leading, 15)
-            .padding(.trailing, 5)
-            .frame(width:71 , height: 48)
+            .padding(.leading, isIPad ? 22 : 15)
+            .padding(.trailing, isIPad ? 7 : 5)
+            .frame(width: isIPad ? 110 : 71, height: isIPad ? 68 : 48)
             // Render the explicit glass pill background on every call
             // site by default so HomeView's custom top bar and the
             // toolbar-hosted screens (Explore / PairDevice / MyBar /
@@ -822,11 +845,15 @@ struct NavigationRightGlassButtons: View {
             // primaryBackground. No glass effect, no border, no
             // shadow. Fixed frame prevents toolbar-layout compression
             // on narrow screens.
-            HStack(spacing: 16) {
+            //
+            // iPad bumps the stack 61×24 → 84×34 to fit the larger
+            // heart + profile glyphs. iPhone unchanged.
+            let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+            HStack(spacing: isIPad ? 22 : 16) {
                 leadingButton
                 profileButton
             }
-            .frame(width: 61, height: 24)
+            .frame(width: isIPad ? 84 : 61, height: isIPad ? 34 : 24)
         }
     }
 
@@ -836,9 +863,15 @@ struct NavigationRightGlassButtons: View {
     /// ChooseOptions two-button pill on adjacent screens.
     @ViewBuilder
     private var singleButtonGroup: some View {
+        // iPad bumps the single-button glass frame 48 → 68pt (iOS 26+)
+        // and the bare-icon frame 30 → 44pt (pre-26). The taller
+        // single-button frame matches the bumped two-button pill so
+        // the toolbar reads as a unified taller bar on iPad. iPhone
+        // unchanged.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
         if #available(iOS 26.0, *) {
             profileButton
-                .frame(width: 48, height: 48)
+                .frame(width: isIPad ? 68 : 48, height: isIPad ? 68 : 48)
                 .background(glassStyledBackground(capsule: false))
                 .shadow(color: .black.opacity(0.14), radius: 10, x: 0, y: 4)
         } else {
@@ -846,7 +879,7 @@ struct NavigationRightGlassButtons: View {
             // matches the UIKit pre-26 profile button which has no
             // glass container, only the raw `profileIcon` asset.
             profileButton
-                .frame(width: 30, height: 30)
+                .frame(width: isIPad ? 44 : 30, height: isIPad ? 44 : 30)
         }
     }
 
@@ -990,30 +1023,81 @@ struct ChooseOptionsStyleNavBar: ViewModifier {
     /// to the (now invisible) light-mode tinting.
     @Environment(\.colorScheme) private var colorScheme
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content
-            // Force the nav bar background colour to match the
-            // `primaryBackgroundColor` canvas that HomeView shows
-            // behind its custom top bar. This asset itself is now
-            // adaptive (light = #E7E7E8, dark = #1C1C1E), so the bar
-            // background follows the system appearance automatically.
-            .toolbarBackground(
-                Color("primaryBackgroundColor"),
-                for: .navigationBar
-            )
-            // Keep it visible so the colour is actually rendered
-            // (on iOS 16+ `.visible` prevents the system auto-hide
-            // that happens when the top inset is empty).
-            .toolbarBackground(.visible, for: .navigationBar)
-            // Mirror the system color scheme: in light mode this
-            // resolves to `.light` (bit-identical to the previous
-            // hard-coded value, so light mode is unchanged); in dark
-            // mode it resolves to `.dark` so the toolbar title and
-            // bar buttons stay legible on the dark
-            // `primaryBackgroundColor` canvas instead of inheriting
-            // dark text on a dark bar.
-            .toolbarColorScheme(colorScheme == .dark ? .dark : .light,
-                                for: .navigationBar)
+        // Common nav-bar styling that lands on EVERY device — applied
+        // to a local helper so iPhone and iPad share the exact same
+        // base modifier chain. iPhone gets ONLY this base chain; iPad
+        // gets the same chain PLUS a small top inset for extra
+        // breathing room above the page hairline.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            baseStyling(content)
+                // iPad-only: insert a small `primaryBackgroundColor`
+                // strip above the content so the toolbar reads as a
+                // taller bar with extra breathing room above the page
+                // hairline. The inset is filled with the same nav-bar
+                // background colour so it visually merges with the
+                // bar (no visible seam). The `safeAreaInset` modifier
+                // ITSELF is gated so iPhone never attaches it —
+                // guaranteeing iPhone's safe-area / scroll behaviour
+                // stays bit-identical to before this fix.
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Color("primaryBackgroundColor")
+                        .frame(height: 12)
+                }
+        } else {
+            baseStyling(content)
+        }
+    }
+
+    /// Base nav-bar styling shared by both device idioms — extracted so
+    /// the iPad branch can layer the `safeAreaInset` on top without
+    /// risking any difference in the underlying chain.
+    @ViewBuilder
+    private func baseStyling(_ content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            // iOS 26 Liquid Glass nav bars draw their own divider/edge
+            // line at the bottom when `.toolbarBackground(.visible)`
+            // forces an opaque colour fill on top of the native
+            // Liquid Glass material. The hairline is what the user
+            // reported as "underline on top bar". Letting the system
+            // render the bar naturally (no forced opaque fill) lets
+            // Liquid Glass handle the bottom edge cleanly without a
+            // visible line — the `UINavigationBarAppearance` set in
+            // `BarsysAppSwiftUIApp.init()` already pins the bar's
+            // standard / scroll-edge / compact / compactScrollEdge
+            // backgrounds to `primaryBackgroundColor` with
+            // `shadowColor = .clear`, so the colour stays consistent
+            // app-wide even without the SwiftUI `.toolbarBackground`
+            // modifier.
+            //
+            // Also pin the scroll-edge effect to `.hard` so the
+            // toolbar's Liquid-Glass capsules don't tint themselves
+            // from scroll content sliding underneath (already used by
+            // RecipeDetail / MixlistDetail individually — applying it
+            // here promotes it to every screen that adopts
+            // `chooseOptionsStyleNavBar()`).
+            content
+                .toolbarColorScheme(colorScheme == .dark ? .dark : .light,
+                                    for: .navigationBar)
+                .scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            content
+                // Pre-iOS 26 — keep the explicit opaque background so
+                // the right-hand pill renders against a flat canvas
+                // (matches HomeView's custom top bar exactly). Pre-26
+                // doesn't have a glass divider, and the
+                // `UINavigationBarAppearance.shadowColor = .clear` +
+                // `shadowImage = UIImage()` from app init already
+                // strips the legacy 1pt hairline.
+                .toolbarBackground(
+                    Color("primaryBackgroundColor"),
+                    for: .navigationBar
+                )
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarColorScheme(colorScheme == .dark ? .dark : .light,
+                                    for: .navigationBar)
+        }
     }
 }
 
@@ -1104,6 +1188,14 @@ struct NavigationLeadingGlassButton: View {
 
     @ViewBuilder
     private var iconView: some View {
+        // iPad bumps the inner icon glyph 1.5× (e.g. 18→27 / 25→37) and
+        // the outer glass circle 48 → 68pt to match the bumped right-
+        // hand single-button frame, so the iPad toolbar reads as a
+        // unified taller bar on both ends. iPhone keeps the
+        // caller-supplied `iconSize` and 48pt circle bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let glyphW = isIPad ? iconSize.width * 1.5 : iconSize.width
+        let glyphH = isIPad ? iconSize.height * 1.5 : iconSize.height
         if #available(iOS 26.0, *) {
             // 48×48 glass circle — same recipe as
             // NavigationRightGlassButtons.singleButtonGroup (HomeView.swift
@@ -1112,9 +1204,9 @@ struct NavigationLeadingGlassButton: View {
                 .renderingMode(.template)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: iconSize.width, height: iconSize.height)
+                .frame(width: glyphW, height: glyphH)
                 .foregroundStyle(Color("appBlackColor"))
-                .frame(width: 48, height: 48)
+                .frame(width: isIPad ? 68 : 48, height: isIPad ? 68 : 48)
                 .background(
                     Circle().fill(.ultraThinMaterial)
                         .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
@@ -1126,7 +1218,7 @@ struct NavigationLeadingGlassButton: View {
                 .renderingMode(.template)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: iconSize.width, height: iconSize.height)
+                .frame(width: glyphW, height: glyphH)
                 .foregroundStyle(Color("appBlackColor"))
         }
     }
@@ -1156,7 +1248,17 @@ struct DevicePrincipalIcon: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        Group {
+        // iPad bumps the centered device icon 25 → 32pt — modest scale
+        // that's readable on the wider canvas without overpowering the
+        // top bar. Was previously 48pt; the user reported that as
+        // visually too large compared to the rest of the toolbar
+        // chrome (heart / profile glyphs in the right pill). Stepping
+        // it down to 32pt keeps the icon legible while staying in
+        // proportion with the bumped pill icons (28×32 heart,
+        // 32×32 profile). iPhone keeps the storyboard 25pt frame
+        // bit-identically.
+        let side: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 32 : 25
+        return Group {
             if colorScheme == .dark {
                 Image(assetName)
                     .renderingMode(.template)
@@ -1169,7 +1271,7 @@ struct DevicePrincipalIcon: View {
                     .aspectRatio(contentMode: .fit)
             }
         }
-        .frame(width: 25, height: 25)
+        .frame(width: side, height: side)
         .accessibilityLabel(accessibilityLabel)
     }
 }

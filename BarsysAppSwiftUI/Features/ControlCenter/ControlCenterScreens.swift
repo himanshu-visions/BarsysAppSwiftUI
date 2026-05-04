@@ -162,11 +162,15 @@ struct ControlCenterView: View {
                     HapticService.light()
                     router.selectedTab = .explore
                 } label: {
+                    // iPad bumps the Explore icon 25 → 36pt so it
+                    // scales with the larger toolbar chrome on iPad.
+                    // iPhone keeps storyboard 25pt bit-identically.
                     Image("imgExploreSmall")
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
+                        .frame(width: UIDevice.current.userInterfaceIdiom == .pad ? 36 : 25,
+                               height: UIDevice.current.userInterfaceIdiom == .pad ? 36 : 25)
                         .foregroundStyle(Color("appBlackColor"))
                 }
             }
@@ -418,7 +422,22 @@ struct ControlCenterTile: View {
     private var isIPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
-    private var tileHeight: CGFloat        { isIPad ? 220 : 120 }
+    /// iPad tiles are CLOSE TO SQUARE but slightly portrait — the user
+    /// asked for a 1:1 tile, then asked to "reduce the grid height a
+    /// little". The iPad tile now renders at 70 % of the column width,
+    /// capped at 300pt so landscape iPads don't blow up the tile.
+    /// Column width:
+    ///   columnWidth = (screenWidth − 40·2 − 18) / 2 = (screenW − 98) / 2
+    ///   tileHeight  = min(300, columnWidth × 0.7)
+    /// iPhone keeps the UIKit-parity 120pt fixed height bit-identically.
+    private var tileHeight: CGFloat {
+        if isIPad {
+            let screenW = UIScreen.main.bounds.width
+            let columnW = max(0, (screenW - 80 - 18) / 2)
+            return min(300, columnW * 0.7)
+        }
+        return 120
+    }
     private var iconSize: CGFloat          { isIPad ? 70  : 40  }
     private var iconTopPadding: CGFloat    { isIPad ? 56  : 30  }
     private var labelFontSize: CGFloat     { isIPad ? 24  : 12  }

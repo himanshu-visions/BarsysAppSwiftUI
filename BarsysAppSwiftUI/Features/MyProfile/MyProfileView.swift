@@ -913,7 +913,7 @@ struct MyProfileView: View {
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 15, height: 15)
+                    .frame(width: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 15, height: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 15)
                     .foregroundStyle(Color("appBlackColor"))
             }
             .buttonStyle(BounceButtonStyle())

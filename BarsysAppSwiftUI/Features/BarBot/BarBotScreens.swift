@@ -2867,11 +2867,16 @@ struct BarBotCraftView: View {
                     router.showBarBotHistory = true
                 }
             } label: {
+                // iPad bumps the chat-history icon 25 → 36pt so it
+                // scales with the larger toolbar pill on iPad.
+                // iPhone keeps the storyboard 25pt frame
+                // bit-identically.
                 Image("chatHistory")
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 25, height: 25)
+                    .frame(width: UIDevice.current.userInterfaceIdiom == .pad ? 36 : 25,
+                           height: UIDevice.current.userInterfaceIdiom == .pad ? 36 : 25)
                     .foregroundStyle(Color("appBlackColor"))
             }.accessibilityHint("View previous chat sessions")
         }

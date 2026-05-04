@@ -46,7 +46,20 @@ struct BarsysAppSwiftUIApp: App {
         if let bg = UIColor(named: "primaryBackgroundColor") {
             appearance.backgroundColor = bg
         }
+        // Belt-and-braces shadow removal: pre-iOS 26 UINavigationBar
+        // can render a 1pt hairline divider at the bottom of the bar
+        // even when `shadowColor = .clear` is set — the system also
+        // honours `shadowImage` (legacy property used by older iOS
+        // versions to draw a 1×1 stretchable image as the shadow).
+        // Setting BOTH a clear shadow colour AND an empty shadow image
+        // guarantees no visible underline below the toolbar on every
+        // iOS version + iPad / iPhone idiom. Without the empty shadow
+        // image, iOS <26 was leaving a visible hairline directly under
+        // the nav bar across every Explore / MyBar / Recipes /
+        // Mixlists / Favorites / Profile / Preferences screen.
         appearance.shadowColor = .clear
+        appearance.shadowImage = UIImage()
+        appearance.backgroundImage = UIImage()
 
         let proxy = UINavigationBar.appearance()
         proxy.standardAppearance = appearance
@@ -54,6 +67,16 @@ struct BarsysAppSwiftUIApp: App {
         proxy.compactAppearance = appearance
         proxy.compactScrollEdgeAppearance = appearance
         proxy.isTranslucent = false
+        // Legacy iOS shadow-removal hooks — `shadowImage` /
+        // `setBackgroundImage(_:for:)` on the UINavigationBar proxy
+        // itself catch any UIKit code path that bypasses the modern
+        // `UINavigationBarAppearance` configuration above (some
+        // SwiftUI internals on iOS <26 still consult these properties
+        // when computing the bottom hairline). Using the empty image
+        // route here so iPhone + iPad pre-iOS 26 both render the bar
+        // without a divider line beneath it.
+        proxy.shadowImage = UIImage()
+        proxy.setBackgroundImage(UIImage(), for: .default)
     }
 
     var body: some Scene {
