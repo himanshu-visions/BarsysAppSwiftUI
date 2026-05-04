@@ -781,6 +781,12 @@ struct SignUpView: View {
                     .textContentType(.telephoneNumber)
                     .font(.system(size: iPadValue(18, 22), weight: .light))
                     .foregroundStyle(Color("appBlackColor"))
+                    // Caret tint — same rationale as the
+                    // `UnderlinedField` fix above. Without an
+                    // explicit `.tint(...)` the SwiftUI TextField
+                    // inherits the app accent and the cursor can be
+                    // invisible against the form surface.
+                    .tint(Color("appBlackColor"))
                     .frame(height: iPadValue(40, 50))
                     .focused($focusedField, equals: .phone)
                     .onChange(of: viewModel.phone) { newValue in
@@ -1031,6 +1037,15 @@ private struct UnderlinedField: View {
                 .textInputAutocapitalization(keyboard == .emailAddress ? .never : .words)
                 .font(.system(size: iPadValue(18, 22), weight: .light))
                 .foregroundStyle(Color("appBlackColor"))
+                // Pin the caret colour to `appBlackColor` (adaptive:
+                // dark in light mode, light in dark mode) so the
+                // blinking cursor is always legible against the form
+                // surface — matches the same fix applied to the
+                // Login phone field's `UIKitTextField.tintColor`.
+                // Without this the SwiftUI TextField inherits the
+                // app accent and the caret can disappear into the
+                // background.
+                .tint(Color("appBlackColor"))
                 .frame(height: iPadValue(40, 50))
                 .padding(.horizontal, 5)
 

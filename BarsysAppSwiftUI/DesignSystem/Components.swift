@@ -1704,14 +1704,26 @@ struct UIKitTextField: UIViewRepresentable {
         // binding so parents that observe it (e.g. the OTP caret
         // animation) react correctly.
         func textFieldDidBeginEditing(_ textField: UITextField) {
-            if let binding = parent.isFocused, binding.wrappedValue == false {
-                DispatchQueue.main.async { binding.wrappedValue = true }
+            guard let binding = parent.isFocused else { return }
+            DispatchQueue.main.async { [weak textField] in
+                guard let tf = textField, tf.isFirstResponder,
+                      !binding.wrappedValue else { return }
+                binding.wrappedValue = true
             }
         }
 
         func textFieldDidEndEditing(_ textField: UITextField) {
-            if let binding = parent.isFocused, binding.wrappedValue == true {
-                DispatchQueue.main.async { binding.wrappedValue = false }
+            guard let binding = parent.isFocused else { return }
+            // Re-check at execution time: the user may have already
+            // re-tapped a box (flipping focus back to true) before
+            // this async hop runs. Without this guard, the late
+            // didEndEditing closure would clobber the user's fresh
+            // focus and the caret would disappear right after the
+            // user re-focused — the QA "cursor not visible" trail.
+            DispatchQueue.main.async { [weak textField] in
+                guard let tf = textField, !tf.isFirstResponder,
+                      binding.wrappedValue else { return }
+                binding.wrappedValue = false
             }
         }
     }
