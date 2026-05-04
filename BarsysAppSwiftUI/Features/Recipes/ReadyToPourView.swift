@@ -367,25 +367,40 @@ struct ReadyToPourView: View {
         let rowHeight = cellWidth / 2
         let source = overrideRecipes ?? displayRecipes
 
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(source) { recipe in
-                    // iPad uses a leaf-level tap (attached inside
-                    // `ReadyToPourRecipeRow`) so the inner Favourite
-                    // and Craft buttons receive their own taps —
-                    // matches the BarsysRecipeRow / RecipeRowCell /
-                    // MixlistDetailRecipeRow fix for the same SwiftUI
-                    // hit-test routing problem on iPad. iPhone keeps
-                    // the original outer Button wrapper bit-identical.
-                    if UIDevice.current.userInterfaceIdiom == .pad {
-                        ReadyToPourRecipeRow(
-                            recipe: recipe,
-                            cellHeight: rowHeight,
-                            onFavourite: { toggleFavourite(recipe) },
-                            onCraft: { craftRecipe(recipe) },
-                            onOpen: { router.push(.recipeDetail(recipe.id)) }
-                        )
-                    } else {
+        // iPad: render the recipes as a 2-column LazyVGrid of vertical
+        // cards (image on top, name + ingredients + craft button
+        // below) — matches the BarBot recipe-card layout the user
+        // asked us to use as a template. iPhone keeps the original
+        // single-column LazyVStack of horizontal rows bit-identical.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            return AnyView(
+                ScrollView {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(), spacing: 16),
+                            GridItem(.flexible(), spacing: 16)
+                        ],
+                        spacing: 16
+                    ) {
+                        ForEach(source) { recipe in
+                            ReadyToPourRecipeGridCell(
+                                recipe: recipe,
+                                onFavourite: { toggleFavourite(recipe) },
+                                onCraft: { craftRecipe(recipe) },
+                                onOpen: { router.push(.recipeDetail(recipe.id)) }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 15)
+                    .padding(.bottom, 80)
+                }
+            )
+        }
+        return AnyView(
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(source) { recipe in
                         Button {
                             router.push(.recipeDetail(recipe.id))
                         } label: {
@@ -400,11 +415,11 @@ struct ReadyToPourView: View {
                         .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 24)
+                .padding(.top, 15)
+                .padding(.bottom, 80)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 15)
-            .padding(.bottom, 80)
-        }
+        )
     }
 
     /// Computed-property shim so call-sites that referenced
@@ -419,43 +434,73 @@ struct ReadyToPourView: View {
         let cellWidth = UIScreen.main.bounds.width - 48
         let rowHeight = cellWidth / 2
 
-        return ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(mixlists) { mixlist in
-                    Button {
-                        HapticService.light()
-                        // 1:1 port of UIKit
-                        // `ReadyToPourListViewController+TableView.didSelectRowAt`
-                        // mixlists-tab branch (L310-330) when
-                        // `mixlists.count > 1 && mixlist == nil`:
-                        //
-                        //   viewModel.selectMixlist(at: indexPath.row)
-                        //   // mixlist = mixlists[row]; triggers
-                        //   // onMixlistNameChanged + reloadRecipesData
-                        //
-                        // User stays on the MIXLISTS tab — drill-down
-                        // renders the mixlist's recipes in the same
-                        // tab body. Previously this port flipped
-                        // `selectedTab = .recipes` on drill, which
-                        // broke UIKit's tab-independence: Mixlists
-                        // tap never changes to the Recipes tab.
-                        selectedMixlist = mixlist
-                        // selectedTab stays on .mixlists; body
-                        // switches to recipe rows via
-                        // `recipesShownOnMixlistsTab`.
-                    } label: {
-                        MixlistRowForReadyToPour(
-                            mixlist: mixlist,
-                            cellHeight: rowHeight
-                        )
+        // iPad: 2-column grid of vertical mixlist cards. iPhone:
+        // single-column LazyVStack of horizontal rows.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            return AnyView(
+                ScrollView {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(), spacing: 16),
+                            GridItem(.flexible(), spacing: 16)
+                        ],
+                        spacing: 16
+                    ) {
+                        ForEach(mixlists) { mixlist in
+                            Button {
+                                HapticService.light()
+                                selectedMixlist = mixlist
+                            } label: {
+                                MixlistGridCellForReadyToPour(mixlist: mixlist)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 15)
+                    .padding(.bottom, 80)
                 }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 15)
-            .padding(.bottom, 80)
+            )
         }
+        return AnyView(
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(mixlists) { mixlist in
+                        Button {
+                            HapticService.light()
+                            // 1:1 port of UIKit
+                            // `ReadyToPourListViewController+TableView.didSelectRowAt`
+                            // mixlists-tab branch (L310-330) when
+                            // `mixlists.count > 1 && mixlist == nil`:
+                            //
+                            //   viewModel.selectMixlist(at: indexPath.row)
+                            //   // mixlist = mixlists[row]; triggers
+                            //   // onMixlistNameChanged + reloadRecipesData
+                            //
+                            // User stays on the MIXLISTS tab — drill-down
+                            // renders the mixlist's recipes in the same
+                            // tab body. Previously this port flipped
+                            // `selectedTab = .recipes` on drill, which
+                            // broke UIKit's tab-independence: Mixlists
+                            // tap never changes to the Recipes tab.
+                            selectedMixlist = mixlist
+                            // selectedTab stays on .mixlists; body
+                            // switches to recipe rows via
+                            // `recipesShownOnMixlistsTab`.
+                        } label: {
+                            MixlistRowForReadyToPour(
+                                mixlist: mixlist,
+                                cellHeight: rowHeight
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 15)
+                .padding(.bottom, 80)
+            }
+        )
     }
 
     // MARK: - No data — UIKit: 1XD-UN-SbS, bold 20pt, mediumLightGrayColor, centered
@@ -1413,5 +1458,262 @@ struct MixlistRowForReadyToPour: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.bottom, 12)
+    }
+}
+
+// MARK: - ReadyToPourRecipeGridCell (iPad 2-column grid card)
+//
+// Vertical card layout used by the iPad LazyVGrid:
+//   • Image on top (square, full cell width)
+//   • Recipe name + ingredients description below
+//   • Favourite heart at top-right of the image (preserved from
+//     `ReadyToPourRecipeRow` — same toggle handler)
+//   • Craft button at the bottom (preserved from
+//     `ReadyToPourRecipeRow` — same craft handler with brand
+//     gradient on iOS 26+ / white pill pre-26)
+//
+// iPhone keeps the existing horizontal `ReadyToPourRecipeRow` — this
+// card only renders inside the iPad-only LazyVGrid branch.
+
+struct ReadyToPourRecipeGridCell: View {
+    let recipe: Recipe
+    let onFavourite: () -> Void
+    let onCraft: () -> Void
+    let onOpen: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isFavourite: Bool { recipe.isFavourite ?? false }
+    private var optimizedImageURL: URL? {
+        guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
+        return raw.getImageUrl()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Image — square, full cell width.
+            GeometryReader { geo in
+                let side = geo.size.width
+                ZStack(alignment: .topTrailing) {
+                    AsyncImage(url: optimizedImageURL) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        case .empty:
+                            Color("lightBorderGrayColor")
+                        case .failure:
+                            Image("myDrink")
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .padding(20)
+                        @unknown default:
+                            Color("lightBorderGrayColor")
+                        }
+                    }
+                    .frame(width: side, height: side)
+                    .background(Color("lightBorderGrayColor"))
+                    .clipped()
+                    // Favourite button — top-right overlay. Preserves
+                    // the exact toggle handler from the iPhone row.
+                    Button(action: onFavourite) {
+                        Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 36, height: 36)
+                            .frame(width: 60, height: 60)
+                            .glassButtonIfAvailable(size: 60)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .accessibilityLabel(isFavourite
+                                        ? "Remove from favourites"
+                                        : "Add to favourites")
+                    .padding(.top, 6)
+                    .padding(.trailing, 6)
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .contentShape(Rectangle())
+            .onTapGesture { onOpen() }
+
+            // Title — reserved 56pt band so 1-line and 2-line titles
+            // both occupy the same vertical space (`alignment: .top`
+            // keeps short titles flush to the top of the band). Keeps
+            // every iPad grid card the same total height regardless
+            // of recipe-name length.
+            Text(recipe.displayName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Color("charcoalGrayColor"))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+
+            // Ingredients description — reserved 60pt band (3 lines ×
+            // ~18pt). Empty ingredients still consume the same space
+            // via `Color.clear` placeholder so the Craft button stays
+            // at the same Y across every cell on the same row.
+            Group {
+                if let info = recipe.ingredientNames, !info.isEmpty {
+                    Text(info)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+
+            // Craft button — preserves the same handler as the
+            // iPhone horizontal row. Uses brand gradient on iOS 26+
+            // and a white pill on pre-26 (matches
+            // `ReadyToPourRecipeRow`'s craft button styling).
+            Button(action: onCraft) {
+                Text(Constants.craftTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(colorScheme == .dark
+                                     ? Color.black
+                                     : Color("appBlackColor"))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(craftButtonBackground)
+                    .overlay(craftButtonBorder)
+                    .clipShape(craftButtonShape)
+            }
+            .buttonStyle(BounceButtonStyle())
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.regularMaterial.opacity(0.7))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var craftButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            LinearGradient(
+                colors: colorScheme == .dark
+                    ? [
+                        Color(red: 0.980, green: 0.878, blue: 0.800),
+                        Color(red: 0.949, green: 0.761, blue: 0.631)
+                    ]
+                    : [
+                        Color("brandGradientTop"),
+                        Color("brandGradientBottom")
+                    ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        } else {
+            SwiftUI.Color.white
+        }
+    }
+
+    @ViewBuilder
+    private var craftButtonBorder: some View {
+        if #available(iOS 26.0, *) {
+            EmptyView()
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
+        }
+    }
+
+    private var craftButtonShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+}
+
+// MARK: - MixlistGridCellForReadyToPour (iPad 2-column grid card)
+//
+// Vertical mixlist card for the Mixlists tab on iPad. Matches the
+// recipe card style — image on top, name + ingredients summary below.
+// Mixlists don't have a craft button or favourite icon (UIKit hides
+// them on the mixlists tab) — taps drill into the selected mixlist.
+
+struct MixlistGridCellForReadyToPour: View {
+    let mixlist: Mixlist
+
+    private var optimizedImageURL: URL? {
+        guard let raw = mixlist.image?.url, !raw.isEmpty else { return nil }
+        return raw.getImageUrl()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            GeometryReader { geo in
+                let side = geo.size.width
+                AsyncImage(url: optimizedImageURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    case .empty:
+                        Color("lightBorderGrayColor")
+                    default:
+                        Image("myDrink")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .padding(20)
+                    }
+                }
+                .frame(width: side, height: side)
+                .background(Color("lightBorderGrayColor"))
+                .clipped()
+            }
+            .aspectRatio(1, contentMode: .fit)
+
+            // Reserved 56pt title band — see ReadyToPourRecipeGridCell
+            // for matching rationale. Keeps every iPad grid cell the
+            // same total height regardless of mixlist-name length.
+            Text(mixlist.displayName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Color("charcoalGrayColor"))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+
+            // Reserved 60pt ingredients band.
+            Group {
+                if let info = mixlist.ingredientNames, !info.isEmpty {
+                    Text(info)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.regularMaterial.opacity(0.7))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }

@@ -536,68 +536,65 @@ struct ExploreRecipesView: View {
                     // listings feel identical and never re-measure on scroll.
                     let cellWidth = UIScreen.main.bounds.width - 48
                     let rowHeight = cellWidth / 2
-                    LazyVStack(spacing: 0) {
-                        ForEach(filtered) { recipe in
-                            // iPad uses a leaf-level tap (via the
-                            // `IPadRowNavTap` modifier below) instead
-                            // of an outer `Button` — the latter
-                            // swallows the inner Favourite button's
-                            // taps on iPad iOS 26. iPhone (any iOS)
-                            // keeps the original outer Button layout.
-                            ipadAwareRowWrapper(
-                                navigate: {
-                                    HapticService.light()
-                                    router.push(.recipeDetail(recipe.id))
-                                }
-                            ) {
-                                RecipeRowCell(
+                    let toggleHandler: (Recipe) -> Void = { recipe in
+                        let willBeFav = !env.storage.favorites().contains(recipe.id)
+                        catalog.toggleFavourite(recipeId: recipe.id)
+                        favouritesRefreshTick &+= 1
+                        env.analytics.track(
+                            (willBeFav ? TrackEventName.favouriteRecipeAdded
+                                       : TrackEventName.favouriteRecipeRemoved).rawValue
+                        )
+                        env.alerts.show(message: willBeFav
+                                        ? Constants.likeSuccessMessage
+                                        : Constants.unlikeSuccessMessage)
+                    }
+                    if UIDevice.current.userInterfaceIdiom == .pad {
+                        // iPad: 2-column LazyVGrid of vertical recipe
+                        // cards — preserves favourite heart, tap-to-
+                        // open navigation, and the Loading / pagination
+                        // / empty-state plumbing exactly as on iPhone.
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.flexible(), spacing: 16),
+                                GridItem(.flexible(), spacing: 16)
+                            ],
+                            spacing: 16
+                        ) {
+                            ForEach(filtered) { recipe in
+                                RecipeGridCell(
                                     recipe: recipe,
-                                    cellHeight: rowHeight,
-                                    onFavourite: {
-                                        // Determine the toggle direction BEFORE
-                                        // mutating storage so the success-alert
-                                        // copy matches the action the user just
-                                        // performed. Mirrors UIKit
-                                        // ExploreRecipesViewController's
-                                        // post-likeUnlikeApi behaviour where
-                                        // `showDefaultAlert(message: responseMessage)`
-                                        // surfaces the "added to / removed from
-                                        // My Favourites" toast — the SwiftUI
-                                        // explore listing was the only entry
-                                        // point still missing this alert
-                                        // (RecipeDetail / Ready-to-Pour /
-                                        // Favorites already show it).
-                                        let willBeFav = !env.storage.favorites().contains(recipe.id)
-                                        catalog.toggleFavourite(recipeId: recipe.id)
-                                        // Bump the tick so `exploreRecipes`
-                                        // (which now sources from
-                                        // `env.storage.allRecipes()` and reads
-                                        // the tick as a SwiftUI dependency)
-                                        // re-evaluates immediately on tap and
-                                        // the heart icon swaps from hollow ↔
-                                        // filled in the same render pass.
-                                        favouritesRefreshTick &+= 1
-                                        env.analytics.track(
-                                            (willBeFav ? TrackEventName.favouriteRecipeAdded
-                                                       : TrackEventName.favouriteRecipeRemoved).rawValue
-                                        )
-                                        env.alerts.show(message: willBeFav
-                                                        ? Constants.likeSuccessMessage
-                                                        : Constants.unlikeSuccessMessage)
+                                    onFavourite: { toggleHandler(recipe) },
+                                    onOpen: {
+                                        HapticService.light()
+                                        router.push(.recipeDetail(recipe.id))
                                     }
                                 )
                             }
                         }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 15)
+                        .padding(.bottom, exploreRecipesBottomInset)
+                    } else {
+                        LazyVStack(spacing: 0) {
+                            ForEach(filtered) { recipe in
+                                ipadAwareRowWrapper(
+                                    navigate: {
+                                        HapticService.light()
+                                        router.push(.recipeDetail(recipe.id))
+                                    }
+                                ) {
+                                    RecipeRowCell(
+                                        recipe: recipe,
+                                        cellHeight: rowHeight,
+                                        onFavourite: { toggleHandler(recipe) }
+                                    )
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 15)
+                        .padding(.bottom, exploreRecipesBottomInset)
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 15)
-                    // iOS 26+ glass tab bar blurs over the last recipe
-                    // row — 20pt is fine and bit-identical to before.
-                    // Pre-iOS 26 the tab bar is opaque with a hairline
-                    // and 20pt let the last row graze it; bump to 37pt
-                    // (same scale used by `MyBarView.bottomBarBottomInset`)
-                    // so the row sits visibly above the tab bar.
-                    .padding(.bottom, exploreRecipesBottomInset)
                 }
             }
         }
@@ -690,6 +687,113 @@ struct ExploreRecipesView: View {
         // Custom back chevron hides the system back button — restore
         // the swipe-from-left-edge interactive pop gesture.
         .interactivePopGestureEnabled()
+    }
+}
+
+// MARK: - RecipeGridCell (iPad 2-column grid card)
+//
+// Vertical card layout used by the iPad LazyVGrid on
+// `ExploreRecipesView`. Image on top (square, full cell width),
+// recipe name + ingredients below, favourite heart at top-right.
+// Tapping anywhere on the card pushes the Recipe detail. iPhone
+// keeps the horizontal `RecipeRowCell` — this card only renders
+// inside the iPad-only LazyVGrid branch.
+
+struct RecipeGridCell: View {
+    let recipe: Recipe
+    let onFavourite: () -> Void
+    let onOpen: () -> Void
+
+    private var optimizedImageURL: URL? {
+        guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
+        return raw.getImageUrl()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            GeometryReader { geo in
+                let side = geo.size.width
+                ZStack(alignment: .topTrailing) {
+                    AsyncImage(url: optimizedImageURL) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        case .empty:
+                            Color("lightBorderGrayColor")
+                        case .failure:
+                            Image("myDrink")
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .padding(20)
+                        @unknown default:
+                            Color("lightBorderGrayColor")
+                        }
+                    }
+                    .frame(width: side, height: side)
+                    .background(Color("lightBorderGrayColor"))
+                    .clipped()
+
+                    Button(action: onFavourite) {
+                        Image(recipe.isFavourite == true
+                              ? "favIconRecipeSelected" : "favIconRecipe")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 36, height: 36)
+                            .frame(width: 60, height: 60)
+                            .glassButtonIfAvailable(size: 60)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .accessibilityLabel("Favourite")
+                    .padding(.top, 6)
+                    .padding(.trailing, 6)
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .contentShape(Rectangle())
+            .onTapGesture { onOpen() }
+
+            // Reserved 56pt title band so 1-line and 2-line titles
+            // both occupy the same vertical space on the grid —
+            // every cell on a row stays the same height regardless
+            // of the recipe-name length.
+            Text(recipe.displayName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Color("charcoalGrayColor"))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+
+            // Reserved 60pt ingredients band.
+            Group {
+                if let info = recipe.ingredientNames, !info.isEmpty {
+                    Text(info)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.regularMaterial.opacity(0.7))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // Tap anywhere on the title/ingredients band as well —
+        // mirrors the row tap on iPhone.
+        .contentShape(Rectangle())
+        .onTapGesture { onOpen() }
     }
 }
 

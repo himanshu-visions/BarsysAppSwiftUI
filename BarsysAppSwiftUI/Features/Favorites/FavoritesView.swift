@@ -557,67 +557,113 @@ struct FavoritesView: View {
             let cellWidth = UIScreen.main.bounds.width - 48
             let rowHeight = cellWidth / 2
 
-            LazyVStack(spacing: 0) {
-                ForEach(rows) { recipe in
-                    BarsysRecipeRow(
-                        recipe: recipe,
-                        cellHeight: rowHeight,
-                        tab: selectedTab,
-                        isMoreMenuOpen: showMoreMenuFor == recipe.id,
-                        onTap: {
-                            showMoreMenuFor = nil
-                            router.push(.recipeDetail(recipe.id))
-                        },
-                        onFavourite: { toggleFavourite(recipe) },
-                        onMore: {
-                            showMoreMenuFor =
-                                showMoreMenuFor == recipe.id ? nil : recipe.id
-                        },
-                        onEdit: {
-                            showMoreMenuFor = nil
-                            recipeToEdit = recipe
-                        },
-                        onDelete: {
-                            showMoreMenuFor = nil
-                            confirmDelete(recipe)
-                        }
-                    )
-                    // Pagination trigger — 1:1 port of UIKit
-                    // scrollViewDidEndDecelerating → shouldLoadMore.
-                    // When the last visible row appears, load more
-                    // if pagination has more pages available.
-                    .onAppear {
-                        if selectedTab == .myDrinks,
-                           recipe.id == rows.last?.id,
-                           canLoadMoreMyDrinks,
-                           !isLoadingMoreMyDrinks {
-                            loadMoreMyDrinks()
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                // iPad: 2-column LazyVGrid of vertical favourite
+                // cards. Preserves all per-tab functionality:
+                //   • Heart toggle on every card.
+                //   • My Drinks "more" menu (Edit / Delete) anchored
+                //     to the bottom-right of each card.
+                //   • Pagination trigger on the last visible card.
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 16),
+                        GridItem(.flexible(), spacing: 16)
+                    ],
+                    spacing: 16
+                ) {
+                    ForEach(rows) { recipe in
+                        BarsysRecipeGridCell(
+                            recipe: recipe,
+                            tab: selectedTab,
+                            isMoreMenuOpen: showMoreMenuFor == recipe.id,
+                            onTap: {
+                                showMoreMenuFor = nil
+                                router.push(.recipeDetail(recipe.id))
+                            },
+                            onFavourite: { toggleFavourite(recipe) },
+                            onMore: {
+                                showMoreMenuFor =
+                                    showMoreMenuFor == recipe.id ? nil : recipe.id
+                            },
+                            onEdit: {
+                                showMoreMenuFor = nil
+                                recipeToEdit = recipe
+                            },
+                            onDelete: {
+                                showMoreMenuFor = nil
+                                confirmDelete(recipe)
+                            }
+                        )
+                        .onAppear {
+                            if selectedTab == .myDrinks,
+                               recipe.id == rows.last?.id,
+                               canLoadMoreMyDrinks,
+                               !isLoadingMoreMyDrinks {
+                                loadMoreMyDrinks()
+                            }
                         }
                     }
                 }
-
-                // Loading indicator at bottom during pagination
-                if selectedTab == .myDrinks && isLoadingMoreMyDrinks {
-                    HStack {
-                        Spacer()
+                .padding(.horizontal, 24)
+                .padding(.top, 15)
+                .padding(.bottom, favouritesBottomInset)
+                .overlay(alignment: .bottom) {
+                    if selectedTab == .myDrinks && isLoadingMoreMyDrinks {
                         ProgressView()
                             .padding(.vertical, 16)
-                        Spacer()
                     }
                 }
+                .accessibilityLabel("Favourites list")
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { recipe in
+                        BarsysRecipeRow(
+                            recipe: recipe,
+                            cellHeight: rowHeight,
+                            tab: selectedTab,
+                            isMoreMenuOpen: showMoreMenuFor == recipe.id,
+                            onTap: {
+                                showMoreMenuFor = nil
+                                router.push(.recipeDetail(recipe.id))
+                            },
+                            onFavourite: { toggleFavourite(recipe) },
+                            onMore: {
+                                showMoreMenuFor =
+                                    showMoreMenuFor == recipe.id ? nil : recipe.id
+                            },
+                            onEdit: {
+                                showMoreMenuFor = nil
+                                recipeToEdit = recipe
+                            },
+                            onDelete: {
+                                showMoreMenuFor = nil
+                                confirmDelete(recipe)
+                            }
+                        )
+                        .onAppear {
+                            if selectedTab == .myDrinks,
+                               recipe.id == rows.last?.id,
+                               canLoadMoreMyDrinks,
+                               !isLoadingMoreMyDrinks {
+                                loadMoreMyDrinks()
+                            }
+                        }
+                    }
+
+                    if selectedTab == .myDrinks && isLoadingMoreMyDrinks {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .padding(.vertical, 16)
+                            Spacer()
+                        }
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 15)
+                .padding(.bottom, favouritesBottomInset)
+                .accessibilityLabel("Favourites list")
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 15)
-            // Pre-iOS 26 has a solid tab bar + hairline that sits
-            // on top of the scrollable content — the previous flat
-            // 20pt bottom meant the last recipe row was visually
-            // grazing the tab bar. iOS 26+ glass tab bar blurs over
-            // content so a smaller 12pt inset is enough. Mirrors
-            // the `bottomBarBottomInset` pattern used by MyBar /
-            // HomeView so all tab-root screens have consistent
-            // breathing room above the tab bar.
-            .padding(.bottom, favouritesBottomInset)
-            .accessibilityLabel("Favourites list")
         }
     }
 
@@ -1471,6 +1517,227 @@ struct BarsysRecipeRow: View {
                 .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
         } else {
             EmptyView()
+        }
+    }
+}
+
+// MARK: - BarsysRecipeGridCell (iPad 2-column grid card)
+//
+// Vertical card for the iPad Favourites grid — preserves all
+// per-tab functionality from the iPhone `BarsysRecipeRow`:
+//   • Heart toggle (top-right of image, both tabs).
+//   • My Drinks "more" menu (bottom-right of image, edit / delete).
+//   • Edit/Delete popup overlaid on the card while `isMoreMenuOpen`.
+//   • Tap to open recipe detail (entire card).
+// iPhone keeps the existing horizontal `BarsysRecipeRow` — this card
+// only renders inside the iPad-only LazyVGrid branch.
+
+struct BarsysRecipeGridCell: View {
+    let recipe: Recipe
+    let tab: FavouritesTab
+    let isMoreMenuOpen: Bool
+    let onTap: () -> Void
+    let onFavourite: () -> Void
+    let onMore: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var optimizedImageURL: URL? {
+        guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
+        return raw.getImageUrl()
+    }
+
+    /// 1:1 with `BarsysRecipeRow.isFavourite` — Barsys Recipes tab
+    /// reads `recipe.isFavourite`; My Drinks tab reads
+    /// `recipe.isMyDrinkFavourite`.
+    private var isFavourite: Bool {
+        if tab == .myDrinks {
+            return recipe.isMyDrinkFavourite ?? false
+        }
+        return recipe.isFavourite ?? false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            GeometryReader { geo in
+                let side = geo.size.width
+                ZStack(alignment: .topTrailing) {
+                    AsyncImage(url: optimizedImageURL) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        case .empty:
+                            Color("lightBorderGrayColor")
+                        case .failure:
+                            Image("myDrink")
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .padding(20)
+                        @unknown default:
+                            Color("lightBorderGrayColor")
+                        }
+                    }
+                    .frame(width: side, height: side)
+                    .background(Color("lightBorderGrayColor"))
+                    .clipped()
+
+                    // Heart — top-right.
+                    Button(action: onFavourite) {
+                        Image(isFavourite
+                              ? "favIconRecipeSelected" : "favIconRecipe")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 36, height: 36)
+                            .frame(width: 60, height: 60)
+                            .glassButtonIfAvailable(size: 60)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .accessibilityLabel(isFavourite
+                                        ? "Remove from favourites"
+                                        : "Add to favourites")
+                    .padding(.top, 6)
+                    .padding(.trailing, 6)
+                }
+                // More button + popup — bottom-right of the image
+                // (My Drinks tab only). UIKit
+                // `BarsysRecipeTableViewCell.xib` `dZv-df-fwc` (more
+                // button) + `3gv-w4-LyK` (moreView) — anchored to
+                // bottom-right of the image with the popup hanging
+                // from the same corner.
+                .overlay(alignment: .bottomTrailing) {
+                    if tab == .myDrinks {
+                        Button(action: onMore) {
+                            Image("more")
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .frame(width: 36, height: 36)
+                                .frame(width: 60, height: 60)
+                                .glassButtonIfAvailable(size: 60)
+                        }
+                        .buttonStyle(BounceButtonStyle())
+                        .accessibilityLabel("More options for \(recipe.displayName)")
+                        .padding(.bottom, 6)
+                        .padding(.trailing, 6)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if tab == .myDrinks && isMoreMenuOpen {
+                        gridMorePopup
+                            .padding(.bottom, 70)   // sit above the more button
+                            .padding(.trailing, 12)
+                            .transition(.opacity)
+                    }
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .contentShape(Rectangle())
+            .onTapGesture { onTap() }
+
+            // Reserved 56pt title band — keeps every iPad grid cell
+            // the same total height regardless of recipe-name length.
+            Text(recipe.displayName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Color("charcoalGrayColor"))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+
+            // Reserved 60pt ingredients band.
+            Group {
+                if let info = recipe.ingredientNames, !info.isEmpty {
+                    Text(info)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.regularMaterial.opacity(0.7))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+    }
+
+    /// Edit / Delete glass popup — same content as
+    /// `BarsysRecipeRow.morePopup` but inline so the grid cell
+    /// owns its own copy.
+    @ViewBuilder
+    private var gridMorePopup: some View {
+        VStack(spacing: 14) {
+            Button(action: onEdit) {
+                HStack(spacing: 8) {
+                    gridMorePopupGlyph(name: "edit")
+                    Text("Edit")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("appBlackColor"))
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(BounceButtonStyle())
+            .accessibilityLabel("Edit recipe")
+
+            Button(action: onDelete) {
+                HStack(spacing: 8) {
+                    gridMorePopupGlyph(name: "trash")
+                    Text("Delete")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("appBlackColor"))
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(BounceButtonStyle())
+            .accessibilityLabel("Delete recipe")
+        }
+        .padding(.vertical, 14)
+        .frame(width: 110)
+        .background(
+            BarsysGlassPanelBackground()
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+    }
+
+    @ViewBuilder
+    private func gridMorePopupGlyph(name: String) -> some View {
+        if colorScheme == .dark {
+            Image(name)
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Color("appBlackColor"))
+                .frame(width: 18, height: 18)
+        } else {
+            Image(name)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 18, height: 18)
         }
     }
 }

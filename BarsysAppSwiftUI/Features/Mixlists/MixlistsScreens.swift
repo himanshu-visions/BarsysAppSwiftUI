@@ -139,25 +139,47 @@ struct MixlistListView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
                     }
-                    LazyVStack(spacing: 0) {
-                        ForEach(filtered) { mixlist in
-                            Button {
-                                HapticService.light()
-                                router.push(.mixlistDetail(mixlist.id))
-                            } label: {
-                                MixlistRowCell(mixlist: mixlist, cellHeight: rowHeight)
+                    if UIDevice.current.userInterfaceIdiom == .pad {
+                        // iPad: 2-column LazyVGrid of vertical mixlist
+                        // cards. Cocktail Kits doesn't have favourite
+                        // or craft buttons (UIKit hides them on this
+                        // listing) — taps push the mixlist detail.
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.flexible(), spacing: 16),
+                                GridItem(.flexible(), spacing: 16)
+                            ],
+                            spacing: 16
+                        ) {
+                            ForEach(filtered) { mixlist in
+                                Button {
+                                    HapticService.light()
+                                    router.push(.mixlistDetail(mixlist.id))
+                                } label: {
+                                    MixlistGridCell(mixlist: mixlist)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 15)
+                        .padding(.bottom, mixlistListBottomInset)
+                    } else {
+                        LazyVStack(spacing: 0) {
+                            ForEach(filtered) { mixlist in
+                                Button {
+                                    HapticService.light()
+                                    router.push(.mixlistDetail(mixlist.id))
+                                } label: {
+                                    MixlistRowCell(mixlist: mixlist, cellHeight: rowHeight)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 15)
+                        .padding(.bottom, mixlistListBottomInset)
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 15)
-                    // iOS 26+ glass tab bar blurs over the last row —
-                    // 20pt is fine and bit-identical to before. Pre-
-                    // iOS 26's opaque tab bar + hairline was grazing
-                    // the last mixlist row; bump to 37pt only on pre-26
-                    // (same scale as `MyBarView.bottomBarBottomInset`).
-                    .padding(.bottom, mixlistListBottomInset)
                 }
             }
         }
@@ -388,6 +410,86 @@ struct MixlistRowCell: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.bottom, 12) // 12pt bottom spacer inside the parent stack
+    }
+}
+
+// MARK: - MixlistGridCell (iPad 2-column grid card)
+//
+// Vertical mixlist card used by the iPad LazyVGrid on the Cocktail
+// Kits screen. Image on top (square, full cell width), name +
+// ingredients summary below. No favourite / craft button — UIKit
+// hides those on the cocktail-kits listing (only visible inside
+// MixlistDetail).
+
+struct MixlistGridCell: View {
+    let mixlist: Mixlist
+
+    private var optimizedImageURL: URL? {
+        guard let raw = mixlist.image?.url, !raw.isEmpty else { return nil }
+        return raw.getImageUrl()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            GeometryReader { geo in
+                let side = geo.size.width
+                AsyncImage(url: optimizedImageURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    case .empty:
+                        Color("lightBorderGrayColor")
+                    default:
+                        Image("myDrink")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .padding(20)
+                    }
+                }
+                .frame(width: side, height: side)
+                .background(Color("lightBorderGrayColor"))
+                .clipped()
+            }
+            .aspectRatio(1, contentMode: .fit)
+
+            // Reserved 56pt title band — keeps every iPad grid cell
+            // the same total height regardless of mixlist-name
+            // length.
+            Text(mixlist.displayName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Color("charcoalGrayColor"))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+
+            // Reserved 60pt ingredients band.
+            Group {
+                if let info = mixlist.ingredientNames, !info.isEmpty {
+                    Text(info)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.regularMaterial.opacity(0.7))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
