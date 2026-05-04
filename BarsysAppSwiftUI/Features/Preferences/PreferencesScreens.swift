@@ -63,24 +63,38 @@ struct PreferencesView: View {
                     .padding(.top, 18)
 
                 // Unit selection row — ports UIKit unitSegmentedControl
-                // UIKit: segmented control 72×32 on right, selectedSegmentTintColor = brandTanColor
+                // UIKit: segmented control 72×32 on right, selectedSegmentTintColor = brandTanColor.
+                //
+                // iPad-only font / width bumps so the row reads at a
+                // comfortable scale on the wider canvas. iPhone keeps
+                // the storyboard-spec 16pt / 12pt / 100pt values
+                // bit-identically.
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {
+                        // Row label "Units" — NOT the screen title
+                        // (which sits above this row at 32pt iPad / 24pt
+                        // iPhone, untouched). iPad bumps this row label
+                        // 16 → 26pt so the section header reads at a
+                        // comfortable scale below the screen title.
+                        // iPhone stays at the storyboard 16pt spec.
                         Text("Units")
-                            .font(.system(size: 16))
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 26 : 16))
                             .foregroundStyle(Color("appBlackColor"))
                         Text("Your preferred measuring unit.")
-                            .font(.system(size: 12))
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 12))
                             .foregroundStyle(Color("mediumGrayColor"))
                     }
                     Spacer()
-                    // Segmented control matching UIKit: brandTanColor selected tint
+                    // Segmented control matching UIKit: brandTanColor selected tint.
+                    // iPad bumps the control width 100 → 140 so the
+                    // larger ML / OZ glyph fits with proper breathing
+                    // room. iPhone unchanged.
                     Picker("", selection: $preferences.measurementUnit) {
                         Text("ML").tag(MeasurementUnit.ml)
                         Text("OZ").tag(MeasurementUnit.oz)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 100)
+                    .frame(width: UIDevice.current.userInterfaceIdiom == .pad ? 140 : 100)
                     .onChange(of: preferences.measurementUnit) { _ in
                         // Light tap on every flip — matches the haptic
                         // signature used elsewhere in the app for
@@ -98,12 +112,26 @@ struct PreferencesView: View {
                     .onAppear {
                         // Match UIKit selectedSegmentTintColor = brandTanColor
                         UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(named: "brandTanColor")
-                        UISegmentedControl.appearance().setTitleTextAttributes(
-                            [.foregroundColor: UIColor.black], for: .selected
-                        )
-                        UISegmentedControl.appearance().setTitleTextAttributes(
-                            [.foregroundColor: UIColor.black.withAlphaComponent(0.6)], for: .normal
-                        )
+                        // iPad-only font bump for the ML / OZ labels —
+                        // UISegmentedControl doesn't accept SwiftUI fonts
+                        // directly so we set the title text attributes
+                        // via UIAppearance. iPhone keeps the system
+                        // default (typically 13pt) by skipping the
+                        // `.font` attribute on iPhone — bit-identical
+                        // to before this fix.
+                        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+                        var selectedAttrs: [NSAttributedString.Key: Any] = [
+                            .foregroundColor: UIColor.black
+                        ]
+                        var normalAttrs: [NSAttributedString.Key: Any] = [
+                            .foregroundColor: UIColor.black.withAlphaComponent(0.6)
+                        ]
+                        if isIPad {
+                            selectedAttrs[.font] = UIFont.systemFont(ofSize: 18, weight: .semibold)
+                            normalAttrs[.font]   = UIFont.systemFont(ofSize: 18)
+                        }
+                        UISegmentedControl.appearance().setTitleTextAttributes(selectedAttrs, for: .selected)
+                        UISegmentedControl.appearance().setTitleTextAttributes(normalAttrs, for: .normal)
                     }
                 }
                 .padding(.horizontal, 24)
