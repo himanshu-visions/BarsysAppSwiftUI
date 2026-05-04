@@ -567,8 +567,11 @@ struct MyBarView: View {
                     .padding(.leading, 24)
 
                 // "INGREDIENTS" — storyboard QzL-Qa-gHP (boldSystem 11pt).
+                // iPad bumps to 14pt bold so the section subhead reads
+                // at a comfortable scale next to the larger row text.
+                // iPhone keeps storyboard 11pt bit-identically.
                 Text("INGREDIENTS")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 14 : 11, weight: .bold))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.leading, 24)
                     .padding(.top, 17)
@@ -619,18 +622,23 @@ struct MyBarView: View {
 
     @ViewBuilder
     private func sectionHeaderCard(title: String, count: Int) -> some View {
-        HStack(spacing: 0) {
+        // iPad-only sizing knobs. iPhone keeps storyboard 16pt label
+        // / 50pt card height bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 22 : 16
+        let cardHeight: CGFloat = isIPad ? 64 : 50
+        return HStack(spacing: 0) {
             Text(title)
-                .font(.system(size: 16))
+                .font(.system(size: titleSize))
                 .foregroundStyle(Color("charcoalGrayColor"))
                 .padding(.leading, 16)
             Spacer(minLength: 0)
             Text("(\(count))")
-                .font(.system(size: 16))
+                .font(.system(size: titleSize))
                 .foregroundStyle(Color("pinkishGrayColor"))
                 .padding(.trailing, 16)
         }
-        .frame(height: 50)
+        .frame(height: cardHeight)
         .background(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .fill(Color(.systemBackground))
@@ -675,9 +683,14 @@ struct MyBarView: View {
 
     @ViewBuilder
     private func ingredientCell(_ ingredient: Ingredient) -> some View {
-        HStack(spacing: 15) {
+        // iPad-only font + cell-height bumps. iPhone keeps storyboard
+        // 14pt label / 48pt min-height bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let nameSize: CGFloat = isIPad ? 18 : 14
+        let cellMinHeight: CGFloat = isIPad ? 56 : 48
+        return HStack(spacing: 15) {
             Text(ingredient.name)
-                .font(.system(size: 14))
+                .font(.system(size: nameSize))
                 .foregroundStyle(Color("veryDarkGrayColor"))
                 .lineLimit(0) // xib `numberOfLines = 0` → wrap freely
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -708,7 +721,7 @@ struct MyBarView: View {
             .accessibilityLabel("Delete \(ingredient.name)")
             .accessibilityHint("Removes this ingredient from your bar")
         }
-        .frame(minHeight: 48)
+        .frame(minHeight: cellMinHeight)
         .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color("tertiaryBackgroundColor"))
@@ -1051,18 +1064,14 @@ private struct MyBarSecondaryButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 12))
-                // Preserve EXACT pure black in light mode (bit-identical
-                // to the previous hard-coded `Color.black`); switch to
-                // a near-white tone in dark mode for legibility on the
-                // dark `Theme.Color.surface` capsule. Trait-resolved
-                // at draw time → light pixels are unchanged.
-                // Used by "Upload from Photos", "Add ingredient", and
-                // "Re-Upload" — all share this component.
-                .foregroundStyle(Color(UIColor { trait in
-                    trait.userInterfaceStyle == .dark
-                        ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
-                        : UIColor.black // EXACT historical black
-                }))
+                // 1:1 with the recipe-page Add to Favorites button
+                // (RecipesScreens.swift L2156 — `Color.black`). The
+                // pill renders white in BOTH appearances now, so the
+                // label is pinned to pure black regardless of color
+                // scheme. Used by "Upload from Photos", "Add
+                // ingredient", and "Re-Upload" — all three CTAs now
+                // match the recipe-page favourite styling.
+                .foregroundStyle(Color.black)
                 .frame(maxWidth: .infinity)
                 .frame(height: 45)
                 .background(secondaryFill)
@@ -1073,29 +1082,55 @@ private struct MyBarSecondaryButton: View {
         .accessibilityLabel(title)
     }
 
+    /// Background — 1:1 with the recipe-page Add to Favorites button
+    /// (`cancelCapsuleBackground` in RecipesScreens.swift L2347):
+    ///
+    /// • iOS 26+ → Capsule with `Color.white.opacity(0.85)` glass
+    ///   tint (matches Add to Favorites + rating popup LEFT button +
+    ///   Profile OK button). Renders the same white-glass capsule
+    ///   in BOTH light and dark mode.
+    /// • Pre-iOS 26 → 8pt RoundedRectangle with `Color.white` fill
+    ///   (matches Add to Favorites + rating popup LEFT button +
+    ///   Profile OK button). Solid white pill in BOTH modes.
+    ///
+    /// Previously this used:
+    ///   • iOS 26+ → `Theme.Color.surface` (adaptive — dark grey in
+    ///               dark mode, the pill blended with the canvas)
+    ///   • Pre-26  → `Color("primaryBackgroundColor")` (the page
+    ///               background — the pill rendered invisible)
+    /// The user asked us to align this CTA with the recipe-page
+    /// favourite button so all neutral / cancel-style pills in the
+    /// app render identically.
     @ViewBuilder
     private var secondaryFill: some View {
         if #available(iOS 26.0, *) {
-            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
-            // bit-identical to the previous hard-coded `Color.white`,
-            // so the iOS 26+ secondary capsule is the EXACT same white
-            // pill in light mode. Dark mode picks up the elevated dark
-            // surface (#2C2C2E) so the pill stops being a stark white
-            // slab on the dark MyBar canvas.
-            Theme.Color.surface
+            Capsule(style: .continuous)
+                .fill(SwiftUI.Color.white.opacity(0.85))
         } else {
-            Color("primaryBackgroundColor")
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(SwiftUI.Color.white)
         }
     }
 
+    /// Border — 1:1 with the recipe-page Add to Favorites button
+    /// (`cancelCapsuleBorder` in RecipesScreens.swift L2422).
+    ///
+    /// • iOS 26+ → 1.5pt 3-stop gradient stroke (white@0.95 ↔
+    ///   white@0.85 ↔ white@0.95) on a Capsule. Crisp etched edge in
+    ///   both appearances.
+    /// • Pre-iOS 26 → 1pt `craftButtonBorderColor` stroke on an 8pt
+    ///   rounded rect.
     @ViewBuilder
     private var secondaryBorder: some View {
         if #available(iOS 26.0, *) {
             Capsule(style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.9),
-                                 Color("craftButtonBorderColor")],
+                        colors: [
+                            SwiftUI.Color.white.opacity(0.95),
+                            SwiftUI.Color(white: 0.85).opacity(0.9),
+                            SwiftUI.Color.white.opacity(0.95)
+                        ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
