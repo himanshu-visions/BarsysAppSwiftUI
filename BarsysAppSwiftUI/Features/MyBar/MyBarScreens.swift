@@ -360,7 +360,15 @@ struct MyBarView: View {
 
     @ViewBuilder
     private var ingredientsFoundCard: some View {
-        VStack(spacing: 0) {
+        // iPad-only sizing knobs for the "Ingredient(s) found" /
+        // take-photo-result popup. iPhone keeps storyboard
+        // 18pt/14pt/12pt + 250pt list height bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 24 : 18
+        let subtitleSize: CGFloat = isIPad ? 18 : 14
+        let errorSize: CGFloat = isIPad ? 16 : 12
+        let listMaxHeight: CGFloat = isIPad ? 360 : 250
+        return VStack(spacing: 0) {
             // Close button at top-right.
             HStack {
                 Spacer()
@@ -372,9 +380,9 @@ struct MyBarView: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 14, height: 14)
+                        .frame(width: isIPad ? 18 : 14, height: isIPad ? 18 : 14)
                         .foregroundStyle(Color("appBlackColor"))
-                        .frame(width: 44, height: 44)
+                        .frame(width: isIPad ? 50 : 44, height: isIPad ? 50 : 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close")
@@ -382,14 +390,14 @@ struct MyBarView: View {
 
             // Title "Ingredient(s) found".
             Text("Ingredient(s) found")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: titleSize, weight: .semibold))
                 .foregroundStyle(Color("appBlackColor"))
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
 
             // Subtitle "Select ingredients to proceed".
             Text("Select ingredients to proceed")
-                .font(.system(size: 14))
+                .font(.system(size: subtitleSize))
                 .foregroundStyle(Color("veryDarkGrayColor"))
                 .multilineTextAlignment(.center)
                 .padding(.top, 6)
@@ -397,6 +405,9 @@ struct MyBarView: View {
 
             // Ingredient list — capped at 250pt like UIKit
             // `tblIngredientsHeightConstraint = 250` (L63-67).
+            // iPad gets a taller cap (360pt) to match the larger
+            // row heights so 5 detected items still fit without
+            // immediate scrolling.
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
                     ForEach($detectedIngredients) { $detected in
@@ -404,12 +415,12 @@ struct MyBarView: View {
                     }
                 }
             }
-            .frame(maxHeight: 250)
+            .frame(maxHeight: listMaxHeight)
 
             // Error label (UIKit L190-195).
             if selectedCount == 0 && hasNewIngredients {
                 Text(Constants.pleaseAddAtleastOneIngredient)
-                    .font(.system(size: 12))
+                    .font(.system(size: errorSize))
                     .foregroundStyle(Color("errorLabelColor"))
                     .padding(.top, 8)
             }
@@ -465,8 +476,17 @@ struct MyBarView: View {
 
     @ViewBuilder
     private func detectedIngredientRow(_ detected: Binding<DetectedMyBarIngredient>) -> some View {
+        // iPad-only sizing knobs for each detected-ingredient row in
+        // the take-photo result popup. iPhone keeps storyboard 22pt
+        // checkbox / 14pt name / 11pt sublabel bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let checkboxCircle: CGFloat = isIPad ? 28 : 22
+        let checkboxFrame: CGFloat = isIPad ? 38 : 30
+        let checkmarkSize: CGFloat = isIPad ? 14 : 11
+        let nameSize: CGFloat = isIPad ? 18 : 14
+        let sublabelSize: CGFloat = isIPad ? 14 : 11
         let d = detected.wrappedValue
-        HStack(spacing: 12) {
+        return HStack(spacing: 12) {
             // Checkbox — matches UIKit MultipleIngredientCell.
             Button {
                 // UIKit: existing rows ignore the tap (L172-174).
@@ -483,26 +503,26 @@ struct MyBarView: View {
                                 : Color("craftButtonBorderColor"),
                             lineWidth: 1
                         )
-                        .frame(width: 22, height: 22)
+                        .frame(width: checkboxCircle, height: checkboxCircle)
                     // Selected state: filled circle + check (matches
                     // UIKit `selectedIngredient` asset — brand orange dot).
                     if d.isSelected && !d.isExisting {
                         Circle()
                             .fill(Color("segmentSelectionColor"))
-                            .frame(width: 22, height: 22)
+                            .frame(width: checkboxCircle, height: checkboxCircle)
                         Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: checkmarkSize, weight: .bold))
                             .foregroundStyle(Theme.Color.softWhiteText)
                     }
                 }
-                .frame(width: 30, height: 30)
+                .frame(width: checkboxFrame, height: checkboxFrame)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(d.isSelected ? "Selected" : "Not selected")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(d.ingredient.name)
-                    .font(.system(size: 14))
+                    .font(.system(size: nameSize))
                     .foregroundStyle(
                         d.isExisting
                             ? Color.gray
@@ -510,7 +530,7 @@ struct MyBarView: View {
                     )
                 if d.isExisting {
                     Text(Constants.alreadyAddedInMyBarText)
-                        .font(.system(size: 11))
+                        .font(.system(size: sublabelSize))
                         .foregroundStyle(Color.gray)
                 }
             }
