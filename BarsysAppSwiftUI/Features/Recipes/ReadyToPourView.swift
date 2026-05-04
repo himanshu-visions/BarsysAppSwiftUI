@@ -1275,12 +1275,31 @@ struct ReadyToPourRecipeRow: View {
                 endPoint: .bottom
             )
         } else {
-            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
-            // bit-identical to the previous hard-coded `Color.white`,
-            // so light mode renders the EXACT same Craft button bg.
-            // Dark mode picks up the elevated dark surface (#2C2C2E)
-            // for adaptive pre-iOS 26 rendering.
-            Theme.Color.surface
+            // 1:1 with the recipe-page Add-to-Favorites button
+            // (`cancelCapsuleBackground` pre-iOS-26 in
+            // RecipesScreens.swift L2395) — every neutral cancel-style
+            // pill in the app now renders an identical hardcoded
+            // `Color.white` background pre-26 so the BLACK label text
+            // stays readable on the dark Ready-to-Pour row card in
+            // iPad dark mode.
+            //
+            // Previously this used `Theme.Color.surface` which
+            // adapted to the dark elevated surface (#2C2C2E) in dark
+            // mode and visually flipped the row's "Craft" button to
+            // a dark grey blob — black label on dark grey was
+            // unreadable. Light mode is bit-identical
+            // (`Theme.Color.surface` light = pure white) so the only
+            // practical change is dark mode, which now matches the
+            // recipe-page favourite button + the rating popup LEFT
+            // button + the logout popup LEFT button — every neutral
+            // pill the user sees in pre-iOS 26 dark mode is now a
+            // bright white pill with readable BLACK text.
+            //
+            // Corner radius is already 8pt (see `craftButtonBorder` /
+            // `craftButtonShape` below) which already matches the
+            // recipe-page Craft button + the now-fixed recipe-page
+            // Add-to-Favorites button, so no radius change needed.
+            SwiftUI.Color.white
         }
     }
 
