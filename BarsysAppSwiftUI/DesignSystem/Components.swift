@@ -1235,13 +1235,6 @@ private struct AlertPopupButtonStyle: ViewModifier {
     /// BORDERED variant (left-side continue/neutral button).
     let fill: Color?
 
-    /// Drives the iPad-dark-mode pre-iOS-26 override of the LEFT
-    /// (bordered) button background — see `buttonBackground`. Light
-    /// mode (every device) and iPhone (every appearance) leave the
-    /// resolved value unused so the historical
-    /// `Theme.Color.surface` fill is preserved bit-identically.
-    @Environment(\.colorScheme) private var colorScheme
-
     /// 1:1 port of UIKit `alertPopUpButtonBackgroundStyle` shape rule
     /// (UIViewClass+GradientStyles.swift L24-90):
     ///   • iOS 26+ → `addGlassEffect(cornerRadius: bounds.height/2)` —
@@ -1386,25 +1379,24 @@ private struct AlertPopupButtonStyle: ViewModifier {
         } else {
             // Pre-26 BORDERED variant — UIKit
             // `makeBorder(1, .craftButtonBorderColor)` + white bg.
-            // `Theme.Color.surface` preserves the historical white
-            // fill in light mode bit-identically and adapts in dark.
             //
-            // iPad + dark mode OVERRIDE: match the rating popup's
-            // LEFT button (`BarsysPopupCard.alertSecondaryButtonBackground`
-            // pre-iOS-26 branch in Theme.swift L1556-1559) which uses
-            // a hardcoded `Color.white` pill. Without this override
-            // the logout / device-disconnected / generic-alert LEFT
-            // button picks up the same dark `Theme.Color.surface` as
-            // the popup card on iPad dark mode and visually disappears
-            // into the card — leaving the BLACK label text floating
-            // unreadably on a dark grey blob. The hardcoded white
-            // pill keeps the BLACK label readable on the dark card.
+            // 1:1 with the rating popup's LEFT button background
+            // (`BarsysPopupCard.alertSecondaryButtonBackground`
+            // pre-iOS-26 branch in Theme.swift L1556-1559) — both
+            // popups now render an identical `Color.white` pill so
+            // the LOGOUT "No" button matches the RATING "No, stay in
+            // the app" button in every appearance + device combo.
             //
-            // iPhone (every appearance) and iPad LIGHT keep
-            // `Theme.Color.surface` — bit-identical to before — so
-            // the iPhone path is completely unchanged.
-            let isIPadDark = UIDevice.current.userInterfaceIdiom == .pad && colorScheme == .dark
-            buttonShape.fill(isIPadDark ? SwiftUI.Color.white : Theme.Color.surface)
+            // Previously this used `Theme.Color.surface` which adapted
+            // to the dark elevated surface (#2C2C2E) in dark mode and
+            // visually disappeared into the popup card — leaving the
+            // BLACK label text unreadable on a dark grey blob. Light
+            // mode is bit-identical (Theme.Color.surface light = pure
+            // white = `Color.white`) so the only practical change is
+            // dark mode, which now correctly renders a bright white
+            // pill exactly like the rating popup.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(SwiftUI.Color.white)
         }
     }
 

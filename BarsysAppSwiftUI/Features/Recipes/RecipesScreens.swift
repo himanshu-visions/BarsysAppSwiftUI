@@ -2359,14 +2359,29 @@ struct RecipeDetailView: View {
             Capsule(style: .continuous)
                 .fill(SwiftUI.Color.white.opacity(0.85))
         } else {
-            // `Theme.Color.surface` light = pure white sRGB(1, 1, 1) —
-            // bit-identical to the previous hard-coded `Color.white`,
-            // so light mode renders the EXACT same cancel capsule.
-            // Dark mode picks up the elevated dark surface (#2C2C2E)
-            // so the pre-iOS 26 cancel button stops being a stark
-            // white slab on the dark recipe page.
+            // 1:1 with the rating popup's LEFT button background
+            // (`BarsysPopupCard.alertSecondaryButtonBackground`
+            // pre-iOS-26 branch in Theme.swift L1556-1559) and the
+            // logout popup's LEFT button (Components.swift
+            // `AlertPopupButtonStyle.buttonBackground` pre-26
+            // branch) — every neutral cancel-style pill in the app
+            // now renders an identical hardcoded `Color.white`
+            // background pre-26 so the BLACK label text stays
+            // readable on the dark recipe-page canvas in iPad dark
+            // mode.
+            //
+            // Previously this used `Theme.Color.surface` which
+            // adapted to the dark elevated surface (#2C2C2E) in
+            // dark mode and visually flipped the "Add to Favorites"
+            // / "Save to My Drinks" / "Remove from Favorites"
+            // button to a dark grey blob — black label on dark
+            // grey was unreadable. Light mode is bit-identical
+            // (`Theme.Color.surface` light = pure white) so the
+            // only practical change is dark mode, which now
+            // matches the LEFT-button rendering used everywhere
+            // else.
             RoundedRectangle(cornerRadius: 22.5, style: .continuous)
-                .fill(Theme.Color.surface)
+                .fill(SwiftUI.Color.white)
         }
     }
 
