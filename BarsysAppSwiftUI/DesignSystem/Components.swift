@@ -380,7 +380,13 @@ struct OTPBoxField: View {
     @Binding var code: String
     var length: Int = 6
 
-    @FocusState private var focused: Bool
+    /// Drives both the UIKit-backed input field's first-responder
+    /// state AND the on-screen caret animation. Uses `@State Bool`
+    /// (rather than `@FocusState`) because the underlying input is a
+    /// `UIKitTextField` — see the comment on `UIKitTextField` for why
+    /// we ditched the SwiftUI keyboard accessory toolbar on the auth
+    /// flows.
+    @State private var focused: Bool = false
     /// Drives the blinking caret that mimics UIKit's per-box cursor.
     /// UIKit had 6 individual `OtpTextField`s, so the system caret
     /// appeared inside the active box. The SwiftUI port uses a single
@@ -390,18 +396,32 @@ struct OTPBoxField: View {
 
     var body: some View {
         ZStack {
-            // Hidden text field that captures all input.
-            TextField("", text: Binding(
-                get: { code },
-                set: { newValue in
-                    let filtered = newValue.filter(\.isNumber)
-                    code = String(filtered.prefix(length))
-                }))
-                .keyboardType(.numberPad)
-                .textContentType(.oneTimeCode)
-                .focused($focused)
-                .opacity(0.001)
-                .frame(width: 1, height: 1)
+            // Hidden UIKit-backed text field that captures all input.
+            // Using `UIKitTextField` (vs. SwiftUI `TextField`) gives
+            // us a real `inputAccessoryView` Cancel/Done bar that
+            // appears reliably above the keyboard on iOS 26 — the
+            // SwiftUI `.toolbar { keyboard }` mechanism races with
+            // `.toolbar(.hidden, for: .navigationBar)` and the bar
+            // can fail to attach.
+            UIKitTextField(
+                text: Binding(
+                    get: { code },
+                    set: { newValue in
+                        let filtered = newValue.filter(\.isNumber)
+                        code = String(filtered.prefix(length))
+                    }),
+                isFocused: $focused,
+                keyboardType: .numberPad,
+                textContentType: .oneTimeCode,
+                sanitize: { raw in
+                    let filtered = raw.filter(\.isNumber)
+                    return String(filtered.prefix(length))
+                },
+                onDone: { focused = false },
+                onCancel: { focused = false }
+            )
+            .opacity(0.001)
+            .frame(width: 1, height: 1)
 
             HStack(spacing: 10) {
                 ForEach(0..<length, id: \.self) { idx in
@@ -1524,5 +1544,150 @@ extension View {
     func keyboardDoneCancelToolbar(onDone: (() -> Void)? = nil,
                                    onCancel: (() -> Void)? = nil) -> some View {
         modifier(KeyboardDoneCancelToolbar(onDone: onDone, onCancel: onCancel))
+    }
+}
+
+// MARK: - UIKitTextField (reliable inputAccessoryView Cancel/Done bar)
+//
+// SwiftUI's `.toolbar { ToolbarItemGroup(placement: .keyboard) }` can
+// fail to attach on screens that also call `.toolbar(.hidden, for:
+// .navigationBar)` — on iOS 26 the two toolbar modifiers race and the
+// Cancel/Done accessory goes missing on the Login / Sign-Up phone
+// field even though the previous fix (commit 34bd8ee) reordered the
+// modifiers. Bypassing SwiftUI here and attaching a real `UIToolbar`
+// as the underlying UITextField's `inputAccessoryView` (1:1 with the
+// UIKit `addDoneCancelToolbar` and the BarBotScreens implementation)
+// makes the bar deterministic regardless of the surrounding SwiftUI
+// modifier chain.
+struct UIKitTextField: UIViewRepresentable {
+    @Binding var text: String
+    /// Optional two-way focus binding — when set, the parent can drive
+    /// the underlying UITextField's first-responder state and observe
+    /// it back. Pass `nil` (the default) for fields whose focus is
+    /// only ever driven by the user tapping into the field.
+    var isFocused: Binding<Bool>? = nil
+    var placeholder: String = ""
+    var keyboardType: UIKeyboardType = .default
+    var textContentType: UITextContentType? = nil
+    var font: UIFont = .systemFont(ofSize: 17)
+    var textColor: UIColor = UIColor(named: "appBlackColor") ?? .label
+    var alignment: NSTextAlignment = .natural
+    /// Sanitises the value coming from the field BEFORE writing it to
+    /// the binding — used by the Login phone field to strip non-digits
+    /// and cap length, so the rendered text matches the binding.
+    var sanitize: ((String) -> String)? = nil
+    var onChange: ((String) -> Void)? = nil
+    var onDone: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.placeholder = placeholder
+        field.keyboardType = keyboardType
+        if let tct = textContentType { field.textContentType = tct }
+        field.font = font
+        field.textColor = textColor
+        field.textAlignment = alignment
+        field.borderStyle = .none
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator,
+                        action: #selector(Coordinator.editingChanged(_:)),
+                        for: .editingChanged)
+
+        // Cancel + flexibleSpace + Done — 1:1 with UIKit's
+        // `addDoneCancelToolbar` and BarBotScreens' inputAccessoryView.
+        let bar = UIToolbar()
+        bar.sizeToFit()
+        bar.tintColor = UIColor(named: "appBlackColor")
+        let cancel = UIBarButtonItem(barButtonSystemItem: .cancel,
+                                     target: context.coordinator,
+                                     action: #selector(Coordinator.tapCancel))
+        let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace,
+                                   target: nil, action: nil)
+        let done = UIBarButtonItem(barButtonSystemItem: .done,
+                                   target: context.coordinator,
+                                   action: #selector(Coordinator.tapDone))
+        bar.items = [cancel, flex, done]
+        field.inputAccessoryView = bar
+
+        return field
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        if uiView.text != text {
+            uiView.text = text
+        }
+        uiView.font = font
+        uiView.textColor = textColor
+        uiView.placeholder = placeholder
+        // Refresh the coordinator's parent so its closures capture the
+        // latest View-state — without this the onChange/onDone/onCancel
+        // closures would forever point at the first SwiftUI render's
+        // copy.
+        context.coordinator.parent = self
+
+        // Programmatic focus sync. Only run when the SwiftUI side
+        // diverges from the UIKit side so we don't fight the user
+        // tapping into the field.
+        if let binding = isFocused {
+            if binding.wrappedValue, !uiView.isFirstResponder {
+                DispatchQueue.main.async { uiView.becomeFirstResponder() }
+            } else if !binding.wrappedValue, uiView.isFirstResponder {
+                DispatchQueue.main.async { uiView.resignFirstResponder() }
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: UIKitTextField
+
+        init(_ parent: UIKitTextField) {
+            self.parent = parent
+        }
+
+        @objc func editingChanged(_ sender: UITextField) {
+            let raw = sender.text ?? ""
+            let cleaned = parent.sanitize?(raw) ?? raw
+            if cleaned != raw {
+                sender.text = cleaned
+            }
+            parent.text = cleaned
+            parent.onChange?(cleaned)
+        }
+
+        @objc func tapDone() {
+            HapticService.light()
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil)
+            parent.onDone?()
+        }
+
+        @objc func tapCancel() {
+            HapticService.light()
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil)
+            parent.onCancel?()
+        }
+
+        // Mirror first-responder state back into the SwiftUI focus
+        // binding so parents that observe it (e.g. the OTP caret
+        // animation) react correctly.
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            if let binding = parent.isFocused, binding.wrappedValue == false {
+                DispatchQueue.main.async { binding.wrappedValue = true }
+            }
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            if let binding = parent.isFocused, binding.wrappedValue == true {
+                DispatchQueue.main.async { binding.wrappedValue = false }
+            }
+        }
     }
 }

@@ -665,45 +665,48 @@ struct LoginView: View {
                 .buttonStyle(.plain)
 
                 // Phone number text field — placeholder "Phone no."
-                TextField("Phone no.", text: $viewModel.phone)
-                    .keyboardType(.numberPad)
-                    .textContentType(.telephoneNumber)
-                    // Bind to the screen-level FocusState so the
-                    // keyboard accessory toolbar (`.keyboardDoneCancelToolbar`)
-                    // attaches reliably. Without an explicit
-                    // `.focused(...)` link SwiftUI sometimes races the
-                    // keyboard's appearance against the toolbar's
-                    // attachment, leaving the Cancel/Done bar missing
-                    // on the first tap into the field — the QA
-                    // "toolbar not coming sometimes" report. Binding
-                    // it gives SwiftUI an observable focus value to
-                    // re-evaluate the toolbar against, plus lets the
-                    // onDone/onCancel handlers actually resign focus
-                    // (previously they set `focusedField = nil` while
-                    // nothing was bound, so the line was a no-op).
-                    .focused($focusedField, equals: .phone)
-                    .font(.system(size: iPadValue(18, 22), weight: .light))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .frame(height: iPadValue(40, 50))
-                    // 1:1 with UIKit `LoginViewController+Accessibility.swift:19-20`:
-                    // VoiceOver users hear the field's purpose + the OTP-flow hint.
-                    .accessibilityLabel("Phone number")
-                    .accessibilityHint("Enter your phone number to receive an OTP")
-                    .onChange(of: viewModel.phone) { newValue in
-                        // Re-implements the editing-while-OTP-shown rule from
-                        // LoginViewController.textField(_:shouldChangeCharactersIn:)
-                        let digits = newValue.filter(\.isNumber)
-                        if digits != newValue {
-                            viewModel.phone = digits
-                        }
-                        if digits.count > NumericConstants.maxPhoneNumCharacterCount {
-                            viewModel.phone = String(digits.prefix(NumericConstants.maxPhoneNumCharacterCount))
-                        }
-                        if !digits.isEmpty {
+                //
+                // Backed by a UIKit `UITextField` (`UIKitTextField`)
+                // because the SwiftUI keyboard accessory toolbar
+                // (`.toolbar { ToolbarItemGroup(placement: .keyboard) }`)
+                // races with `.toolbar(.hidden, for: .navigationBar)`
+                // on iOS 26 and the Cancel/Done bar fails to appear on
+                // first focus — QA report "done button and cancel
+                // button on login screen is not came". The wrapper
+                // attaches a real `UIToolbar` as the field's
+                // `inputAccessoryView`, which is rendered by UIKit
+                // directly above the keyboard regardless of whatever
+                // SwiftUI toolbar modifiers are active.
+                UIKitTextField(
+                    text: $viewModel.phone,
+                    placeholder: "Phone no.",
+                    keyboardType: .numberPad,
+                    textContentType: .telephoneNumber,
+                    font: .systemFont(ofSize: iPadValue(18, 22), weight: .light),
+                    textColor: UIColor(named: "appBlackColor") ?? .label,
+                    sanitize: { raw in
+                        // Re-implements the editing-while-OTP-shown
+                        // rule from LoginViewController
+                        // .textField(_:shouldChangeCharactersIn:):
+                        // numeric only, capped at the configured max
+                        // length.
+                        let digits = raw.filter(\.isNumber)
+                        return String(digits.prefix(NumericConstants.maxPhoneNumCharacterCount))
+                    },
+                    onChange: { newValue in
+                        if !newValue.isEmpty {
                             viewModel.phoneError = nil
                             if viewModel.otpSent { viewModel.resetOtpState() }
                         }
-                    }
+                    },
+                    onDone: { hideKeyboard() },
+                    onCancel: { hideKeyboard() }
+                )
+                .frame(height: iPadValue(40, 50))
+                // 1:1 with UIKit `LoginViewController+Accessibility.swift:19-20`:
+                // VoiceOver users hear the field's purpose + the OTP-flow hint.
+                .accessibilityLabel("Phone number")
+                .accessibilityHint("Enter your phone number to receive an OTP")
             }
             .padding(.horizontal, 5)
 
