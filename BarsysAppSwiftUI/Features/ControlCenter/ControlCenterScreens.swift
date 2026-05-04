@@ -403,6 +403,22 @@ struct ControlCenterTile: View {
     /// each glyph legible against the dark surface.
     @Environment(\.colorScheme) private var colorScheme
 
+    /// iPad-only sizing knobs. iPhone keeps the UIKit-parity
+    /// 120pt-tall tile / 40×40 icon / 12pt label exactly as before
+    /// (every value below collapses to its pre-iPad-fix constant on
+    /// iPhone). On the wider iPad canvas the same numbers read as
+    /// thumbnail-scale, so QA asked for a bigger tile + bigger glyph
+    /// + readable label — matching the per-device ramp applied to
+    /// the recipe rows / screen titles.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    private var tileHeight: CGFloat        { isIPad ? 220 : 120 }
+    private var iconSize: CGFloat          { isIPad ? 70  : 40  }
+    private var iconTopPadding: CGFloat    { isIPad ? 56  : 30  }
+    private var labelFontSize: CGFloat     { isIPad ? 18  : 12  }
+    private var labelBottomPadding: CGFloat { isIPad ? 32 : 17  }
+
     var body: some View {
         Button(action: action) {
             VStack(spacing: 0) {
@@ -427,23 +443,27 @@ struct ControlCenterTile: View {
                             .aspectRatio(contentMode: .fit)
                     }
                 }
-                .frame(width: 40, height: 40)
-                .padding(.top, 30)
+                .frame(width: iconSize, height: iconSize)
+                .padding(.top, iconTopPadding)
 
                 Spacer()
 
                 // Label — 12pt, mediumLightGrayColor, center.
                 // Same asset swap as the icon above — bit-identical
                 // #6F6F6F in light, adaptive light-gray in dark.
+                // iPad bumps to 18pt so the row title (e.g. "Station
+                // Clean", "Disconnect Bluetooth") reads at a
+                // comfortable size on the wider canvas. iPhone stays
+                // at the storyboard 12pt spec.
                 Text(item.name)
-                    .font(.system(size: 12))
+                    .font(.system(size: labelFontSize))
                     .foregroundStyle(Color("mediumLightGrayColor"))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                    .padding(.bottom, 17)
+                    .padding(.bottom, labelBottomPadding)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 120)
+            .frame(height: tileHeight)
             // `Theme.Color.surface` light = pure white sRGB(1, 1, 1),
             // bit-identical to the previous hard-coded `Color.white`,
             // so each Control Center tile is the EXACT same white
