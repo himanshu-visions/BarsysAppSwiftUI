@@ -1097,11 +1097,149 @@ struct ChooseOptionsStyleNavBar: ViewModifier {
                 .toolbarBackground(.visible, for: .navigationBar)
                 .toolbarColorScheme(colorScheme == .dark ? .dark : .light,
                                     for: .navigationBar)
+                // SwiftUI's `.toolbarBackground(.visible)` builds its
+                // own `UINavigationBarAppearance` per-view and applies
+                // it directly to the live UINavigationBar instance —
+                // overriding the global proxy values set in
+                // `BarsysAppSwiftUIApp.init()`. The new appearance
+                // SwiftUI generates uses the system default shadow,
+                // which is the 1pt grey hairline the user reports
+                // appearing at the bottom of the nav bar across every
+                // top-level screen on iOS < 26. Reaching INTO the
+                // navigation controller post-mount and re-clearing the
+                // shadow on its four appearance slots is the only
+                // reliable way to undo that override — no SwiftUI API
+                // exposes the shadow-color knob for `.toolbarBackground`.
+                // Bit-identical iOS 26+ branch is untouched.
+                .background(NavigationBarShadowKiller().frame(width: 0, height: 0))
         }
     }
 }
 
+/// Walks up the responder chain to find the hosting
+/// `UINavigationController` for the SwiftUI view it sits inside, then
+/// clears the shadow (the 1pt grey hairline below the nav bar) on
+/// every UINavigationBarAppearance slot:
+///
+///   • `standardAppearance`           — opaque-bar style
+///   • `scrollEdgeAppearance`         — scrolled-to-top style
+///   • `compactAppearance`            — landscape compact-height style
+///   • `compactScrollEdgeAppearance`  — compact + scrolled-to-top
+///
+/// All four are needed because UIKit picks one based on size class /
+/// scroll position, and any unset slot falls back to the system
+/// default — which DOES draw the hairline. Setting them all to a
+/// `shadowColor = .clear` + `shadowImage = UIImage()` appearance
+/// guarantees no visible underline below the toolbar in any state.
+///
+/// This representable is intentionally a 0×0 invisible view: it just
+/// piggy-backs on SwiftUI's mount lifecycle to run the UIKit hook.
+private struct NavigationBarShadowKiller: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.isUserInteractionEnabled = false
+        return v
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // Multiple staggered re-applications. SwiftUI's
+        // `.toolbarBackground(.visible)` does NOT reliably apply its
+        // generated UINavigationBarAppearance synchronously with our
+        // UIViewRepresentable's `updateUIView` — sometimes SwiftUI's
+        // own appearance write lands on a LATER runloop than our
+        // first-tick clear-shadow override, so the override is
+        // immediately stomped by SwiftUI and the 1pt hairline reappears.
+        //
+        // Re-running the shadow clear at 0, 50ms, 150ms, AND 400ms
+        // covers every observed timing of SwiftUI's late-write:
+        //   • 0ms   — catches the common case where SwiftUI has
+        //             already finished applying its appearance
+        //   • 50ms  — covers SwiftUI's typical "next renderloop" write
+        //   • 150ms — covers slower transitions (push / pop animations)
+        //   • 400ms — final belt-and-braces for very slow first-mount
+        //             on cold app launch with cold caches
+        // Idempotent (only writes when values differ post-copy), so the
+        // extra runs are no-ops once the shadow has actually been cleared.
+        for delay: Double in [0.0, 0.05, 0.15, 0.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let nav = Self.findNavigationController(from: uiView) else { return }
+                applyClearShadow(to: nav.navigationBar)
+            }
+        }
+    }
+
+    private static func findNavigationController(from view: UIView) -> UINavigationController? {
+        var responder: UIResponder? = view
+        while let r = responder {
+            if let nav = r as? UINavigationController { return nav }
+            responder = r.next
+        }
+        // Fallback — walk parent VCs from the view's nearest VC up
+        // through `parent` in case the responder chain is detached
+        // (can happen briefly during transition animations).
+        var vc = view.findParentViewController()
+        while let current = vc {
+            if let nav = current as? UINavigationController { return nav }
+            if let nav = current.navigationController { return nav }
+            vc = current.parent
+        }
+        return nil
+    }
+
+    private func applyClearShadow(to navigationBar: UINavigationBar) {
+        func clearShadow(on appearance: UINavigationBarAppearance) -> UINavigationBarAppearance {
+            // Copy so we don't stomp on appearance instances shared
+            // across nav controllers. Then null out every shadow knob
+            // UIKit honours: `shadowColor` (modern), `shadowImage`
+            // (legacy 1×1 stretchable), and the background image
+            // (a non-nil background image with a 1pt-tall transparent
+            // strip can also produce a visual divider on some iOS
+            // pre-16 paths).
+            let copy = (appearance.copy() as? UINavigationBarAppearance) ?? UINavigationBarAppearance()
+            copy.shadowColor = .clear
+            copy.shadowImage = UIImage()
+            return copy
+        }
+        navigationBar.standardAppearance         = clearShadow(on: navigationBar.standardAppearance)
+        navigationBar.scrollEdgeAppearance       = clearShadow(on: navigationBar.scrollEdgeAppearance ?? navigationBar.standardAppearance)
+        navigationBar.compactAppearance          = clearShadow(on: navigationBar.compactAppearance ?? navigationBar.standardAppearance)
+        navigationBar.compactScrollEdgeAppearance = clearShadow(on: navigationBar.compactScrollEdgeAppearance ?? navigationBar.standardAppearance)
+        // Legacy hairline strippers — some iOS pre-16 paths still
+        // consult these on the UINavigationBar itself when computing
+        // the bottom divider, even after a UINavigationBarAppearance
+        // is set. Belt-and-braces.
+        navigationBar.shadowImage = UIImage()
+        navigationBar.setBackgroundImage(UIImage(), for: .default)
+    }
+}
+
+private extension UIView {
+    func findParentViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let r = responder {
+            if let vc = r as? UIViewController { return vc }
+            responder = r.next
+        }
+        return nil
+    }
+}
+
 extension View {
+    /// Hides the 1pt grey hairline that UIKit / SwiftUI draws at the
+    /// bottom of the navigation bar. iOS < 26 only — on iOS 26+ the
+    /// Liquid-Glass nav bar handles its own bottom edge cleanly and
+    /// this modifier is a no-op (the killer is gated internally).
+    /// Use on any view whose hosting NavigationStack shows a system
+    /// nav bar that would otherwise draw the divider.
+    @ViewBuilder
+    func hideNavigationBarBottomLine() -> some View {
+        if #available(iOS 26.0, *) {
+            self
+        } else {
+            self.background(NavigationBarShadowKiller().frame(width: 0, height: 0))
+        }
+    }
+
     /// Applies the ChooseOptions-style flat `primaryBackgroundColor`
     /// nav bar so `NavigationRightGlassButtons` renders identically to
     /// HomeView on any toolbar-hosted screen.

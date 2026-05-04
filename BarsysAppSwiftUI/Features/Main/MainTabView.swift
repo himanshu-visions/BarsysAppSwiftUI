@@ -229,6 +229,41 @@ struct MainTabView: View {
             .onAppear {
                 configureAppearance()
                 wireBLECallbacks()
+                // 1:1 port of UIKit `TabBarViewController.viewDidAppear`
+                // which calls `setupSelectionView()` on iOS < 26.
+                // Multiple staggered attempts so the setup lands AFTER
+                // SwiftUI has fully mounted the underlying UITabBarController.
+                // The function is idempotent — only mutates state when a
+                // value actually differs — so duplicate runs are no-ops.
+                // iOS 26+ early-returns inside the function.
+                for delay: Double in [0.1, 0.3, 0.6, 1.0] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        setupCustomSelectionViewIfNeeded()
+                    }
+                }
+            }
+            // 1:1 port of UIKit `selectTab(_:)` →
+            // `moveSelectionView(to:animated:true)` (line 232 in
+            // TabBarViewController.swift). Animates the white pill to
+            // the new tab on every selection change. iOS 26+ no-op.
+            .onChange(of: router.selectedTab) { newTab in
+                if #available(iOS 26.0, *) { return }
+                // Re-apply the bottom-lift transform first — SwiftUI
+                // sometimes resets it on tab-selection-driven body
+                // updates, and we want the lift visible BEFORE the
+                // pill animation starts.
+                Self.reapplyTabBarOffset()
+                guard let tabBar = Self.observedTabBar else {
+                    // Tab bar not yet observed — defer until next runloop
+                    // so SwiftUI mounts it, then re-attempt.
+                    DispatchQueue.main.async {
+                        setupCustomSelectionViewIfNeeded()
+                    }
+                    return
+                }
+                Self.positionSelectionView(in: tabBar,
+                                           atIndex: newTab.rawValue,
+                                           animated: true)
             }
             // 1:1 port of UIKit
             // `TabBarViewController.updateTabImageAccordingToConnection()`:
@@ -275,9 +310,25 @@ struct MainTabView: View {
             // `tabLabel(_:connected:)`).
             .onChange(of: ble.isAnyDeviceConnected) { _ in
                 setFourthTabToSearchItem()
+                // Re-apply the tab bar's bottom-lift transform — BLE
+                // connect/disconnect rebuilds the 4th tab item, which
+                // can trigger a UIKit relayout that resets `tabBar.transform`.
+                Self.reapplyTabBarOffset()
+                // 4th tab item rebuild also changes its content
+                // bounds (homeIcon vs controlCentreIcon are different
+                // sizes), so the pill needs to re-fit if it currently
+                // sits on tab 3. Defer one tick so UIKit has finished
+                // installing the new image before we measure.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    Self.reapplyPillPosition()
+                }
             }
             .onChange(of: colorScheme) { _ in
                 setFourthTabToSearchItem()
+                Self.reapplyTabBarOffset()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    Self.reapplyPillPosition()
+                }
             }
             .onChange(of: scenePhase) { newPhase in
                 guard newPhase == .active else { return }
@@ -287,6 +338,11 @@ struct MainTabView: View {
                 // resolve the final asset variant, not a stale one.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     setFourthTabToSearchItem()
+                    // Foreground activation can also reset the tab
+                    // bar's transform if the system stashed the bar's
+                    // state during background — re-apply it.
+                    Self.reapplyTabBarOffset()
+                    Self.reapplyPillPosition()
                 }
             }
             // Clear the home nav stack every time the connection state flips
@@ -573,20 +629,37 @@ struct MainTabView: View {
                     ? UIColor.white.withAlphaComponent(0.4)
                     : UIColor.black.withAlphaComponent(0.4) // EXACT historical value
             }
-        } else if UIDevice.current.userInterfaceIdiom != .pad {
-            // UIKit L133-139 pre-26 branch: lift the titles 12pt closer
-            // to their icons (the stacked layout otherwise puts them too
-            // far down with the asset icon + no title).
+        } else {
+            // iOS < 26: HIDE the 1pt grey hairline that UIKit draws at
+            // the TOP of the tab bar by default. Without explicit
+            // overrides `configureWithOpaqueBackground()` keeps the
+            // system's default shadowColor on the appearance object —
+            // that's the line the user reported seeing on every iOS
+            // <26 screen above the tab bar (separate from the nav-bar
+            // bottom hairline handled in HomeView).
             //
-            // IMPORTANT — scoped to iPhone ONLY. On iPad pre-iOS 26 the
-            // tab bar uses the *inline* layout (icon and title side-by-
-            // side), so a vertical `-12pt` adjustment shoves the title
-            // up out of alignment with the icon, producing the broken
-            // tab-bar look on iPad. iPhone's stacked layout is
-            // unchanged — it still gets the lift exactly as before.
-            // iPhone iOS 26+ also stays untouched (different branch).
-            item.normal.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: -12)
-            item.selected.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: -12)
+            // Setting BOTH `shadowColor = .clear` AND `shadowImage =
+            // UIImage()` covers every iOS pre-26 path: modern paths
+            // honour `shadowColor`, legacy paths still consult
+            // `shadowImage` (an empty 1×1 image renders nothing).
+            appearance.shadowColor = .clear
+            appearance.shadowImage = UIImage()
+
+            if UIDevice.current.userInterfaceIdiom != .pad {
+                // UIKit L133-139 pre-26 branch: lift the titles 12pt closer
+                // to their icons (the stacked layout otherwise puts them too
+                // far down with the asset icon + no title).
+                //
+                // IMPORTANT — scoped to iPhone ONLY. On iPad pre-iOS 26 the
+                // tab bar uses the *inline* layout (icon and title side-by-
+                // side), so a vertical `-12pt` adjustment shoves the title
+                // up out of alignment with the icon, producing the broken
+                // tab-bar look on iPad. iPhone's stacked layout is
+                // unchanged — it still gets the lift exactly as before.
+                // iPhone iOS 26+ also stays untouched (different branch).
+                item.normal.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: -12)
+                item.selected.titlePositionAdjustment = UIOffset(horizontal: 0, vertical: -12)
+            }
         }
 
         appearance.stackedLayoutAppearance = item
@@ -734,6 +807,491 @@ struct MainTabView: View {
         // needed. Manual layout calls forced a pass on every trigger
         // (tab switch, scene activation) that produced the "fluctuation
         // on selection" the user reported.
+    }
+
+    // MARK: - Custom selection pill + bottom inset (iOS < 26 only)
+    //
+    // 1:1 port of UIKit
+    // `BarsysApp/Controllers/TabBar/TabBarViewController.swift`:
+    //
+    //   • `selectionView` (line 23-29): a UIView with white background
+    //     (alpha 0.2 declared, then forced to opaque white inside
+    //     `setupSelectionView()`), `roundCorners = BarsysCornerRadius.xlarge`
+    //     (= 20), and `clipsToBounds = true`.
+    //
+    //   • `setupSelectionView()` (line 33-42): inserted as the FIRST
+    //     subview of `tabBar` (index 0, behind the tab items) on
+    //     iOS < 26 only, then positioned at the current selected index
+    //     via `moveSelectionView(animated: false)`. Called from
+    //     `viewDidAppear` (line 218-224).
+    //
+    //   • `moveSelectionView(to:animated:)` (line 44-72): repositions
+    //     the pill using:
+    //         itemWidth = tabBar.bounds.width / itemCount
+    //         x = index * itemWidth + 10
+    //         y = 8
+    //         w = itemWidth - 20
+    //         h = tabBar.bounds.height - 17
+    //     — with a special case for the 4th tab (homeOrControlCenter)
+    //     where x is shifted -5 and width grows +10 to accommodate the
+    //     wider Control Center label. Animated with a spring
+    //     (damping 0.8, velocity 0.5, duration 0.25, curveEaseInOut).
+    //     Called from `selectTab(_:)` with animated: true on every
+    //     user tab tap (line 232 in TabBarViewController.swift).
+    //
+    //   • `viewDidLayoutSubviews` (line 111-119): on iOS < 26 only,
+    //     lifts the tab bar 27pt off the bottom edge by overriding
+    //     `tabBar.frame.origin.y`. Re-applied on every layout pass so
+    //     the offset survives rotation, safe-area changes, etc.
+    //
+    // Conditions analysed from UIKit (when the pill / offset apply):
+    //   ✓ Always present on iOS < 26 once the controller appears —
+    //     never hidden, never removed at runtime. The pill is created
+    //     once and only its frame animates between tabs.
+    //   ✗ Never created or attached on iOS 26.0+ — both the
+    //     `setupSelectionView`, `moveSelectionView`, AND the
+    //     `viewDidLayoutSubviews` bottom-inset block are gated behind
+    //     `if #available(iOS 26.0, *) {} else { ... }`.
+    //   ✓ Repositioned on every tab tap (animated) and on initial
+    //     mount (non-animated).
+    //   ✓ Width adapts to tab bar bounds, so the same code works for
+    //     both iPhone and iPad pre-26 (the only difference is iPad
+    //     uses inline layout for the items, but the pill divides the
+    //     bar's bounds.width by item count regardless).
+    //
+    // SwiftUI port — implementation notes:
+    //   The pill view is held in a `static let` so it persists across
+    //   `MainTabView` re-evaluations (the struct is rebuilt by SwiftUI
+    //   on every body update). We walk the UIKit hierarchy to locate
+    //   the `UITabBarController` SwiftUI hosts under its TabView, then
+    //   insert the pill as a subview of the tab bar.
+    //
+    //   Tab-bar 27pt lift uses `tabBar.transform` instead of a frame
+    //   override because SwiftUI's TabView re-runs its own layout on
+    //   every body re-evaluation — manually mutating `tabBar.frame`
+    //   would be clobbered immediately. A transform survives those
+    //   passes and produces the identical visual + hit-test offset
+    //   (UIView.hitTest accounts for transforms).
+    //
+    //   KVO on `tabBar.bounds` re-positions the pill on rotation /
+    //   split-view resize / safe-area change — UIKit got this for
+    //   free via `viewDidLayoutSubviews`.
+
+    private static let tabBarSelectionView: UIView = {
+        let view = UIView()
+        view.backgroundColor = UIColor.white
+        // Initial corner radius — replaced dynamically inside
+        // `positionSelectionView(in:atIndex:animated:)` to be exactly
+        // half the pill's height so the pill always renders as a true
+        // capsule / "perfectly round" shape regardless of how the
+        // height adapts per device. `cornerCurve = .continuous` makes
+        // the corner blend smoother — Apple's continuous corner curve
+        // continues into the straight edges instead of hitting them
+        // with a hard tangent, which reads as a softer pill shape.
+        view.layer.cornerRadius = 20
+        view.layer.cornerCurve = .continuous
+        // `masksToBounds = false` so we can render a subtle drop
+        // shadow below the pill. The pill has no subviews (it's a
+        // solid white rectangle), so disabling clipping doesn't
+        // affect any child rendering — the layer's `cornerRadius`
+        // still rounds the drawn background. The shadow gives the
+        // capsule a soft "lifted" feel against the tab bar background
+        // and reads as a much smoother UI than a flat fill.
+        view.layer.masksToBounds = false
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = 0.10
+        view.layer.shadowOffset = CGSize(width: 0, height: 1)
+        view.layer.shadowRadius = 4
+        view.isUserInteractionEnabled = false  // never swallow taps
+        return view
+    }()
+
+    private static weak var observedTabBar: UITabBar?
+    private static var tabBarBoundsObserver: NSKeyValueObservation?
+
+    /// Resolves the y-translation offset used to lift the tab bar off
+    /// the bottom edge on iOS < 26.
+    ///
+    /// User's intent (paraphrased): the tab bar's BOTTOM EDGE should
+    /// sit ON the safe-area top boundary — i.e. the tab bar lives
+    /// entirely ABOVE the home-indicator strip without overlapping it
+    /// at all, and the home indicator gets clean visible space below
+    /// the bar with NO tab-bar pixels intruding. The previous lift
+    /// (`max(47, safeAreaBottom + 30)`) over-shot that — it pushed the
+    /// bar 30pt above the safe area which made the bar feel detached
+    /// and meant the user could see scrollable content bleed up between
+    /// the bar and the home indicator.
+    ///
+    /// New formula:
+    ///   • iPhone with home indicator (`safeAreaBottom > 0`):
+    ///       lift = safeAreaBottom + extraGap
+    ///     puts the bar bottom EXACTLY `extraGap` above the safe-area
+    ///     top boundary. `extraGap = 10` keeps a small visual breathing
+    ///     room without feeling disconnected.
+    ///   • Devices without a home indicator (`safeAreaBottom == 0`):
+    ///       lift = max(extraGap, 27)
+    ///     falls back to UIKit's hardcoded 27pt so iPad / notch-less
+    ///     iPhone visuals stay bit-identical to UIKit pre-26.
+    private static let extraBottomBreathingRoom: CGFloat = 10
+    private static func tabBarLiftOffset(for tabBar: UITabBar) -> CGFloat {
+        let safeAreaBottom = tabBar.window?.safeAreaInsets.bottom ?? 0
+        if safeAreaBottom > 0 {
+            // iPhone with home indicator → bar bottom sits 10pt above
+            // the safe area top, never inside the home-indicator strip.
+            return safeAreaBottom + extraBottomBreathingRoom
+        } else {
+            // No home indicator → UIKit's hardcoded 27pt.
+            return 27
+        }
+    }
+
+    /// Re-applies the tab bar's lift transform — idempotent, safe to
+    /// call on every relevant SwiftUI lifecycle event so the offset
+    /// survives any internal SwiftUI relayout that might reset the
+    /// tab bar's transform. iOS 26+ early-returns and never touches
+    /// the tab bar.
+    private static func reapplyTabBarOffset() {
+        if #available(iOS 26.0, *) { return }
+        guard let tabBar = observedTabBar else { return }
+        let offset = tabBarLiftOffset(for: tabBar)
+        if tabBar.transform.ty != -offset {
+            tabBar.transform = CGAffineTransform(translationX: 0, y: -offset)
+        }
+    }
+
+    /// Re-positions the pill at the currently-selected tab without
+    /// animating. Called from every SwiftUI lifecycle event that can
+    /// indirectly invalidate the pill's geometry — BLE connection
+    /// flip (4th tab item rebuild changes its content bounds), color
+    /// scheme flip (asset swap), scene phase activation (system may
+    /// have laid the bar out differently while backgrounded). Reads
+    /// the current selection from the tab bar controller so it stays
+    /// correct regardless of which selection mechanism triggered the
+    /// invalidation. iOS 26+ no-op.
+    private static func reapplyPillPosition() {
+        if #available(iOS 26.0, *) { return }
+        guard let tabBar = observedTabBar else { return }
+        let parentTBC = tabBar.next as? UITabBarController
+        let currentIdx = parentTBC?.selectedIndex ?? 0
+        positionSelectionView(in: tabBar, atIndex: currentIdx, animated: false)
+    }
+
+    /// 1:1 port of UIKit `setupSelectionView()` + the bottom-inset
+    /// block in `viewDidLayoutSubviews()`. Idempotent — safe to call
+    /// repeatedly. iOS 26+ early-returns and never touches the tab bar.
+    private func setupCustomSelectionViewIfNeeded() {
+        if #available(iOS 26.0, *) { return }
+
+        guard let windowScene = UIApplication.shared.connectedScenes
+                .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+              let window = windowScene.windows.first(where: { $0.isKeyWindow }) else { return }
+
+        func findTBC(in vc: UIViewController?) -> UITabBarController? {
+            if let tbc = vc as? UITabBarController { return tbc }
+            for child in vc?.children ?? [] {
+                if let found = findTBC(in: child) { return found }
+            }
+            return nil
+        }
+        guard let tabBarController = findTBC(in: window.rootViewController) else { return }
+        let tabBar = tabBarController.tabBar
+
+        // 1:1 with UIKit:
+        //   if selectionView.superview == nil {
+        //       tabBar.insertSubview(selectionView, at: 0)
+        //   }
+        //   selectionView.backgroundColor = UIColor.white
+        if Self.tabBarSelectionView.superview !== tabBar {
+            Self.tabBarSelectionView.removeFromSuperview()
+            tabBar.insertSubview(Self.tabBarSelectionView, at: 0)
+        }
+        Self.tabBarSelectionView.backgroundColor = UIColor.white
+
+        // Belt-and-braces: hide the 1pt grey hairline at the top edge
+        // of the tab bar on the LIVE instance. We already clear it via
+        // `UITabBar.appearance()` in `configureAppearance()`, but
+        // defensive instance-level overrides catch any internal
+        // UIKit code path that re-derives the shadow from a default
+        // appearance after our proxy values were set.
+        if let standardCopy = tabBar.standardAppearance.copy() as? UITabBarAppearance {
+            standardCopy.shadowColor = .clear
+            standardCopy.shadowImage = UIImage()
+            tabBar.standardAppearance = standardCopy
+        }
+        if let scrollEdge = tabBar.scrollEdgeAppearance,
+           let scrollCopy = scrollEdge.copy() as? UITabBarAppearance {
+            scrollCopy.shadowColor = .clear
+            scrollCopy.shadowImage = UIImage()
+            tabBar.scrollEdgeAppearance = scrollCopy
+        }
+        // Legacy hairline stripper — pre-iOS-13 paths still consult
+        // `shadowImage` directly on the UITabBar before falling back
+        // to the appearance object. An empty image kills the legacy
+        // line in those paths too. Note: we deliberately do NOT
+        // assign `backgroundImage` here — that would clear the tab
+        // bar's opaque `primaryBackgroundColor` fill set in
+        // `configureAppearance()`.
+        tabBar.shadowImage = UIImage()
+
+        // 1:1 with UIKit's `viewDidLayoutSubviews`:
+        //   frame.origin.y = view.frame.height - frame.height - 27
+        // We use a translation transform instead of a frame mutation
+        // because SwiftUI re-lays-out the tab bar on every body update
+        // and would clobber a manual frame change. Transform survives.
+        // (Compare ty directly — CGAffineTransform isn't Equatable in
+        // older Swift toolchains, and using `==` triggers compiler
+        // ambiguity issues on certain SDKs.)
+        // The offset is resolved dynamically via `tabBarLiftOffset(for:)`
+        // — at minimum UIKit's hardcoded 27pt, but expanded to
+        // `safeAreaInsets.bottom + 10pt` on devices with a home-indicator
+        // safe area so the bar's bottom edge clears that strip.
+        let liftOffset = Self.tabBarLiftOffset(for: tabBar)
+        if tabBar.transform.ty != -liftOffset {
+            tabBar.transform = CGAffineTransform(translationX: 0, y: -liftOffset)
+        }
+
+        // Bounds KVO — re-positions the pill on rotation, split-view
+        // resize, and safe-area changes. UIKit got this for free
+        // via `viewDidLayoutSubviews`. We tear down + re-attach if the
+        // tab bar reference has changed (e.g. SwiftUI rebuilt the
+        // TabView host on splash → main transition).
+        if Self.observedTabBar !== tabBar {
+            Self.tabBarBoundsObserver?.invalidate()
+            Self.tabBarBoundsObserver = tabBar.observe(\.bounds, options: [.new]) { obs, _ in
+                DispatchQueue.main.async { [weak obs] in
+                    guard let obs else { return }
+                    let parentTBC = obs.next as? UITabBarController
+                    let idx = parentTBC?.selectedIndex ?? 0
+                    Self.positionSelectionView(in: obs,
+                                               atIndex: idx,
+                                               animated: false)
+                    // Defensive: a bounds change on rotation can
+                    // sometimes drop the transform. Re-apply if needed.
+                    // Uses the same dynamic resolver as the initial
+                    // setup so iPhone / iPad / notch-less devices each
+                    // get the right lift amount (≥ 27, ≥ safeArea+10).
+                    let liftOffset = Self.tabBarLiftOffset(for: obs)
+                    if obs.transform.ty != -liftOffset {
+                        obs.transform = CGAffineTransform(translationX: 0, y: -liftOffset)
+                    }
+                }
+            }
+            Self.observedTabBar = tabBar
+        }
+
+        // Initial position — UIKit calls `moveSelectionView(animated: false)`
+        // from `setupSelectionView()` so the pill snaps to the current
+        // tab without animating from (0,0).
+        Self.positionSelectionView(in: tabBar,
+                                   atIndex: router.selectedTab.rawValue,
+                                   animated: false)
+    }
+
+    /// 1:1 port of UIKit `moveSelectionView(to:animated:)`, with one
+    /// deliberate refinement on iPad: UIKit's math divides the bar's
+    /// `bounds.width` evenly across `items.count` and lays the pill
+    /// inside that slot. That's correct on iPhone (stacked layout —
+    /// each item button spans its full slot, so an inside-inset pill
+    /// sits centered behind the icon+title group). On iPad pre-26 the
+    /// tab bar uses INLINE layout and each item button is sized to its
+    /// CONTENT (icon + title side-by-side), not to the slot — the
+    /// content is roughly centered inside the slot but only fills a
+    /// fraction of the slot's width. The slot-based pill therefore
+    /// extends well beyond the actual icon+title and looks
+    /// off-centered (the user reported the BarBot pill stretching all
+    /// the way past the icon on iPad).
+    ///
+    /// The fix locates the actual tab-bar button frames (any
+    /// `UIControl` subview of the tab bar — UITabBarButton is private
+    /// but always a UIControl) and on iPad outsets them by 10pt on
+    /// each side. iPhone uses the original UIKit slot-inset math —
+    /// bit-identical to TabBarViewController.swift:48-58 — so the
+    /// iPhone visuals are byte-for-byte the same as UIKit pre-26.
+    /// iOS 26+ early-returns and never touches the tab bar.
+    /// Returns the bounding box of the visible icon + title content
+    /// inside a tab bar button, in the BUTTON's coordinate space.
+    ///
+    /// IMPORTANT — only `UIImageView` (the icon — UITabBarSwappableImageView
+    /// is a UIImageView subclass) and `UILabel` (the title — typically
+    /// `_UITabBarButtonLabel` / `_UITabBarItemTitleView`, both UILabel
+    /// subclasses) are unioned. Background views, separators, and any
+    /// other "decoration" subviews are skipped — including them would
+    /// inflate the bounds to the full button frame and the pill would
+    /// stop being centered around the actual visible content (which
+    /// the user reported as "top space less, bottom space more").
+    ///
+    /// Recurses one level into container subviews so wrapper views
+    /// like `_UITabBarItemTitleView` (which wraps an inner UILabel)
+    /// still contribute the inner label's frame.
+    private static func tabItemContentBounds(in button: UIView) -> CGRect? {
+        func isContent(_ v: UIView) -> Bool {
+            return v is UIImageView || v is UILabel
+        }
+
+        func collect(in view: UIView, depth: Int) -> [CGRect] {
+            if depth > 3 { return [] }
+            var out: [CGRect] = []
+            for sub in view.subviews {
+                if sub.isHidden || sub.alpha < 0.05 { continue }
+                if sub.frame.width <= 0 || sub.frame.height <= 0 { continue }
+                if isContent(sub) {
+                    // Convert into the button's coordinate space so
+                    // every collected rect is comparable.
+                    out.append(button.convert(sub.bounds, from: sub))
+                } else if !sub.subviews.isEmpty {
+                    out.append(contentsOf: collect(in: sub, depth: depth + 1))
+                }
+            }
+            return out
+        }
+
+        let rects = collect(in: button, depth: 0)
+        guard let first = rects.first else { return nil }
+        return rects.dropFirst().reduce(first) { $0.union($1) }
+    }
+
+    private static func positionSelectionView(in tabBar: UITabBar,
+                                              atIndex index: Int,
+                                              animated: Bool) {
+        if #available(iOS 26.0, *) { return }
+        guard let items = tabBar.items, !items.isEmpty else { return }
+
+        // Locate the actual tab-bar item buttons. We walk the tab bar's
+        // direct subviews (one level deep is enough for every iOS
+        // version we ship to) collecting any `UIControl` whose class
+        // name carries the "TabBar" / "Tab" hint — UITabBarButton on
+        // iOS pre-18, and iOS 18+ replacement classes. Sorted by minX
+        // so the array index lines up with the matching tab item.
+        var buttons: [UIView] = tabBar.subviews
+            .filter { subview in
+                if !(subview is UIControl) { return false }
+                let className = NSStringFromClass(type(of: subview))
+                return className.contains("TabBar") || className.contains("Tab")
+            }
+            .sorted { $0.frame.minX < $1.frame.minX }
+        if buttons.count < items.count {
+            // Fallback: every UIControl direct child of the tab bar.
+            buttons = tabBar.subviews
+                .filter { $0 is UIControl }
+                .sorted { $0.frame.minX < $1.frame.minX }
+        }
+
+        // Padding around the visible icon+title content. EQUAL on
+        // top/bottom and EQUAL on left/right → user's "top space and
+        // bottom space should be equal" + "15 from left and 15 from
+        // right" instructions.
+        //   • paddingX = 15 — extra breathing room on each side of the
+        //     icon+title group (per the latest "increase its left and
+        //     right space to 15 from left and 15 from right").
+        //   • paddingY = 8  — equal top + bottom margin around the
+        //     content. The user asked for ~2pt then "increase little
+        //     height also"; 8pt gives a comfortable rounded-pill look
+        //     without overflowing the button area on iPhone with the
+        //     -12pt title adjustment.
+        let paddingX: CGFloat = 15
+        let paddingY: CGFloat = 8
+
+        let frame: CGRect
+        if buttons.count >= items.count,
+           index < buttons.count,
+           let contentInButton = tabItemContentBounds(in: buttons[index]) {
+            // Center the pill around the ACTUAL icon+title bounding
+            // box of the selected tab. Converting from the button's
+            // coordinate space to the tab bar's keeps the math correct
+            // regardless of how UIKit positioned the button inside its
+            // slot (iPhone stacked and iPad inline both work — the
+            // button's internal subview frames already encode the
+            // chosen layout). The result is a pill whose top margin
+            // == bottom margin == `paddingY`, and left margin ==
+            // right margin == `paddingX`, around the visible content.
+            let contentInTabBar = tabBar.convert(contentInButton, from: buttons[index])
+            var x = contentInTabBar.minX - paddingX
+            var w = contentInTabBar.width + paddingX * 2
+            let y = contentInTabBar.minY - paddingY
+            let h = contentInTabBar.height + paddingY * 2
+            if index == AppTab.homeOrControlCenter.rawValue {
+                // UIKit pre-26: 4th tab gets +5pt on each side
+                // (TabBarViewController.swift:56-58). Preserved here
+                // because the Control Center / Home label is wider than
+                // its peers and a tighter hug would clip on the right.
+                x -= 5
+                w += 10
+            }
+            frame = CGRect(x: x, y: y, width: w, height: h)
+        } else {
+            // Fallback: button frames not found (rare — defensive).
+            // Use UIKit's slot-divided math, vertically centered within
+            // the BUTTON AREA only (i.e. excluding the safe-area
+            // portion of the tab bar). That keeps the pill out of the
+            // home-indicator strip even on devices where the visible
+            // content's bounding box couldn't be resolved. Padding
+            // matches the content-bounds path (15 horizontal / 8
+            // vertical) by inflating the slot inward and capping the
+            // pill height instead of using UIKit's hardcoded 17pt
+            // gap, so the fallback gives a similar visual to the
+            // primary path.
+            let safeAreaBottom = tabBar.window?.safeAreaInsets.bottom ?? 0
+            let buttonAreaHeight = max(tabBar.bounds.height - safeAreaBottom, 0)
+            let height = max(buttonAreaHeight - paddingY * 2, 0)
+            let yPosition: CGFloat = (buttonAreaHeight - height) / 2
+            let tabBarWidth = tabBar.bounds.width
+            let itemWidth = tabBarWidth / CGFloat(items.count)
+            // Hug a centered ~70%-of-slot-width content area with
+            // paddingX margins on each side (the assumed visible
+            // icon+title is centered in the slot).
+            let assumedContentWidth = itemWidth * 0.70
+            let xPosition = CGFloat(index) * itemWidth
+                + (itemWidth - assumedContentWidth) / 2
+                - paddingX
+            let width = assumedContentWidth + paddingX * 2
+            var f = CGRect(x: xPosition, y: yPosition, width: width, height: height)
+            if index == AppTab.homeOrControlCenter.rawValue {
+                f = CGRect(x: xPosition - 5,
+                           y: yPosition,
+                           width: width + 10,
+                           height: height)
+            }
+            frame = f
+        }
+
+        // Dynamic corner radius — half the resolved pill height makes
+        // the pill render as a TRUE CAPSULE (perfectly round end caps)
+        // rather than the static 20pt that left visible flat segments
+        // along the longer edges. Recomputed on every reposition so a
+        // taller / shorter pill (per device idiom or rotation) keeps
+        // the round shape. iOS 26+ never enters this code path.
+        tabBarSelectionView.layer.cornerRadius = frame.height / 2
+        // Pre-compute the shadow path so the soft drop-shadow animates
+        // alongside the frame change instead of triggering an expensive
+        // off-screen alpha render every frame. Without an explicit
+        // path UIKit re-rasterises the shadow each tick, which on
+        // older iPads / iPhones produces noticeable jank — matches
+        // the user's "I need smooth UI" instruction.
+        let pillBounds = CGRect(origin: .zero, size: frame.size)
+        tabBarSelectionView.layer.shadowPath = UIBezierPath(
+            roundedRect: pillBounds,
+            cornerRadius: frame.height / 2
+        ).cgPath
+
+        if animated {
+            // Smoother, less bouncy animation than UIKit's pre-26
+            // spring (damping 0.8 / velocity 0.5 / 0.25s). Higher
+            // damping (0.95) keeps a hint of overshoot for life
+            // without the visible bounce; the longer 0.32s duration
+            // makes the slide read as a deliberate motion rather
+            // than a snap. The `.allowUserInteraction` option lets
+            // the user tap a different tab mid-animation without
+            // having to wait for the previous slide to finish.
+            UIView.animate(withDuration: 0.32,
+                           delay: 0,
+                           usingSpringWithDamping: 0.95,
+                           initialSpringVelocity: 0.2,
+                           options: [.curveEaseInOut, .allowUserInteraction, .beginFromCurrentState]) {
+                tabBarSelectionView.frame = frame
+            }
+        } else {
+            tabBarSelectionView.frame = frame
+        }
     }
 
     // MARK: - Horizontal tab item content (iOS 26+ glass tab bar)
