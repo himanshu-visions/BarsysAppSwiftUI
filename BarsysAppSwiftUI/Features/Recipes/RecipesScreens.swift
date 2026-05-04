@@ -474,9 +474,12 @@ struct ExploreRecipesView: View {
         // visual is unchanged.
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
-                // Title — "All Recipes" 24pt, appBlackColor, leading 24, top 58
+                // Title — "All Recipes" 24pt, appBlackColor, leading 24, top 58.
+                // iPad bumps to 32pt so the screen title matches the
+                // Ready to Pour title size on the wider canvas.
+                // iPhone unchanged.
                 Text("All Recipes")
-                    .font(.system(size: 24))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 24)
@@ -748,6 +751,14 @@ struct RecipeRowCell: View {
             return Theme.Color.softWhiteText
         }
     }
+    /// iPad bumps the row text to a comfortable scale on the wider
+    /// canvas. iPhone stays bit-identical to the UIKit storyboard
+    /// 16pt / 10pt spec.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    private var titleFontSize: CGFloat { isIPad ? 22 : 16 }
+    private var ingredientsFontSize: CGFloat { isIPad ? 15 : 10 }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -755,7 +766,7 @@ struct RecipeRowCell: View {
             // Uniform row height: title 3 lines, ingredients 6 lines max.
             VStack(alignment: .leading, spacing: 12) {
                 Text(recipe.displayName)
-                    .font(.system(size: 16))
+                    .font(.system(size: titleFontSize))
                     .foregroundStyle(Color("charcoalGrayColor"))
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
@@ -763,7 +774,7 @@ struct RecipeRowCell: View {
 
                 if let names = recipe.ingredientNames, !names.isEmpty {
                     Text(names)
-                        .font(.system(size: 10))
+                        .font(.system(size: ingredientsFontSize))
                         .foregroundStyle(Color("mediumLightGrayColor"))
                         .lineLimit(6)
                         .multilineTextAlignment(.leading)

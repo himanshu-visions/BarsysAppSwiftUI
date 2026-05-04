@@ -1131,6 +1131,11 @@ struct BarsysRecipeRow: View {
     private var isIPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
+    /// iPad bumps row text fonts to a comfortable scale on the wider
+    /// canvas. iPhone stays bit-identical to the UIKit storyboard
+    /// 16pt / 10pt spec.
+    private var titleFontSize: CGFloat { isIPad ? 22 : 16 }
+    private var ingredientsFontSize: CGFloat { isIPad ? 15 : 10 }
 
     var body: some View {
         if isIPad {
@@ -1162,7 +1167,7 @@ struct BarsysRecipeRow: View {
                 // Left half — title + ingredients
                 VStack(alignment: .leading, spacing: 12) {
                     Text(recipe.displayName)
-                        .font(.system(size: 16))
+                        .font(.system(size: titleFontSize))
                         .foregroundStyle(Color("charcoalGrayColor"))
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
@@ -1170,7 +1175,7 @@ struct BarsysRecipeRow: View {
 
                     if let info = recipe.ingredientNames, !info.isEmpty {
                         Text(info)
-                            .font(.system(size: 10))
+                            .font(.system(size: ingredientsFontSize))
                             .foregroundStyle(Color("mediumLightGrayColor"))
                             .lineLimit(6)
                             .multilineTextAlignment(.leading)

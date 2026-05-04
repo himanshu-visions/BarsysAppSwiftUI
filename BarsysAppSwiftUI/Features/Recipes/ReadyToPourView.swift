@@ -157,9 +157,11 @@ struct ReadyToPourView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Title — UIKit: x=24 y=65, system 24pt, appBlackColor, 2 lines
+            // Title — UIKit: x=24 y=65, system 24pt, appBlackColor, 2 lines.
+            // iPad bumps to 32pt so the screen title scales with the
+            // larger row fonts on the wider canvas. iPhone unchanged.
             Text(screenTitle)
-                .font(.system(size: 24))
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                 .foregroundStyle(Color("appBlackColor"))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -368,17 +370,35 @@ struct ReadyToPourView: View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(source) { recipe in
-                    Button {
-                        router.push(.recipeDetail(recipe.id))
-                    } label: {
+                    // iPad uses a leaf-level tap (attached inside
+                    // `ReadyToPourRecipeRow`) so the inner Favourite
+                    // and Craft buttons receive their own taps —
+                    // matches the BarsysRecipeRow / RecipeRowCell /
+                    // MixlistDetailRecipeRow fix for the same SwiftUI
+                    // hit-test routing problem on iPad. iPhone keeps
+                    // the original outer Button wrapper bit-identical.
+                    if UIDevice.current.userInterfaceIdiom == .pad {
                         ReadyToPourRecipeRow(
                             recipe: recipe,
                             cellHeight: rowHeight,
                             onFavourite: { toggleFavourite(recipe) },
-                            onCraft: { craftRecipe(recipe) }
+                            onCraft: { craftRecipe(recipe) },
+                            onOpen: { router.push(.recipeDetail(recipe.id)) }
                         )
+                    } else {
+                        Button {
+                            router.push(.recipeDetail(recipe.id))
+                        } label: {
+                            ReadyToPourRecipeRow(
+                                recipe: recipe,
+                                cellHeight: rowHeight,
+                                onFavourite: { toggleFavourite(recipe) },
+                                onCraft: { craftRecipe(recipe) },
+                                onOpen: { router.push(.recipeDetail(recipe.id)) }
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 24)
@@ -1004,6 +1024,12 @@ struct ReadyToPourRecipeRow: View {
     let cellHeight: CGFloat
     let onFavourite: () -> Void
     let onCraft: () -> Void
+    /// iPad-only navigation tap. Wired from the call site so the
+    /// inner Favourite / Craft buttons can receive their own taps
+    /// without competing with an outer Button wrapper. iPhone path
+    /// keeps the existing outer-`Button` row navigation and ignores
+    /// this closure.
+    var onOpen: () -> Void = {}
 
     /// Reactive dark-mode awareness. UIKit
     /// `PrimaryOrangeButton.makeOrangeStyle()` pins the brand gradient
@@ -1025,24 +1051,49 @@ struct ReadyToPourRecipeRow: View {
         return raw.getImageUrl()
     }
 
+    /// iPad gets a chunkier layout — bigger fonts, taller craft pill,
+    /// and a 60×60 favourite hit target — so the row reads at a
+    /// comfortable scale on the wider canvas. iPhone is bit-identical.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    /// Title font — UIKit row used 16pt; iPad bumps to 22pt so the
+    /// drink name reads at a comfortable size on the wider canvas.
+    private var titleFontSize: CGFloat { isIPad ? 22 : 16 }
+    /// Ingredients subtitle font — UIKit row used 10pt; iPad bumps
+    /// to 15pt to keep proportional with the larger title.
+    private var ingredientsFontSize: CGFloat { isIPad ? 15 : 10 }
+    /// Craft button label font — UIKit row used 10pt semibold; iPad
+    /// bumps to 15pt and the button height to 40pt so the pill is a
+    /// proper tap target.
+    private var craftFontSize: CGFloat { isIPad ? 15 : 10 }
+    private var craftButtonHeight: CGFloat { isIPad ? 40 : 29 }
+
     var body: some View {
         HStack(spacing: 0) {
-            // Left half — title + ingredients + craft button
-            VStack(alignment: .leading, spacing: 0) {
+            // Left half — title + ingredients + craft button.
+            //
+            // Layout knobs gate iPad-only spacing changes so the row
+            // visually matches the Explore / Cocktails Kit / Favorites
+            // / Mixlist Detail rows (all use VStack spacing 12 +
+            // padding vertical 16). iPhone path keeps the original
+            // spacing 0 + per-element top paddings — bit-identical to
+            // before this fix.
+            VStack(alignment: .leading, spacing: isIPad ? 12 : 0) {
                 Text(recipe.displayName)
-                    .font(.system(size: 16))
+                    .font(.system(size: titleFontSize))
                     .foregroundStyle(Color("charcoalGrayColor"))
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 16)
+                    .padding(.top, isIPad ? 0 : 16)
 
                 if let info = recipe.ingredientNames, !info.isEmpty {
                     Text(info)
-                        .font(.system(size: 10))
+                        .font(.system(size: ingredientsFontSize))
                         .foregroundStyle(Color("mediumLightGrayColor"))
                         .lineLimit(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 4)
+                        .padding(.top, isIPad ? 0 : 4)
                 }
 
                 Spacer(minLength: 0)
@@ -1068,7 +1119,7 @@ struct ReadyToPourRecipeRow: View {
                     onCraft()
                 } label: {
                     Text(Constants.craftTitle)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: craftFontSize, weight: .semibold))
                         // Dark-mode override: same as
                         // `RecipesScreens` Craft-button text at
                         // line 1431 — hard-code `.black` when the
@@ -1083,52 +1134,50 @@ struct ReadyToPourRecipeRow: View {
                                          ? Color.black
                                          : Color("appBlackColor"))
                         .frame(maxWidth: .infinity)
-                        .frame(height: 29)
+                        .frame(height: craftButtonHeight)
                         .background(craftButtonBackground)
                         .overlay(craftButtonBorder)
                         .clipShape(craftButtonShape)
                 }
                 .buttonStyle(BounceButtonStyle())
-                .padding(.bottom, 12)
+                .padding(.bottom, isIPad ? 0 : 12)
             }
             .padding(.horizontal, 16)
+            // iPad-only outer vertical padding to match the Explore /
+            // Cocktails Kit / Favorites / Mixlist Detail rows
+            // (`.padding(.vertical, 16)`). iPhone keeps zero outer
+            // vertical padding because per-element `.padding(.top, …)`
+            // already places title/ingredients/craft correctly.
+            .padding(.vertical, isIPad ? 16 : 0)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+            // iPad-only leaf-level tap so row navigation fires without
+            // wrapping the row in an outer Button (which would swallow
+            // the inner Favourite / Craft button taps on iPad). iPhone
+            // path is a pass-through — the call-site outer Button
+            // handles row navigation.
+            .modifier(ReadyToPourRowTapModifier(active: isIPad, onTap: onOpen))
 
-            // Right half — image + favourite button
-            ZStack(alignment: .topTrailing) {
-                AsyncImage(url: optimizedImageURL) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    case .empty:
-                        Color("lightBorderGrayColor")
-                    case .failure:
-                        Image("myDrink")
-                            .resizable().aspectRatio(contentMode: .fit)
-                            .padding(16)
-                    @unknown default:
-                        Color("lightBorderGrayColor")
-                    }
-                }
-                .frame(width: cellHeight, height: cellHeight)
-                .background(Color("lightBorderGrayColor"))
-                .clipped()
-
-                // Favourite button — UIKit: 30×30 (40×40 iOS 26+), prominentGlass.
-                // Glass background lives INSIDE the label so it scales with
-                // the BounceButtonStyle press animation.
-                Button { onFavourite() } label: {
-                    Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+            // Right half — image (favourite button moved to outer container)
+            AsyncImage(url: optimizedImageURL) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().aspectRatio(contentMode: .fill)
+                case .empty:
+                    Color("lightBorderGrayColor")
+                case .failure:
+                    Image("myDrink")
                         .resizable().aspectRatio(contentMode: .fit)
-                        .frame(width: 22, height: 22)
-                        .frame(width: favButtonSize, height: favButtonSize)
-                        .foregroundStyle(favButtonTint)
-                        .glassButtonIfAvailable(size: favButtonSize)
+                        .padding(16)
+                @unknown default:
+                    Color("lightBorderGrayColor")
                 }
-                .buttonStyle(BounceButtonStyle())
-                .padding(.top, 5)
-                .padding(.trailing, 5)
             }
+            .frame(width: cellHeight, height: cellHeight)
+            .background(Color("lightBorderGrayColor"))
+            .clipped()
+            // iPad-only leaf-level tap on the image area too — see
+            // the VStack modifier above for rationale.
+            .modifier(ReadyToPourRowTapModifier(active: isIPad, onTap: onOpen))
         }
         .frame(height: cellHeight)
         .background(
@@ -1140,11 +1189,48 @@ struct ReadyToPourRecipeRow: View {
                 .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // Favourite button lives at the OUTER row container (after the
+        // clipShape) — NOT inside the AsyncImage's ZStack — so its hit
+        // testing isn't competing with any inner gesture. Same fix
+        // applied to BarsysRecipeRow / RecipeRowCell /
+        // MixlistDetailRecipeRow when QA reported the heart icon was
+        // un-tappable on iPad.
+        // 1:1 with UIKit `aHb-2f-Xkm`: top=5, trailing=5.
+        .overlay(alignment: .topTrailing) {
+            Button {
+                onFavourite()
+            } label: {
+                Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                    .resizable().aspectRatio(contentMode: .fit)
+                    .frame(width: favIconSize, height: favIconSize)
+                    .frame(width: favButtonSize, height: favButtonSize)
+                    .foregroundStyle(favButtonTint)
+                    .glassButtonIfAvailable(size: favButtonSize)
+            }
+            .buttonStyle(BounceButtonStyle())
+            .accessibilityLabel(isFavourite
+                                ? "Remove from favourites"
+                                : "Add to favourites")
+            .padding(.top, 5)
+            .padding(.trailing, 5)
+        }
         .padding(.bottom, 12)
     }
 
+    /// UIKit BarsysRecipeTableViewCell L63-77: iOS 26 uses 40×40 glass
+    /// buttons with black@0.3 tint; pre-26 uses 30×30 plain buttons
+    /// with white tint. iPad bumps to 60×60 — same QA-driven sizing
+    /// fix applied to BarsysRecipeRow / RecipeRowCell /
+    /// MixlistDetailRecipeRow so the heart is reliably tappable on
+    /// the wider iPad canvas.
     private var favButtonSize: CGFloat {
+        if isIPad { return 60 }
         if #available(iOS 26.0, *) { return 40 } else { return 30 }
+    }
+    /// Glyph size INSIDE the button frame — iPad bumps to 36pt to
+    /// scale in proportion with the larger 60pt button frame.
+    private var favIconSize: CGFloat {
+        isIPad ? 36 : 22
     }
     private var favButtonTint: Color {
         if #available(iOS 26.0, *) {
@@ -1220,6 +1306,25 @@ struct ReadyToPourRecipeRow: View {
     }
 }
 
+/// iPad-only leaf-level tap modifier. iPhone path is a complete
+/// pass-through so the existing call-site outer
+/// `Button(action: navigate)` continues to drive row navigation
+/// bit-identical to before.
+private struct ReadyToPourRowTapModifier: ViewModifier {
+    let active: Bool
+    let onTap: () -> Void
+
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture { onTap() }
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - MixlistRowForReadyToPour (simplified mixlist cell)
 
 struct MixlistRowForReadyToPour: View {
@@ -1231,18 +1336,27 @@ struct MixlistRowForReadyToPour: View {
         return raw.getImageUrl()
     }
 
+    /// iPad bumps the row text to a comfortable scale on the wider
+    /// canvas — matches the same per-device font ramp applied to
+    /// `ReadyToPourRecipeRow`. iPhone is bit-identical.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    private var titleFontSize: CGFloat { isIPad ? 22 : 16 }
+    private var ingredientsFontSize: CGFloat { isIPad ? 15 : 10 }
+
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 Text(mixlist.displayName)
-                    .font(.system(size: 16))
+                    .font(.system(size: titleFontSize))
                     .foregroundStyle(Color("charcoalGrayColor"))
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let info = mixlist.ingredientNames, !info.isEmpty {
                     Text(info)
-                        .font(.system(size: 10))
+                        .font(.system(size: ingredientsFontSize))
                         .foregroundStyle(Color("mediumLightGrayColor"))
                         .lineLimit(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
