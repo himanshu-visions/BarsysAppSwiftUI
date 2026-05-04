@@ -1494,8 +1494,17 @@ struct MixlistDetailRecipeRow: View {
 
     /// UIKit BarsysRecipeTableViewCell L63-77: iOS 26 uses 40×40 glass buttons
     /// with black@0.3 tint; pre-26 uses 30×30 plain buttons with white tint.
+    /// iPad bumps to 60×60 — the iPhone-spec frames read as
+    /// thumbnail-scale on the wider canvas and QA reported the
+    /// favourite icon was too small to reliably tap.
     private var favButtonSize: CGFloat {
+        if UIDevice.current.userInterfaceIdiom == .pad { return 60 }
         if #available(iOS 26.0, *) { return 40 } else { return 30 }
+    }
+    /// Glyph size INSIDE the button frame — iPad bumps to 36pt to
+    /// scale in proportion with the larger 60pt button frame.
+    private var favIconSize: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 36 : 22
     }
     private var favButtonTint: Color {
         if #available(iOS 26.0, *) {
@@ -1503,6 +1512,17 @@ struct MixlistDetailRecipeRow: View {
         } else {
             return Theme.Color.softWhiteText
         }
+    }
+
+    /// On iPad, an outer row-level gesture (Button or onTapGesture)
+    /// swallows the inner Favourite / Craft button taps — same SwiftUI
+    /// hit-test routing problem documented in `BarsysRecipeRow`. The
+    /// fix: drop the row-tap gesture from the outer container and
+    /// re-attach it to the leaf columns (text VStack + image area)
+    /// via `MixlistRowTapModifier`. iPhone keeps the original outer
+    /// `.onTapGesture { onOpen() }` bit-identical.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
     }
 
     var body: some View {
@@ -1567,46 +1587,26 @@ struct MixlistDetailRecipeRow: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+            .modifier(MixlistRowTapModifier(active: isIPad, onTap: onOpen))
 
             // Right half: explicit `cellHeight × cellHeight` square — no
             // aspect-ratio recalculation, no scroll-zoom.
-            ZStack(alignment: .topTrailing) {
-                AsyncImage(url: URL(string: recipe.imageURL)) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    case .empty:
-                        Color("lightBorderGrayColor")
-                    case .failure:
-                        Image("myDrink").resizable().aspectRatio(contentMode: .fit).padding(16)
-                    @unknown default:
-                        Color("lightBorderGrayColor")
-                    }
+            AsyncImage(url: URL(string: recipe.imageURL)) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().aspectRatio(contentMode: .fill)
+                case .empty:
+                    Color("lightBorderGrayColor")
+                case .failure:
+                    Image("myDrink").resizable().aspectRatio(contentMode: .fit).padding(16)
+                @unknown default:
+                    Color("lightBorderGrayColor")
                 }
-                .frame(width: cellHeight, height: cellHeight)
-                .background(Color("lightBorderGrayColor"))
-                .clipped()
-
-                // Favourite button — UIKit: 30×30 (40×40 iOS 26+), prominentGlass.
-                // Glass background lives INSIDE the label so it scales with
-                // the BounceButtonStyle press animation.
-                Button {
-                    HapticService.light()
-                    onFavorite()
-                } label: {
-                    Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 22, height: 22)
-                        .frame(width: favButtonSize, height: favButtonSize)
-                        .foregroundStyle(favButtonTint)
-                        .glassButtonIfAvailable(size: favButtonSize)
-                }
-                .buttonStyle(BounceButtonStyle())
-                .padding(.top, 5)
-                .padding(.trailing, 5)
-                .accessibilityLabel("Favourite")
             }
+            .frame(width: cellHeight, height: cellHeight)
+            .background(Color("lightBorderGrayColor"))
+            .clipped()
+            .modifier(MixlistRowTapModifier(active: isIPad, onTap: onOpen))
         }
         .frame(height: cellHeight)
         .background(
@@ -1626,9 +1626,70 @@ struct MixlistDetailRecipeRow: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onTapGesture { onOpen() }
+        // Favourite button lives at the OUTER row container (after the
+        // clipShape) — NOT inside the AsyncImage chain — so its hit
+        // testing isn't competing with any inner row gesture. Earlier
+        // attempts that nested the Button inside the image's ZStack
+        // left it un-tappable on iPad; moving it up here gives it a
+        // clean hit-test pass on every iOS / device combination.
+        // 1:1 with UIKit `aHb-2f-Xkm`: top=5, trailing=5.
+        .overlay(alignment: .topTrailing) {
+            Button {
+                HapticService.light()
+                onFavorite()
+            } label: {
+                Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: favIconSize, height: favIconSize)
+                    .frame(width: favButtonSize, height: favButtonSize)
+                    .foregroundStyle(favButtonTint)
+                    .glassButtonIfAvailable(size: favButtonSize)
+            }
+            .buttonStyle(BounceButtonStyle())
+            .padding(.top, 5)
+            .padding(.trailing, 5)
+            .accessibilityLabel("Favourite")
+        }
+        // iPhone-only outer row tap. iPad uses leaf-level gestures
+        // attached via `MixlistRowTapModifier` above so the favourite
+        // / Craft buttons receive their taps directly.
+        .modifier(MixlistOuterTapModifier(active: !isIPad, onTap: onOpen))
         .padding(.bottom, 12) // 12pt bottom spacer (xib `r8k-xs-Rck`)
+    }
+}
+
+/// iPad-only leaf tap. iPhone path is a pass-through so the existing
+/// outer `.onTapGesture { onOpen() }` continues to drive row navigation
+/// bit-identical to before.
+private struct MixlistRowTapModifier: ViewModifier {
+    let active: Bool
+    let onTap: () -> Void
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture { onTap() }
+        } else {
+            content
+        }
+    }
+}
+
+/// iPhone-only outer row tap (with the original `.contentShape` so
+/// taps in the empty card areas count). iPad path is a pass-through —
+/// row navigation is driven by the leaf modifiers instead.
+private struct MixlistOuterTapModifier: ViewModifier {
+    let active: Bool
+    let onTap: () -> Void
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .onTapGesture { onTap() }
+        } else {
+            content
+        }
     }
 }
 

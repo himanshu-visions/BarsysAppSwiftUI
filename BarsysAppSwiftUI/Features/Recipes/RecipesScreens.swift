@@ -337,6 +337,29 @@ struct ExploreRecipesView: View {
         if #available(iOS 26.0, *) { 20 } else { 37 }
     }
 
+    /// Wraps each Explore row so iPhone navigates via an outer
+    /// `Button(action: navigate)` (preserves the original press
+    /// styling + bit-identical hit testing) but iPad navigates via
+    /// a leaf-level `.contentShape(...).onTapGesture` instead. The
+    /// outer Button on iPad iOS 26 swallowed the inner Favourite
+    /// button's tap (same SwiftUI hit-test problem documented in
+    /// `BarsysRecipeRow` / `MixlistDetailRecipeRow`) — moving the
+    /// gesture down lets the Favourite Button receive its tap.
+    @ViewBuilder
+    private func ipadAwareRowWrapper<Row: View>(
+        navigate: @escaping () -> Void,
+        @ViewBuilder row: () -> Row
+    ) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            row()
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .onTapGesture { navigate() }
+        } else {
+            Button(action: navigate) { row() }
+                .buttonStyle(.plain)
+        }
+    }
+
     /// Source recipes for the Explore listing.
     ///
     /// Mirrors UIKit `DBQueries.fetchExploreAllRecipes()`:
@@ -503,10 +526,18 @@ struct ExploreRecipesView: View {
                     let rowHeight = cellWidth / 2
                     LazyVStack(spacing: 0) {
                         ForEach(filtered) { recipe in
-                            Button {
-                                HapticService.light()
-                                router.push(.recipeDetail(recipe.id))
-                            } label: {
+                            // iPad uses a leaf-level tap (via the
+                            // `IPadRowNavTap` modifier below) instead
+                            // of an outer `Button` — the latter
+                            // swallows the inner Favourite button's
+                            // taps on iPad iOS 26. iPhone (any iOS)
+                            // keeps the original outer Button layout.
+                            ipadAwareRowWrapper(
+                                navigate: {
+                                    HapticService.light()
+                                    router.push(.recipeDetail(recipe.id))
+                                }
+                            ) {
                                 RecipeRowCell(
                                     recipe: recipe,
                                     cellHeight: rowHeight,
@@ -544,7 +575,6 @@ struct ExploreRecipesView: View {
                                     }
                                 )
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 24)
@@ -701,8 +731,15 @@ struct RecipeRowCell: View {
 
     /// UIKit BarsysRecipeTableViewCell L63-77: iOS 26 uses 40×40 glass buttons
     /// with black@0.3 tint; pre-26 uses 30×30 plain buttons with white tint.
+    /// iPad bumps to 60×60 — same QA-driven sizing fix applied to
+    /// `BarsysRecipeRow` and `MixlistDetailRecipeRow`.
     private var favButtonSize: CGFloat {
+        if UIDevice.current.userInterfaceIdiom == .pad { return 60 }
         if #available(iOS 26.0, *) { return 40 } else { return 30 }
+    }
+    /// Glyph size INSIDE the button frame.
+    private var favIconSize: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 36 : 22
     }
     private var favButtonTint: Color {
         if #available(iOS 26.0, *) {
@@ -740,34 +777,10 @@ struct RecipeRowCell: View {
 
             // Right half — explicit `cellHeight × cellHeight` square so the
             // row never re-measures on first appearance in LazyVStack.
-            ZStack(alignment: .topTrailing) {
-                thumbnail
-                    .frame(width: cellHeight, height: cellHeight)
-                    .background(Color("lightBorderGrayColor"))
-                    .clipped()
-
-                // Favourite button — UIKit: 30×30 (40×40 iOS 26+), prominentGlass.
-                // Glass background lives INSIDE the label so it scales with
-                // the BounceButtonStyle press animation (`configuration.label`
-                // is what gets scaled — anything wrapped on the outer Button
-                // would stay static).
-                Button {
-                    HapticService.light()
-                    onFavourite()
-                } label: {
-                    Image(recipe.isFavourite == true ? "favIconRecipeSelected" : "favIconRecipe")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 22, height: 22)
-                        .frame(width: favButtonSize, height: favButtonSize)
-                        .foregroundStyle(favButtonTint)
-                        .glassButtonIfAvailable(size: favButtonSize)
-                }
-                .buttonStyle(BounceButtonStyle())
-                .padding(.top, 5)
-                .padding(.trailing, 5)
-                .accessibilityLabel("Favourite")
-            }
+            thumbnail
+                .frame(width: cellHeight, height: cellHeight)
+                .background(Color("lightBorderGrayColor"))
+                .clipped()
         }
         // Lock the row to the deterministic height — single change that
         // removes the zoom/pop on scroll.
@@ -782,6 +795,31 @@ struct RecipeRowCell: View {
                 .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // Favourite button lives at the OUTER row container (after the
+        // clipShape) — NOT inside the AsyncImage's ZStack — so its hit
+        // testing isn't competing with the call-site outer
+        // `Button(action: navigate)` wrapper. Without this move the
+        // favourite was un-tappable on iPad because the outer
+        // navigation Button absorbed every press.
+        // 1:1 with UIKit `aHb-2f-Xkm`: top=5, trailing=5.
+        .overlay(alignment: .topTrailing) {
+            Button {
+                HapticService.light()
+                onFavourite()
+            } label: {
+                Image(recipe.isFavourite == true ? "favIconRecipeSelected" : "favIconRecipe")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: favIconSize, height: favIconSize)
+                    .frame(width: favButtonSize, height: favButtonSize)
+                    .foregroundStyle(favButtonTint)
+                    .glassButtonIfAvailable(size: favButtonSize)
+            }
+            .buttonStyle(BounceButtonStyle())
+            .padding(.top, 5)
+            .padding(.trailing, 5)
+            .accessibilityLabel("Favourite")
+        }
         .padding(.bottom, 12)
     }
 
