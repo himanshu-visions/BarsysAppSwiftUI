@@ -3049,8 +3049,15 @@ struct StationsMenuView: View {
                 // dark-appearance variant (near-black).
                 brandOrangeCapsuleLabel(title: title)
             } else {
+                // Pre-iOS 26 cancel-style pill unified to 8pt corner
+                // (UIKit `BarsysCornerRadius.small`). Previously 22.5
+                // (near-pill) which was inconsistent with the brand
+                // orange button next to it now using 8pt and with
+                // every other cancel button in the app. iOS 26+ keeps
+                // the Capsule (height/2) inside `cancelCapsule` —
+                // unchanged.
                 Text(title).cancelCapsule(height: 45,
-                                          cornerRadius: 22.5,
+                                          cornerRadius: 8,
                                           textColor: textColor)
             }
         }
@@ -3108,7 +3115,14 @@ struct StationsMenuView: View {
                                 )
                             )
                     } else {
-                        RoundedRectangle(cornerRadius: 22.5,
+                        // Pre-iOS 26 unified to 8pt — matches UIKit
+                        // `PrimaryOrangeButton.makeOrangeStyle()`
+                        // pre-26 spec + every other primary-orange
+                        // button in the app (Recipe Craft, Ready to
+                        // Pour Craft, brandCapsule popup primaries).
+                        // Previously 22.5 (near-pill). iOS 26+ keeps
+                        // height/2 above — unchanged.
+                        RoundedRectangle(cornerRadius: 8,
                                          style: .continuous)
                             .fill(Theme.Color.segmentSelection)
                     }
@@ -4980,15 +4994,26 @@ struct StationCleaningView: View {
                               textColor: Color = .white,
                               stroke: Color? = nil,
                               action: @escaping () -> Void) -> some View {
+        // Pre-iOS 26 corner radius unified to 8pt (UIKit
+        // `BarsysCornerRadius.small` / `PrimaryOrangeButton.makeOrangeStyle`
+        // pre-26 / `applyCancelCapsuleGradientBorderStyle` pre-26 spec).
+        // Previously this passed 22.5 (a near-pill) on pre-26 which
+        // broke the visual rhythm with every other primary-orange and
+        // cancel-style button in the app — Recipe Craft, Ready to Pour
+        // Craft, Add to Favorites, brandCapsule popup buttons all use
+        // 8pt pre-26. iOS 26+ continues to use Capsule (height/2)
+        // inside `brandCapsule` / `cancelCapsule` regardless of the
+        // passed `cornerRadius`, so the iOS 26+ pill rendering is
+        // unchanged.
         Button {
             HapticService.light()
             action()
         } label: {
             if color == Theme.Color.brand {
-                Text(title).brandCapsule(height: 45, cornerRadius: 22.5)
+                Text(title).brandCapsule(height: 45, cornerRadius: 8)
             } else {
                 Text(title).cancelCapsule(height: 45,
-                                          cornerRadius: 22.5,
+                                          cornerRadius: 8,
                                           textColor: textColor)
             }
         }
@@ -5055,7 +5080,14 @@ struct StationCleaningView: View {
                                 )
                             )
                     } else {
-                        RoundedRectangle(cornerRadius: 22.5,
+                        // Pre-iOS 26 unified to 8pt — matches UIKit
+                        // `PrimaryOrangeButton.makeOrangeStyle()`
+                        // pre-26 spec + every other primary-orange
+                        // button in the app (Recipe Craft, Ready to
+                        // Pour Craft, brandCapsule popup primaries).
+                        // Previously 22.5 (near-pill). iOS 26+ keeps
+                        // height/2 above — unchanged.
+                        RoundedRectangle(cornerRadius: 8,
                                          style: .continuous)
                             .fill(Theme.Color.segmentSelection)
                     }

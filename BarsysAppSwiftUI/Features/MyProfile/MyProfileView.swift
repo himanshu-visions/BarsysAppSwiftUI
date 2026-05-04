@@ -1088,12 +1088,18 @@ struct MyProfileView: View {
                                          @ViewBuilder input: () -> Input,
                                          showPencil: Bool,
                                          onEdit: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // iPad-only sizing knobs. iPhone keeps storyboard 14pt label
+        // / 90pt label column / 40pt input height bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let labelSize: CGFloat = isIPad ? 18 : 14
+        let labelWidth: CGFloat = isIPad ? 120 : 90
+        let inputHeight: CGFloat = isIPad ? 48 : 40
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .bottom, spacing: 0) {
                 Text(label)
-                    .font(.system(size: 14))
+                    .font(.system(size: labelSize))
                     .foregroundStyle(labelColor ?? Color("appBlackColor"))
-                    .frame(width: 90, alignment: .leading)
+                    .frame(width: labelWidth, alignment: .leading)
                     // Label is baseline-aligned with the textfield (UIKit
                     // uses `firstItem.bottom = textField.bottom`).
                     .padding(.bottom, 6)
@@ -1102,7 +1108,7 @@ struct MyProfileView: View {
                     HStack(spacing: 0) {
                         input()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(height: 40)
+                            .frame(height: inputHeight)
 
                         if showPencil {
                             Button {
@@ -1133,9 +1139,9 @@ struct MyProfileView: View {
                 // errorLabelColor; appears indented to match the field
                 // (after the 90pt label).
                 HStack {
-                    Spacer().frame(width: 90)
+                    Spacer().frame(width: labelWidth)
                     Text(err)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: isIPad ? 16 : 13, weight: .bold))
                         .foregroundStyle(Color("errorLabelColor"))
                 }
             }
@@ -1154,7 +1160,7 @@ struct MyProfileView: View {
                            keyboard: UIKeyboardType,
                            field: EditableField) -> some View {
         TextField(placeholder, text: text)
-            .font(.system(size: 17))
+            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 20 : 17))
             .foregroundStyle(Color("appBlackColor"))
             .keyboardType(keyboard)
             .textContentType(keyboard == .emailAddress ? .emailAddress : .name)
@@ -1203,7 +1209,7 @@ struct MyProfileView: View {
                     .frame(width: 25, height: 25)
                     .foregroundStyle(Color("lightGrayColor"))
                 Text(viewModel.countryCodeDisplay)
-                    .font(.system(size: 17, weight: .light))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 20 : 17, weight: .light))
                     // UIKit `qPl-l8-7SS` textColor white 0.666 alpha 1.
                     .foregroundStyle(Color(white: 0.666))
                     .padding(.leading, 3)
@@ -1217,7 +1223,7 @@ struct MyProfileView: View {
             // as a `Text` (not a TextField) so the field never accepts
             // focus and never raises the keyboard.
             Text(viewModel.phone.isEmpty ? "Phone no." : viewModel.phone)
-                .font(.system(size: 17))
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 20 : 17))
                 .foregroundStyle(Color("lightGrayColor"))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel("Phone number")
@@ -1235,7 +1241,7 @@ struct MyProfileView: View {
         } label: {
             HStack(spacing: 0) {
                 Text(viewModel.dobDisplay.isEmpty ? "MM/DD/YYYY" : viewModel.dobDisplay)
-                    .font(.system(size: 17))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 20 : 17))
                     .foregroundStyle(viewModel.dobDisplay.isEmpty
                                      ? Color("lightGrayColor")
                                      : Color("appBlackColor"))
@@ -1280,7 +1286,7 @@ struct MyProfileView: View {
                 dismiss()
             } label: {
                 Text("Ok")
-                    .font(.system(size: 14))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14))
                     // In dark mode the button reads as a white-glass
                     // pill (matches the recipe page's "Add to Favorites"
                     // capsule) so force the label to `.black` for
@@ -1318,7 +1324,7 @@ struct MyProfileView: View {
                 // disappear. Matches the recipe-detail Craft button
                 // label (`RecipesScreens.swift` — Craft Text).
                 Text("Update")
-                    .font(.system(size: 14))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14))
                     .foregroundStyle(colorScheme == .dark
                                      ? Color.black
                                      : Color("appBlackColor"))
@@ -1390,7 +1396,17 @@ struct MyProfileView: View {
                     )
                 )
         } else {
-            RoundedRectangle(cornerRadius: 22.5, style: .continuous)
+            // Pre-iOS 26 corner radius unified to 8pt — matches UIKit
+            // `PrimaryOrangeButton.makeOrangeStyle()` pre-26 spec
+            // (`BarsysCornerRadius.small`) and every other
+            // primary-orange button across the app (Recipe Craft,
+            // Ready to Pour Craft, brandCapsule popup primaries,
+            // cleaning flow Clean / Continue / Stop). Previously
+            // 22.5 (near-pill) which made the Update Profile button
+            // visually inconsistent with the rest of the brand-orange
+            // CTAs on pre-26. iOS 26+ keeps the Capsule above —
+            // unchanged.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color("segmentSelectionColor"))
         }
     }
@@ -1489,10 +1505,10 @@ struct MyProfileView: View {
                 presentDeleteConfirmation()
             } label: {
                 Text("Delete account")
-                    .font(.system(size: 14))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14))
                     .underline()
                     .foregroundStyle(Color("appBlackColor"))
-                    .frame(width: 98, height: 43)
+                    .frame(width: UIDevice.current.userInterfaceIdiom == .pad ? 130 : 98, height: 43)
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel("Delete account")

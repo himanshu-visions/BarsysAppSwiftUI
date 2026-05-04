@@ -981,20 +981,47 @@ struct BarsysAlertOverlay: View {
                     // with the two-button variant's `AlertPopupButtonStyle`
                     // which already uses static black for the same
                     // storyboard-parity reason (Components.swift:1055).
+                    // Single continue button — drives the device-
+                    // disconnected popup, generic toasts-as-alerts,
+                    // and any other one-button confirmation surfaced
+                    // through `env.alerts.show(...)` with the default
+                    // `.legacy` style.
+                    //
+                    // Corner radius:
+                    //   • iOS 26+ → Capsule (height/2) — UIKit
+                    //     `PrimaryOrangeButton.makeOrangeStyle()` on
+                    //     iOS 26 calls `addGlassEffect(cornerRadius:
+                    //     bounds.height/2)`. Matches every other
+                    //     primary-orange CTA on iOS 26+.
+                    //   • Pre-iOS 26 → 8pt — UIKit
+                    //     `BarsysCornerRadius.small` (the 20pt value
+                    //     the previous SwiftUI port used was a
+                    //     misreading of the storyboard which
+                    //     specifies 8pt for `roundCorners` on
+                    //     `mSZ-L7-enf`). Matches every other pre-26
+                    //     primary-orange button (Recipe Craft, Ready
+                    //     to Pour Craft, MyProfile Update, cleaning
+                    //     flow Clean / Continue / Stop).
+                    //
+                    // iPad-only font + width bump so the button reads
+                    // at a comfortable size on the wider canvas
+                    // alongside the bumped popup title / message
+                    // typography. iPhone keeps 16pt / 45pt height
+                    // bit-identically.
+                    let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+                    let labelFontSize: CGFloat = isIPad ? 18 : 16
+                    let buttonHeight: CGFloat = isIPad ? 50 : 45
                     Button {
                         HapticService.light()
                         item.primaryAction?()
                         onDismiss()
                     } label: {
                         Text(item.primaryActionTitle)
-                            .font(.system(size: 16))
+                            .font(.system(size: labelFontSize))
                             .foregroundStyle(SwiftUI.Color.black)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 45)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(primaryOrange)
-                            )
+                            .frame(height: buttonHeight)
+                            .background(singleButtonBackground)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1087,6 +1114,26 @@ struct BarsysAlertOverlay: View {
             return Color(asset)
         }
         return Color(red: 0.878, green: 0.702, blue: 0.573)
+    }
+
+    /// Single-button popup background — Capsule on iOS 26+ (matches
+    /// UIKit `PrimaryOrangeButton.makeOrangeStyle()` `addGlassEffect`
+    /// `cornerRadius = bounds.height/2`), 8pt rounded rect pre-iOS 26
+    /// (UIKit storyboard `BarsysCornerRadius.small`). Used by the
+    /// device-disconnected popup OK button and every other single-
+    /// button alert routed through `env.alerts.show(...)` with the
+    /// default `.legacy` style. Bit-identical iOS 26+ pixels (Capsule
+    /// is the same width-aware shape the old `cornerRadius: 20`
+    /// approximated at 45pt height — only pre-iOS 26 actually
+    /// changes here).
+    @ViewBuilder
+    private var singleButtonBackground: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous).fill(primaryOrange)
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(primaryOrange)
+        }
     }
 }
 

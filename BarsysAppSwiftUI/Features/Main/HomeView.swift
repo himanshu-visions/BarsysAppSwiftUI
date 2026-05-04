@@ -138,8 +138,11 @@ struct HomeView: View {
                 // auto-glass treatment.
 
                 // ─── 2. "Welcome to Barsys AI," (Jlh-K8-Gez) ───
+                // iPad bumps 12 → 18pt so the welcome greeting reads
+                // at a comfortable scale on the wider canvas. iPhone
+                // keeps storyboard 12pt bit-identically.
                 Text("Welcome to Barsys AI,")
-                    .font(.system(size: 12))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 12))
                     .foregroundStyle(Color("darkGrayColor"))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 24)
@@ -153,8 +156,12 @@ struct HomeView: View {
                 // previous two different greys (welcome = darkGrayColor,
                 // description = grayBorderColor — visibly different
                 // weights against the dark page in dark mode).
+                //
+                // iPad bumps the description 12 → 16pt so the body copy
+                // reads next to the larger welcome line. iPhone keeps
+                // storyboard 12pt bit-identically.
                 Text("Tap on Barbot to chat about drinks, customize recipes, save favorites, or get recommendations.")
-                    .font(.system(size: 12))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12))
                     .foregroundStyle(Color("darkGrayColor"))
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
@@ -406,7 +413,11 @@ struct HomeView: View {
                         .frame(width: 13, height: 17) // actual 1x asset size
                         .foregroundStyle(Color("appBlackColor"))
                     Text("Connect Device")
-                        .font(.system(size: 20, weight: .light))
+                        // iPad bumps 20 → 26pt so the "Connect Device"
+                        // header reads next to the larger welcome
+                        // copy. iPhone keeps storyboard 20pt
+                        // bit-identically.
+                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 26 : 20, weight: .light))
                         .foregroundStyle(Color("appBlackColor"))
                 }
                 .frame(width: 215, height: 30, alignment: .leading)
@@ -443,14 +454,18 @@ struct HomeView: View {
         //     • "Connect with Barsys at an IRL event."  system 10pt appBlackColor
         //   "Check in" label `uh5-pU-suK` trailing:12, centerY, Helvetica-Oblique 14pt underlined
         //   Invisible button `LXl-Zo-qhn` covering the whole card → detectQrAction
-        Button(action: speakeasyTapped) {
+        //
+        // iPad-only sizing knobs. iPhone keeps storyboard 20/10/14pt
+        // bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        return Button(action: speakeasyTapped) {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Barsys Speakeasy")
-                        .font(.system(size: 20))
+                        .font(.system(size: isIPad ? 26 : 20))
                         .foregroundStyle(Color("appBlackColor"))
                     Text("Connect with Barsys at an IRL event.")
-                        .font(.system(size: 10))
+                        .font(.system(size: isIPad ? 14 : 10))
                         .foregroundStyle(Color("appBlackColor"))
                 }
                 .padding(.leading, 12)
@@ -458,12 +473,12 @@ struct HomeView: View {
                 Spacer()
 
                 Text("Check in")
-                    .font(.custom("Helvetica-Oblique", size: 14))
+                    .font(.custom("Helvetica-Oblique", size: isIPad ? 18 : 14))
                     .underline()
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.trailing, 12)
             }
-            .frame(height: 60)
+            .frame(height: isIPad ? 78 : 60)
             .frame(maxWidth: .infinity)
             // `Theme.Color.surface` is an adaptive asset — light
             // variant is pure white sRGB(1, 1, 1), bit-identical to

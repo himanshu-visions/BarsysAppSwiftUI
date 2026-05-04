@@ -5257,24 +5257,37 @@ struct WaitingRecipePopup: View {
     //                `btnCancel.layer.borderColor = .borderColor.cgColor`)
     //     • Shape  : 8pt rounded rect
 
-    /// Brand-gradient capsule background — mirrors the Recipe page's
-    /// `primaryOrangeButtonBackground` (RecipesScreens.swift L1320-1348).
-    /// A `Capsule` on every iOS version gives radius = height/2, so the
-    /// button is a true pill on both iOS 26+ and pre-26 hosts (the user
-    /// explicitly asked for the half-height radius regardless of OS).
+    /// Brand-gradient orange button background for the Waiting Recipe
+    /// popup's Cancel button.
+    ///
+    /// • iOS 26+ → Capsule (height/2 corner) — matches every other
+    ///   primary-orange CTA on iOS 26+ (UIKit
+    ///   `PrimaryOrangeButton.makeOrangeStyle()` uses `bounds.height/2`
+    ///   inside `addGlassEffect`).
+    /// • Pre-iOS 26 → 8pt RoundedRectangle — matches every other
+    ///   pre-26 primary-orange button now using
+    ///   `BarsysCornerRadius.small` (Recipe Craft, Ready to Pour
+    ///   Craft, brandCapsule popup primaries, MyProfile Update,
+    ///   cleaning flow Clean / Continue / Stop). Previously this was
+    ///   Capsule on EVERY iOS version which broke the pre-26 corner
+    ///   rhythm — the Cancel button on this popup rendered as a tall
+    ///   pill while every other pre-26 CTA was a small-rounded
+    ///   rectangle.
     @ViewBuilder
     private var primaryOrangeCapsuleBackground: some View {
-        Capsule(style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: colorScheme == .dark
-                        ? [Color(red: 0.980, green: 0.878, blue: 0.800),   // #FAE0CC
-                           Color(red: 0.949, green: 0.761, blue: 0.631)]  // #F2C2A1
-                        : [Color("brandGradientTop"),
-                           Color("brandGradientBottom")],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
+        let gradient = LinearGradient(
+            colors: colorScheme == .dark
+                ? [Color(red: 0.980, green: 0.878, blue: 0.800),   // #FAE0CC
+                   Color(red: 0.949, green: 0.761, blue: 0.631)]  // #F2C2A1
+                : [Color("brandGradientTop"),
+                   Color("brandGradientBottom")],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous).fill(gradient)
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(gradient)
+        }
     }
 }
