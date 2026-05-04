@@ -380,18 +380,26 @@ struct OTPBoxField: View {
     @Binding var code: String
     var length: Int = 6
 
-    /// Drives both the UIKit-backed input field's first-responder
-    /// state AND the on-screen caret animation. Uses `@State Bool`
-    /// (rather than `@FocusState`) because the underlying input is a
-    /// `UIKitTextField` — see the comment on `UIKitTextField` for why
-    /// we ditched the SwiftUI keyboard accessory toolbar on the auth
-    /// flows.
-    @State private var focused: Bool = false
+    /// Drives the UIKit-backed input field's first-responder state.
+    /// Uses `@State Bool` (rather than `@FocusState`) because the
+    /// underlying input is a `UIKitTextField` — see the comment on
+    /// `UIKitTextField` for why we ditched the SwiftUI keyboard
+    /// accessory toolbar on the auth flows.
+    @State private var focused: Bool = true
     /// Drives the blinking caret that mimics UIKit's per-box cursor.
     /// UIKit had 6 individual `OtpTextField`s, so the system caret
     /// appeared inside the active box. The SwiftUI port uses a single
     /// hidden field, so we render our own caret in the next-to-fill
     /// box while focused.
+    ///
+    /// Driven by a `Timer` (not `withAnimation(.repeatForever)`)
+    /// because the implicit-animation approach didn't carry over to
+    /// a *freshly-inserted* caret view when the active box advanced
+    /// — the user would type a digit, the caret would move to the
+    /// next box, and then sit invisible (opacity stuck at the value
+    /// the previous box's animation had just rendered). A timer
+    /// drives the @State directly, so the new caret view picks up
+    /// the live animated value on its very first render.
     @State private var caretVisible: Bool = true
 
     var body: some View {
@@ -431,13 +439,19 @@ struct OTPBoxField: View {
             .contentShape(Rectangle())
             .onTapGesture { focused = true }
         }
-        .onAppear { focused = true }
-        .onChange(of: focused) { isFocused in
-            if isFocused {
-                caretVisible = true
-                withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
-                    caretVisible = false
-                }
+        .task(id: focused) {
+            // Drive the caret blink off a sleep loop so each freshly-
+            // inserted caret view (when the active box advances after
+            // a keystroke) participates from its very first render.
+            // Re-runs whenever `focused` flips because of `id:` —
+            // dismissing the keyboard cancels the loop, focusing
+            // again restarts it.
+            guard focused else { return }
+            caretVisible = true
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if Task.isCancelled { break }
+                caretVisible.toggle()
             }
         }
     }
@@ -447,8 +461,8 @@ struct OTPBoxField: View {
         let value = idx < chars.count ? String(chars[idx]) : "0"
         let isFilled = idx < chars.count
         // The currently-active box is the first unfilled slot. UIKit
-        // showed the system caret here; we render a 1pt brand-tinted
-        // bar with a blinking opacity to match that affordance.
+        // showed the system caret here; we render a brand-tinted bar
+        // with a blinking opacity to match that affordance.
         let isActiveCaret = focused && idx == chars.count
         // Fixed square 32x32 — matches the storyboard runtime size of the
         // 6 OtpTextField boxes (form card 333pt − padding − 6 boxes with
@@ -461,12 +475,16 @@ struct OTPBoxField: View {
                                  : Color("subtitleGrayColor").opacity(0.45))
                 .opacity(isActiveCaret ? 0 : 1)
 
-            if isActiveCaret {
-                RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .fill(Theme.Color.brand)
-                    .frame(width: 2, height: 18)
-                    .opacity(caretVisible ? 1 : 0)
-            }
+            // Caret view is ALWAYS rendered (rather than wrapped in
+            // `if isActiveCaret`) so SwiftUI doesn't have to insert /
+            // remove the view as the active box advances — it only
+            // toggles its opacity. That side-steps the implicit-
+            // animation discontinuity that was leaving the caret
+            // invisible on the new active box after each keystroke.
+            RoundedRectangle(cornerRadius: 1, style: .continuous)
+                .fill(Theme.Color.brand)
+                .frame(width: 2, height: 18)
+                .opacity(isActiveCaret && caretVisible ? 1 : 0)
         }
         .frame(width: 32, height: 32)
         .background(
@@ -1589,6 +1607,13 @@ struct UIKitTextField: UIViewRepresentable {
         field.textColor = textColor
         field.textAlignment = alignment
         field.borderStyle = .none
+        // The blinking caret colour is driven by `tintColor`. Pin it
+        // to `appBlackColor` (adaptive: dark in light mode, light in
+        // dark mode) so the cursor is always legible — without this
+        // it inherits the parent view's tint, which on the auth
+        // screens leaves the caret nearly invisible against the form
+        // surface (the QA "blinking cursor not showing" report).
+        field.tintColor = UIColor(named: "appBlackColor") ?? .label
         field.delegate = context.coordinator
         field.addTarget(context.coordinator,
                         action: #selector(Coordinator.editingChanged(_:)),
