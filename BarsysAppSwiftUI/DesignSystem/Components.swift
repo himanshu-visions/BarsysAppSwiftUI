@@ -1235,6 +1235,13 @@ private struct AlertPopupButtonStyle: ViewModifier {
     /// BORDERED variant (left-side continue/neutral button).
     let fill: Color?
 
+    /// Drives the iPad-dark-mode pre-iOS-26 override of the LEFT
+    /// (bordered) button background — see `buttonBackground`. Light
+    /// mode (every device) and iPhone (every appearance) leave the
+    /// resolved value unused so the historical
+    /// `Theme.Color.surface` fill is preserved bit-identically.
+    @Environment(\.colorScheme) private var colorScheme
+
     /// 1:1 port of UIKit `alertPopUpButtonBackgroundStyle` shape rule
     /// (UIViewClass+GradientStyles.swift L24-90):
     ///   • iOS 26+ → `addGlassEffect(cornerRadius: bounds.height/2)` —
@@ -1381,7 +1388,23 @@ private struct AlertPopupButtonStyle: ViewModifier {
             // `makeBorder(1, .craftButtonBorderColor)` + white bg.
             // `Theme.Color.surface` preserves the historical white
             // fill in light mode bit-identically and adapts in dark.
-            buttonShape.fill(Theme.Color.surface)
+            //
+            // iPad + dark mode OVERRIDE: match the rating popup's
+            // LEFT button (`BarsysPopupCard.alertSecondaryButtonBackground`
+            // pre-iOS-26 branch in Theme.swift L1556-1559) which uses
+            // a hardcoded `Color.white` pill. Without this override
+            // the logout / device-disconnected / generic-alert LEFT
+            // button picks up the same dark `Theme.Color.surface` as
+            // the popup card on iPad dark mode and visually disappears
+            // into the card — leaving the BLACK label text floating
+            // unreadably on a dark grey blob. The hardcoded white
+            // pill keeps the BLACK label readable on the dark card.
+            //
+            // iPhone (every appearance) and iPad LIGHT keep
+            // `Theme.Color.surface` — bit-identical to before — so
+            // the iPhone path is completely unchanged.
+            let isIPadDark = UIDevice.current.userInterfaceIdiom == .pad && colorScheme == .dark
+            buttonShape.fill(isIPadDark ? SwiftUI.Color.white : Theme.Color.surface)
         }
     }
 
