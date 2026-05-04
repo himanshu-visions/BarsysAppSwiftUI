@@ -659,8 +659,11 @@ struct MixlistDetailView: View {
                 // Mixlist title — storyboard `jHp-tM-EQo`:
                 //   boldSystem 16pt, `appBlackColor`, leading/trailing = 24,
                 //   top = `AWF-ly-2Vd.bottom + 19` (constraint `X4y-C1-ARS`).
+                // iPad bumps to 22pt bold so the mixlist name reads at
+                // a comfortable scale next to the larger row text.
+                // iPhone keeps storyboard 16pt bit-identically.
                 Text(mixlist.displayName)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16, weight: .bold))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.horizontal, 24)
                     .padding(.top, 19)
@@ -820,12 +823,15 @@ struct MixlistDetailView: View {
 
     private func tabButton(_ tab: MixlistDetailTab, title: String) -> some View {
         let selected = selectedTab == tab
+        // iPad-only font bump for the Recipes / Ingredients tab labels.
+        // iPhone keeps storyboard 14pt bit-identically.
+        let fontSize: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14
         return Button {
             HapticService.selection()
             withAnimation(.easeInOut(duration: 0.2)) { selectedTab = tab }
         } label: {
             Text(title)
-                .font(.system(size: 14, weight: selected ? .bold : .regular))
+                .font(.system(size: fontSize, weight: selected ? .bold : .regular))
                 .foregroundStyle(selected ? Color("appBlackColor") : Color("unSelectedColor"))
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
@@ -839,8 +845,11 @@ struct MixlistDetailView: View {
     @ViewBuilder
     private var recipesList: some View {
         if recipes.isEmpty {
+            // iPad bumps the empty-state message 14 → 18pt so it
+            // reads at a comfortable scale on the wider canvas.
+            // iPhone keeps storyboard callout (14pt) bit-identically.
             Text("No recipes yet.")
-                .font(Theme.Font.of(.callout))
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14))
                 .foregroundStyle(Theme.Color.textSecondary)
                 .padding(.horizontal, 24)
                 .padding(.top, 24)
@@ -876,8 +885,10 @@ struct MixlistDetailView: View {
     @ViewBuilder
     private var ingredientsList: some View {
         if aggregatedIngredients.isEmpty {
+            // iPad-only font bump on the empty-state message — see
+            // `recipesList` for matching rationale.
             Text("No ingredients found.")
-                .font(Theme.Font.of(.callout))
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14))
                 .foregroundStyle(Theme.Color.textSecondary)
                 .padding(.horizontal, 24)
                 .padding(.top, 24)

@@ -1263,13 +1263,15 @@ struct RecipeDetailView: View {
                 //   `S8V-cr-6My`: system 12pt, `appBlackColor`, multi-line,
                 //       leading/trailing:24, top = title.bottom + 14.
                 VStack(alignment: .leading, spacing: 14) {
+                    // iPad-only font ramp. iPhone keeps storyboard
+                    // 16pt bold title / 12pt subtitle bit-identically.
                     Text(recipe.displayName)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16, weight: .bold))
                         .foregroundStyle(Color("appBlackColor"))
                         .accessibilityAddTraits(.isHeader)
                     if !recipe.subtitle.isEmpty {
                         Text(recipe.subtitle)
-                            .font(.system(size: 12))
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12))
                             .foregroundStyle(Color("appBlackColor"))
                             .lineSpacing(2)
                     }
@@ -1282,9 +1284,10 @@ struct RecipeDetailView: View {
                 // "The Recipe" underlined header — storyboard `kqG-7l-90a`:
                 //   boldSystem 14pt, `appBlackColor`, underlined attributed
                 //   text set in `setupView()` via `.underline`.
+                // iPad bumps to 18pt bold for proportional hierarchy.
                 HStack {
                     Text("The Recipe")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14, weight: .bold))
                         .foregroundStyle(Color("appBlackColor"))
                         .underline()
                     Spacer()
@@ -1543,8 +1546,12 @@ struct RecipeDetailView: View {
     // "The Recipe" header bottom is applied here directly.
     private var ingredientsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // iPad bumps the section heading 11 → 14pt bold so the
+            // INGREDIENTS / ADDITIONAL / GARNISH section labels read
+            // at a comfortable scale next to the larger row text.
+            // iPhone keeps storyboard 11pt bit-identically.
             Text("INGREDIENTS (\(baseAndMixer.count))")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 14 : 11, weight: .bold))
                 .foregroundStyle(Color("appBlackColor"))
                 .kerning(0.5)
                 .accessibilityAddTraits(.isHeader)
@@ -1585,13 +1592,20 @@ struct RecipeDetailView: View {
     // inset that leaves a uniform visual gap between rows.
     private func infoRow(title: String, value: String,
                          topInset: CGFloat = 25) -> some View {
-        HStack(alignment: .top, spacing: 5) {
+        // iPad-only font + column-width bump so "Garnish" / "Glass"
+        // labels read with the larger row text. iPhone keeps the
+        // storyboard 11pt / 97pt-column spec bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 14 : 11
+        let valueSize: CGFloat = isIPad ? 14 : 11
+        let titleWidth: CGFloat = isIPad ? 120 : 97
+        return HStack(alignment: .top, spacing: 5) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: titleSize, weight: .bold))
                 .foregroundStyle(Color("appBlackColor"))
-                .frame(width: 97, alignment: .leading)
+                .frame(width: titleWidth, alignment: .leading)
             Text(value)
-                .font(.system(size: 11))
+                .font(.system(size: valueSize))
                 .foregroundStyle(Color("appBlackColor"))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1624,16 +1638,23 @@ struct RecipeDetailView: View {
         // — UIKit's `\n\n` separator becomes the 14pt VStack spacing
         // here.
         let formattedSteps = Self.formattedInstructionSteps(for: recipe)
+        // iPad bumps Crafting Instructions header 11 → 14pt and the
+        // step body 11 → 14pt so the cooking steps are readable next
+        // to the larger ingredient table. iPhone keeps storyboard
+        // 11pt bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let headerSize: CGFloat = isIPad ? 14 : 11
+        let bodySize: CGFloat = isIPad ? 14 : 11
         return VStack(alignment: .leading, spacing: 12) {
             Text("Crafting Instructions")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: headerSize, weight: .bold))
                 .foregroundStyle(Color("appBlackColor"))
                 .frame(maxWidth: .infinity, alignment: .leading)
             if !formattedSteps.isEmpty {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(Array(formattedSteps.enumerated()), id: \.offset) { _, line in
                         Text(line)
-                            .font(.system(size: 11))
+                            .font(.system(size: bodySize))
                             .foregroundStyle(Color("appBlackColor"))
                             .lineSpacing(2)
                             .multilineTextAlignment(.leading)
@@ -1932,7 +1953,7 @@ struct RecipeDetailView: View {
     private var additionalSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("ADDITIONAL INGREDIENTS (\(additionalIngredients.count))")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 14 : 11, weight: .bold))
                 .foregroundStyle(Color("appBlackColor"))
                 .kerning(0.5)
                 .accessibilityAddTraits(.isHeader)
@@ -2814,11 +2835,17 @@ struct RecipeIngredientRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
+        // iPad-only font ramp. iPhone keeps storyboard 14pt name /
+        // 11pt qty + unit bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let nameSize: CGFloat = isIPad ? 18 : 14
+        let qtySize: CGFloat = isIPad ? 14 : 11
+        let qtyFieldWidth: CGFloat = isIPad ? 36 : 28
+        return HStack(spacing: 5) {
             // Name label — system 14pt, `appBlackColor`, up to 3 lines,
             // 24pt leading inset matching storyboard constraint `kim-hJ-6Pi`.
             Text(ingredient.name)
-                .font(.system(size: 14))
+                .font(.system(size: nameSize))
                 .foregroundStyle(Color("appBlackColor"))
                 .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2875,14 +2902,14 @@ struct RecipeIngredientRow: View {
                             .multilineTextAlignment(.center)
                             // Storyboard `m1H-Gu-dS6` — system 11pt,
                             // `mediumLightGrayColor`.
-                            .font(.system(size: 11))
+                            .font(.system(size: qtySize))
                             .foregroundStyle(Color("mediumLightGrayColor"))
                             // Fixed quantity-field width so all rows
                             // align under each other regardless of
                             // digit count ("52" / "1.76" / "5"). Replaces
                             // the 70pt centring container which spread
                             // the qty + unit into the middle of the cell.
-                            .frame(width: 28, height: 30)
+                            .frame(width: qtyFieldWidth, height: 30)
                             .focused($isFocused)
                             .onChange(of: isFocused) { focused in
                                 if focused {
@@ -2938,7 +2965,7 @@ struct RecipeIngredientRow: View {
                         Text(unitLabel)
                             // Storyboard `Q8p-KS-sM8` — system 11pt,
                             // `mediumLightGrayColor`.
-                            .font(.system(size: 11))
+                            .font(.system(size: qtySize))
                             .foregroundStyle(Color("mediumLightGrayColor"))
                     }
                     .frame(height: 30)
