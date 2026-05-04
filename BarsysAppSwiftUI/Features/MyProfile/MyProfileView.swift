@@ -1287,15 +1287,17 @@ struct MyProfileView: View {
             } label: {
                 Text("Ok")
                     .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14))
-                    // In dark mode the button reads as a white-glass
-                    // pill (matches the recipe page's "Add to Favorites"
-                    // capsule) so force the label to `.black` for
-                    // contrast on the white fill. In light mode keep
-                    // the adaptive `appBlackColor` token — bit-identical
-                    // to the pre-change pixels.
-                    .foregroundStyle(colorScheme == .dark
-                                     ? Color.black
-                                     : Color("appBlackColor"))
+                    // 1:1 with the recipe-page Add to Favorites button
+                    // (RecipesScreens.swift L2156 — `Color.black`). Now
+                    // that the OK pill renders the same white-glass /
+                    // hardcoded-white background in BOTH appearances
+                    // (matching `profileOkButtonBackground` above),
+                    // pin the label to pure `Color.black` so it reads
+                    // with the same contrast as the recipe-page
+                    // favourite CTA — `appBlackColor` resolves to
+                    // near-white in dark mode and would disappear on
+                    // the white pill.
+                    .foregroundStyle(Color.black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 45)
                     .background(profileOkButtonBackground)
@@ -1422,72 +1424,70 @@ struct MyProfileView: View {
         }
     }
 
-    /// OK button fill — 1:1 with UIKit `btnOk.backgroundColor =
-    /// .clear` on pre-26 (transparent over `primaryBackgroundColor`)
-    /// and the UIKit `addGlassEffect(tintColor: cancelButtonGray)`
-    /// glass + subtle tint on iOS 26+.
+    /// OK button fill — 1:1 with the recipe-page "Add to Favorites"
+    /// button (`cancelCapsuleBackground` in RecipesScreens.swift
+    /// L2347). Same recipe in BOTH light and dark mode so the OK
+    /// pill renders as a bright white pill with readable BLACK text
+    /// on every appearance + iOS combination.
+    ///
+    /// • iOS 26+ → Capsule with `Color.white.opacity(0.85)` glass
+    ///   tint (matches recipe-page Add to Favorites and rating popup
+    ///   LEFT button).
+    /// • Pre-iOS 26 → 8pt RoundedRectangle with `Color.white` fill
+    ///   (matches recipe-page Add to Favorites and rating popup
+    ///   LEFT button pre-26).
+    ///
+    /// Previously this rendered:
+    ///   • iOS 26 light  → `.regularMaterial + cancelButtonGray@0.12`
+    ///                     (muddy adaptive material)
+    ///   • Pre-26        → `Color.clear` (transparent — the OK pill
+    ///                     visually disappeared on the dark profile
+    ///                     canvas).
+    /// The user asked us to align this CTA with the recipe-page
+    /// favourite button so all neutral / cancel-style pills in the
+    /// app render identically.
     @ViewBuilder
     private var profileOkButtonBackground: some View {
         if #available(iOS 26.0, *) {
-            if colorScheme == .dark {
-                // Dark mode — mirror the recipe page's
-                // `cancelCapsuleBackground` (RecipesScreens.swift:1376).
-                // Explicit white@0.85 fill so the pill reads as the
-                // same white-glass capsule the user sees on the
-                // "Add to Favorites" CTA. Avoids the adaptive
-                // `.regularMaterial` that previously turned this
-                // button into a muddy dark blob in dark mode.
-                Capsule(style: .continuous)
-                    .fill(SwiftUI.Color.white.opacity(0.85))
-            } else {
-                // Light mode — unchanged UIKit-parity recipe:
-                // `.regularMaterial` + cancelButtonGray@0.12 tint.
-                ZStack {
-                    Capsule(style: .continuous).fill(.regularMaterial)
-                    Capsule(style: .continuous)
-                        .fill(Color("cancelButtonGray").opacity(0.12))
-                }
-            }
+            Capsule(style: .continuous)
+                .fill(SwiftUI.Color.white.opacity(0.85))
         } else {
-            // UIKit L232-235 → `btnOk.backgroundColor = .clear`.
-            // `Color.clear` is bit-identical to UIKit's clear fill.
-            Color.clear
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(SwiftUI.Color.white)
         }
     }
 
-    /// OK button border — 1:1 with UIKit
-    /// `makeBorder(width: 1, color: .craftButtonBorderColor)` pre-26.
-    /// iOS 26's `applyCancelCapsuleGradientBorderStyle` declares a
-    /// 1.5pt border in its signature but the implementation only
-    /// installs the glass effect (no stroke), so we omit the stroke
-    /// on iOS 26 to stay bit-identical.
+    /// OK button border — matches the recipe-page Add to Favorites
+    /// border (`cancelCapsuleBorder` in RecipesScreens.swift L2422).
+    ///
+    /// • iOS 26+ → 1.5pt 3-stop gradient stroke (white@0.95 ↔
+    ///   white@0.85 ↔ white@0.95) on a Capsule. Renders in BOTH
+    ///   light and dark mode so the white-glass pill always has a
+    ///   crisp etched edge.
+    /// • Pre-iOS 26 → 1pt `craftButtonBorderColor` stroke on an 8pt
+    ///   rounded rect (UIKit `makeBorder` spec).
+    ///
+    /// Previously the iOS 26 light-mode branch returned `EmptyView`
+    /// (no stroke), which left the white-on-white pill with no
+    /// separation from the popup card; the dark-mode branch had the
+    /// gradient. Aligning with the recipe-page button gives the pill
+    /// the same etched outline in both appearances.
     @ViewBuilder
     private var profileOkButtonBorder: some View {
         if #available(iOS 26.0, *) {
-            if colorScheme == .dark {
-                // Dark mode — same 3-stop white/light-grey gradient
-                // stroke the recipe-page `cancelCapsuleBorder` uses
-                // (RecipesScreens.swift:1402). Gives the pill a crisp
-                // etched edge against the dark backdrop instead of
-                // relying on the adaptive material for separation.
-                Capsule(style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                SwiftUI.Color.white.opacity(0.95),
-                                SwiftUI.Color(white: 0.85).opacity(0.9),
-                                SwiftUI.Color.white.opacity(0.95)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.5
-                    )
-            } else {
-                // Light mode — unchanged: no stroke (UIKit
-                // `addGlassEffect` supplies the visual separation).
-                EmptyView()
-            }
+            Capsule(style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            SwiftUI.Color.white.opacity(0.95),
+                            SwiftUI.Color(white: 0.85).opacity(0.9),
+                            SwiftUI.Color.white.opacity(0.95)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
         } else {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
