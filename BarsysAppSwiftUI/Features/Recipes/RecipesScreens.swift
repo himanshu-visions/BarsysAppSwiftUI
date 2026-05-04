@@ -2380,7 +2380,19 @@ struct RecipeDetailView: View {
             // only practical change is dark mode, which now
             // matches the LEFT-button rendering used everywhere
             // else.
-            RoundedRectangle(cornerRadius: 22.5, style: .continuous)
+            //
+            // Corner radius pre-26 = 8pt to match the Craft button's
+            // pre-26 corner radius (`primaryOrangeButtonBackground`
+            // L2336, `RoundedRectangle(cornerRadius: 8)`). Previously
+            // this was 22.5 (visually a near-pill) so the LEFT
+            // favourite pill and RIGHT Craft pill had mismatched
+            // shapes on pre-iOS 26 — the favourite read as a tall
+            // capsule next to the Craft button's small-rounded
+            // rectangle. iOS 26+ keeps Capsule on both sides
+            // (UIKit's `applyCancelCapsuleGradientBorderStyle` and
+            // `makeOrangeStyle` both override storyboard radius
+            // with `bounds.height/2` on iOS 26).
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(SwiftUI.Color.white)
         }
     }
@@ -2403,7 +2415,9 @@ struct RecipeDetailView: View {
                     lineWidth: 1.5
                 )
         } else {
-            RoundedRectangle(cornerRadius: 22.5, style: .continuous)
+            // Match the pre-26 Craft-button corner radius (8pt) — see
+            // matching note in `cancelCapsuleBackground` above.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
         }
     }
