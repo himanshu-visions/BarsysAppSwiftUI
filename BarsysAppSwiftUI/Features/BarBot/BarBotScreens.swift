@@ -1267,8 +1267,23 @@ struct WelcomeOccasionSection: View {
     @ObservedObject var vm: BarBotViewModel
     let onSelect: (BarBotOption) -> Void
 
-    private let tileHeight: CGFloat = 120
-    private let gridSpacing: CGFloat = 6
+    /// iPad-only sizing knobs for the "Let's get crafting" 2×2 grid.
+    /// iPhone keeps the UIKit-parity 120pt tile / 14pt title / 12pt
+    /// description / 18pt header bit-identically — every value below
+    /// collapses to its pre-iPad-fix constant on iPhone.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    private var tileHeight: CGFloat       { isIPad ? 170 : 120 }
+    private var gridSpacing: CGFloat       { 6 }
+    private var headerFontSize: CGFloat    { isIPad ? 24 : 18 }
+    private var tileTitleFontSize: CGFloat { isIPad ? 20 : 14 }
+    private var tilePromptFontSize: CGFloat { isIPad ? 15 : 12 }
+    /// iPad allocates more vertical space for the title block so a
+    /// 2-line iPad-sized title fits without overlapping the
+    /// description below. Mirrors the 47pt UIKit storyboard
+    /// allocation on iPhone, scaled up on iPad.
+    private var tileTitleMinHeight: CGFloat { isIPad ? 64 : 47 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1316,7 +1331,7 @@ struct WelcomeOccasionSection: View {
             // fvf-TL-f9A.bottom + 20.
             VStack(alignment: .leading, spacing: 20) {
                 Text("Let\u{2019}s get crafting") // curly apostrophe matches UIKit xib
-                    .font(.system(size: 18))
+                    .font(.system(size: headerFontSize))
                     .foregroundStyle(Color("charcoalTextColor50Alpha"))
                     .accessibilityAddTraits(.isHeader)
 
@@ -1365,16 +1380,16 @@ struct WelcomeOccasionSection: View {
             // space at the top of each tile and lines up better with
             // the description block underneath).
             Text(opt.title ?? "")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: tileTitleFontSize, weight: .semibold))
                 .foregroundStyle(Color("charcoalGrayColor"))
                 .lineLimit(2)
-                .frame(maxWidth: .infinity, minHeight: 47, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: tileTitleMinHeight, alignment: .topLeading)
                 .padding(.top, 15)
 
             // UIKit description frame: (16, 52) w=122 h=47
             if let prompt = opt.prompt, !prompt.isEmpty {
                 Text(prompt)
-                    .font(.system(size: 12))
+                    .font(.system(size: tilePromptFontSize))
                     .foregroundStyle(Color("charcoalGrayColor"))
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1740,6 +1755,30 @@ struct ChatMessageRow: View {
     /// they read on the dark backdrop. Light mode is untouched.
     @Environment(\.colorScheme) private var colorScheme
 
+    /// iPad-only font knobs for the chat row. iPhone keeps every
+    /// UIKit-parity caption1 (12pt) / callout (14pt) / 12pt size
+    /// bit-identically — every value below collapses to its previous
+    /// constant on iPhone via the `isIPad ? larger : original`
+    /// pattern.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    /// Question bubble + answer bubble + recipe-name + ingredients.
+    /// UIKit caption1 = 12pt; iPad bumps to 16pt.
+    private var caption1FontSize: CGFloat { isIPad ? 16 : 12 }
+    /// "Barbot is thinking" / Cancel — UIKit 12pt; iPad 16pt.
+    private var loadingFontSize: CGFloat  { isIPad ? 16 : 12 }
+    /// Answer-block section header (Barsys Recipes / Mixlists titles)
+    /// — UIKit callout = 14pt bold; iPad bumps to 18pt bold.
+    private var sectionHeaderFontSize: CGFloat   { isIPad ? 18 : 14 }
+    /// Section subtitle below the header — UIKit caption1 12pt; iPad
+    /// bumps to 15pt so the explainer text stays readable next to the
+    /// larger header.
+    private var sectionSubtitleFontSize: CGFloat { isIPad ? 15 : 12 }
+    /// "Most asked suggestions" block label — UIKit caption1 bold
+    /// 12pt; iPad bumps to 16pt bold.
+    private var actionCardsHeaderFontSize: CGFloat { isIPad ? 16 : 12 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             question
@@ -1773,7 +1812,7 @@ struct ChatMessageRow: View {
                     }
                     if !msg.questionText.isEmpty {
                         Text(msg.questionText)
-                            .font(Theme.Font.of(.caption1))
+                            .font(.system(size: caption1FontSize))
                             .foregroundStyle(Color("aiBlackTextColor"))
                             // UIKit PaddingLabel: top=8, left=16, bottom=8, right=16
                             .padding(.horizontal, 16)
@@ -1842,7 +1881,7 @@ struct ChatMessageRow: View {
             // "Barbot is thinking" label — leading = GIF.trailing + 7pt
             // (xib constraint `HIJ-Fe-el4`). System 12pt, grayBorderColor.
             Text("Barbot is thinking")
-                .font(.system(size: 12))
+                .font(.system(size: loadingFontSize))
                 .foregroundStyle(Color("grayBorderColor"))
                 .padding(.leading, 7)
 
@@ -1857,7 +1896,7 @@ struct ChatMessageRow: View {
                 vm.cancel(messageID: msg.id)
             } label: {
                 Text(ConstantButtonsTitle.cancelButtonTitle)
-                    .font(.system(size: 12))
+                    .font(.system(size: loadingFontSize))
                     .foregroundStyle(Color("veryDarkGrayColor"))
                     .frame(width: 70, height: 45)
                     .contentShape(Rectangle())
@@ -1896,7 +1935,7 @@ struct ChatMessageRow: View {
             VStack(alignment: .leading, spacing: 12) {
                 if let text = msg.answerText, !text.isEmpty {
                     Text(text)
-                        .font(Theme.Font.of(.caption1))
+                        .font(.system(size: caption1FontSize))
                         .foregroundStyle(Color("charcoalGrayColor"))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
@@ -1933,7 +1972,7 @@ struct ChatMessageRow: View {
                     && (hasRecipes || (!hasRecipes && !hasMixlists))
                 if shouldShowCards {
                     Text("Most asked suggestions")
-                        .font(Theme.Font.of(.caption1, .bold))
+                        .font(.system(size: actionCardsHeaderFontSize, weight: .bold))
                         .foregroundStyle(Color("charcoalTextColor50Alpha"))
                     ActionCardsFlow(cards: msg.answerActionCards) { card in
                         onCardTap(card, msg)
