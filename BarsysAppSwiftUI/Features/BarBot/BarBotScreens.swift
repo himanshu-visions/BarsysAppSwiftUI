@@ -1278,8 +1278,11 @@ struct WelcomeOccasionSection: View {
             //   `alpha="0.51000000000000001"`). Multi-line, wraps freely
             //   (numberOfLines=0).
             //   Top constraint `8ik-d4-9fw`: top = contentView.top + 12.
+            // iPad bumps to 32pt so the BarBot hero/welcome header
+            // matches the Ready to Pour title size on the wider canvas.
+            // iPhone unchanged.
             Text(vm.welcomeMessage)
-                .font(.system(size: 24, weight: .bold))
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24, weight: .bold))
                 .foregroundStyle(Color("mediumLightGrayColor").opacity(0.51))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -3575,8 +3578,10 @@ struct BarBotHistoryView: View {
         ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 0) {
                 // Title — x=24 y=45 (from safeArea top), 24pt, appBlackColor.
+                // iPad bumps to 32pt so the screen title matches Ready
+                // to Pour on the wider canvas. iPhone unchanged.
                 Text("History")
-                    .font(.system(size: 24))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.leading, 24)
                     .padding(.trailing, 24)

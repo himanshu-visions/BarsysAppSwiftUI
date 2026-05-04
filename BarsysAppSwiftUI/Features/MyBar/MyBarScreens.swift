@@ -558,8 +558,10 @@ struct MyBarView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 // "My Bar" — storyboard I7T-Sx-cTO (system 24pt, appBlackColor).
+                // iPad bumps to 32pt so the screen title matches
+                // Ready to Pour on the wider canvas. iPhone unchanged.
                 Text("My Bar")
-                    .font(.system(size: 24))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .accessibilityAddTraits(.isHeader)
                     .padding(.leading, 24)

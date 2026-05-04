@@ -519,7 +519,10 @@ private struct SideMenuPanel: View {
             // title (storyboard `dk6-jo-0dC`: Qpu.centerY = 7Wm.centerY).
             HStack(alignment: .center, spacing: 0) {
                 Text("My Account")
-                    .font(.system(size: 24))
+                    // iPad bumps to 32pt so the screen title matches
+                    // Ready to Pour on the wider canvas. iPhone
+                    // unchanged.
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .accessibilityAddTraits(.isHeader)
 

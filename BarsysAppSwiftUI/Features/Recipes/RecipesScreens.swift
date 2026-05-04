@@ -478,12 +478,21 @@ struct ExploreRecipesView: View {
                 // iPad bumps to 32pt so the screen title matches the
                 // Ready to Pour title size on the wider canvas.
                 // iPhone unchanged.
+                //
+                // Top-padding bump on iPad: the inline iOS 26 nav-bar
+                // Liquid-Glass blur overlaps the first few pixels of the
+                // ScrollView content on the wider canvas, which made the
+                // larger 32pt iPad title look clipped / "not coming"
+                // (QA report). 16pt was enough on iPhone but iPad needs
+                // the extra clearance — bumping iPad to 24pt restores
+                // the same visible breathing room iPhone has at 16pt.
+                // iPhone path stays at 16pt — bit-identical to before.
                 Text("All Recipes")
                     .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 24)
-                    .padding(.top, 16)
+                    .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 16)
 
                 // Search bar — 1:1 port of UIKit `viewSearch` + `txtSearch` +
                 // `searchAndCloseButton` from Mixlist.storyboard scene

@@ -120,9 +120,11 @@ struct ControlCenterView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // Title — UwJ-H2-jbU, 24pt, appBlackColor, leading 24
+                // Title — UwJ-H2-jbU, 24pt, appBlackColor, leading 24.
+                // iPad bumps to 32pt so the screen title matches
+                // Ready to Pour on the wider canvas. iPhone unchanged.
                 Text("Control Center")
-                    .font(.system(size: 24))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.leading, 24)
                     .padding(.top, 0)
@@ -2568,8 +2570,10 @@ struct StationsMenuView: View {
                 //   • `setupStationsFlow` → "Fill Stations"
                 //   • `controlCenter`     → "Stations"
                 // Font: system 24pt regular, `appBlackColor`, leading 24.
+                // iPad bumps to 32pt so the screen title matches
+                // Ready to Pour on the wider canvas. iPhone unchanged.
                 Text(titleText)
-                    .font(.system(size: 24))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
@@ -4497,8 +4501,10 @@ struct StationCleaningView: View {
                 //   system 24pt (regular, NOT bold)
                 //   textColor `appBlackColor`
                 //   leading 24pt
+                // iPad bumps to 32pt so the screen title matches
+                // Ready to Pour on the wider canvas. iPhone unchanged.
                 Text("Clean Stations")
-                    .font(.system(size: 24))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.horizontal, 24)
                     .padding(.top, 8)

@@ -58,7 +58,10 @@ struct PairDeviceView: View {
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Pair your device")
-                            .font(.system(size: 24))
+                            // iPad bumps to 32pt so the screen title
+                            // matches the Ready to Pour title size on
+                            // the wider canvas. iPhone unchanged.
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                             .foregroundStyle(Color("appBlackColor"))
                         Text("Please select your device to be paired. Make sure that your Bluetooth is discoverable and your Barsys device is turned ON.")
                             .font(.system(size: 12))
