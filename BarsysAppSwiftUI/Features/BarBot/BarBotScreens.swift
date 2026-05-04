@@ -1007,7 +1007,10 @@ struct BounceButtonStyle: ButtonStyle {
 struct ActionCardStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .font(Theme.Font.of(.caption1))
+            // iPad bumps caption1 (12pt) → 16pt so the action-card
+            // tag text reads at a comfortable scale on the wider
+            // canvas. iPhone keeps the storyboard 12pt spec.
+            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12))
             // Preserve the EXACT historical #363636 text color in
             // light mode (bit-identical to the previous hard-coded
             // value), and switch to a near-white tone in dark for
@@ -1274,7 +1277,7 @@ struct WelcomeOccasionSection: View {
     private var isIPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
-    private var tileHeight: CGFloat       { isIPad ? 170 : 120 }
+    private var tileHeight: CGFloat       { isIPad ? 210 : 120 }
     private var gridSpacing: CGFloat       { 6 }
     private var headerFontSize: CGFloat    { isIPad ? 24 : 18 }
     private var tileTitleFontSize: CGFloat { isIPad ? 20 : 14 }
@@ -1471,6 +1474,16 @@ struct BarBotRecipeCardView: View {
     let onCraft: () -> Void
     let onOpen: () -> Void
 
+    /// iPad-only font knobs. iPhone keeps UIKit-parity caption1
+    /// (12pt) for both name and description. The card frame stays
+    /// at 200×325 on every device — text wraps within the same
+    /// 168pt column as before, just at a larger size.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    private var nameFontSize: CGFloat        { isIPad ? 16 : 12 }
+    private var descriptionFontSize: CGFloat { isIPad ? 14 : 12 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Image — 200×200 flush top, `lightBorderGrayColor` placeholder.
@@ -1479,7 +1492,7 @@ struct BarBotRecipeCardView: View {
                 .clipped()
             // Name — x=16 y=215 w=168, caption1 bold (12pt), ironGray.
             Text(recipe.name ?? "")
-                .font(Theme.Font.of(.caption1, .bold))
+                .font(.system(size: nameFontSize, weight: .bold))
                 .foregroundStyle(Color("ironGrayColor"))
                 .lineLimit(2)
                 .padding(.horizontal, 16)
@@ -1492,7 +1505,7 @@ struct BarBotRecipeCardView: View {
             // now populated by `BarBotResponseMapper.transform` which
             // ports UIKit's `MyBarDataMappingClass` pre-decode step.
             Text(recipe.baseAndMixerIngredientNamesJoined)
-                .font(Theme.Font.of(.caption1))
+                .font(.system(size: descriptionFontSize))
                 .foregroundStyle(Color("ironGrayColor"))
                 .lineLimit(2)
                 .padding(.horizontal, 16)
@@ -1505,7 +1518,12 @@ struct BarBotRecipeCardView: View {
                 onCraft()
             }) {
                 Text(Constants.craftTitle)
-                    .font(.system(size: 12))
+                    // iPad bumps the Craft pill text 12 → 14pt so it
+                    // reads at a comfortable scale next to the
+                    // larger iPad recipe-card name (16pt) while still
+                    // fitting in the fixed 168×32 pill. iPhone keeps
+                    // the storyboard 12pt spec.
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 14 : 12))
                     // Preserve EXACT pure black in light mode (bit-
                     // identical to the previous `Color.black`); switch
                     // to a near-white tone in dark mode so the title
@@ -1605,6 +1623,14 @@ struct BarBotMixlistCardView: View {
     let barsys360Connected: Bool
     let onPrimary: () -> Void
 
+    /// iPad-only font knobs. iPhone keeps caption1 (12pt) /
+    /// caption1 bold for the name and bullet list bit-identically.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+    private var nameFontSize: CGFloat   { isIPad ? 16 : 12 }
+    private var bulletFontSize: CGFloat { isIPad ? 14 : 12 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             image
@@ -1612,7 +1638,7 @@ struct BarBotMixlistCardView: View {
                 .clipped()
             // Name — x=8 y=215 w=184, caption1 bold (12pt), ironGray.
             Text(mixlist.name ?? "")
-                .font(Theme.Font.of(.caption1, .bold))
+                .font(.system(size: nameFontSize, weight: .bold))
                 .foregroundStyle(Color("ironGrayColor"))
                 .lineLimit(2)
                 .padding(.horizontal, 8)
@@ -1622,7 +1648,7 @@ struct BarBotMixlistCardView: View {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(uniqueRecipeNames.prefix(4).enumerated()), id: \.offset) { _, name in
                     Text("• \(name)")
-                        .font(Theme.Font.of(.caption1))
+                        .font(.system(size: bulletFontSize))
                         .foregroundStyle(Color("ironGrayColor"))
                         .lineLimit(1)
                 }
@@ -1988,10 +2014,10 @@ struct ChatMessageRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 // UIKit `lblRecipeOrMixlistHeader`: AppFontClass.font(.callout, weight: .bold) = 14pt bold
-                .font(Theme.Font.of(.callout, .bold))
+                .font(.system(size: sectionHeaderFontSize, weight: .bold))
                 .foregroundStyle(Color("charcoalGrayColor"))
             Text(subtitle)
-                .font(Theme.Font.of(.caption1))
+                .font(.system(size: sectionSubtitleFontSize))
                 .foregroundStyle(Color("mediumLightGrayColor"))
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -2190,7 +2216,10 @@ struct ChatInputBar: View {
                     // Placeholder (`QWo-hR-3og`) — overlaid when empty.
                     if vm.draft.isEmpty {
                         Text("Describe your preferred flavor profile, mood, or occasion")
-                            .font(.system(size: 13))
+                            // iPad bumps placeholder 13 → 16pt so the
+                            // input prompt reads at a comfortable
+                            // scale. iPhone keeps storyboard 13pt.
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 13))
                             .foregroundStyle(Color("charcoalGrayColor"))
                             .lineLimit(2)
                             .padding(.leading, 12 + 30 + 5)   // attachment + 5pt gap
@@ -3682,6 +3711,11 @@ struct BarBotHistoryView: View {
     // Tap gesture maps to `newChat(_:)`: resets sessionId, clears
     // merged answers, clears image, rebuilds chat view, restores tab bar.
     @ViewBuilder private var newChatCard: some View {
+        // iPad-only sizing knobs. iPhone keeps the storyboard 17pt
+        // bold label / 24×24 icon spec bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let iconSide: CGFloat = isIPad ? 32 : 24
+        let labelSize: CGFloat = isIPad ? 22 : 17
         Button {
             HapticService.light()
             vm.setupNewChat()
@@ -3692,10 +3726,10 @@ struct BarBotHistoryView: View {
                     .resizable()
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 24, height: 24)
+                    .frame(width: iconSide, height: iconSide)
                     .foregroundStyle(Color("mediumGrayColor"))
                 Text("New Chat")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: labelSize, weight: .bold))
                     .foregroundStyle(Color("mediumGrayColor"))
                 Spacer(minLength: 0)
             }
@@ -3724,12 +3758,15 @@ struct BarBotHistoryView: View {
 
     // MARK: Empty state
     private var empty: some View {
-        VStack(spacing: 12) {
+        // iPad-only font bump. iPhone keeps the 14pt body text and
+        // 48pt icon bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        return VStack(spacing: 12) {
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 48))
+                .font(.system(size: isIPad ? 64 : 48))
                 .foregroundStyle(Color("mediumGrayColor"))
             Text("No chat history yet")
-                .font(.system(size: 14))
+                .font(.system(size: isIPad ? 18 : 14))
                 .foregroundStyle(Color("mediumGrayColor"))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -3791,9 +3828,15 @@ struct BarBotHistoryView: View {
 
     @ViewBuilder
     private func historyCell(session: BarBotSession) -> some View {
-        HStack(alignment: .center, spacing: 10) {
+        // iPad-only font + cell-height bump. iPhone keeps the
+        // storyboard 14pt label / 86–96pt cell range bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 18 : 14
+        let minH: CGFloat = isIPad ? 100 : 86
+        let maxH: CGFloat = isIPad ? 116 : 96
+        return HStack(alignment: .center, spacing: 10) {
             Text(session.displayText)
-                .font(.system(size: 14))
+                .font(.system(size: titleSize))
                 .foregroundStyle(Color("mediumGrayColor"))
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -3807,7 +3850,7 @@ struct BarBotHistoryView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
-        .frame(minHeight: 86, maxHeight: 96, alignment: .center)
+        .frame(minHeight: minH, maxHeight: maxH, alignment: .center)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
