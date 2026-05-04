@@ -77,6 +77,107 @@ struct BarsysAppSwiftUIApp: App {
         // without a divider line beneath it.
         proxy.shadowImage = UIImage()
         proxy.setBackgroundImage(UIImage(), for: .default)
+
+        // -------------------------------------------------------------
+        // Pre-mount UITabBar appearance — iOS < 26 only.
+        //
+        // Why HERE and not in MainTabView.configureAppearance(): we
+        // need the appearance proxy values populated BEFORE any
+        // SwiftUI view (including TabView) is constructed. Moving the
+        // setup to `MainTabView.onAppear` runs it AFTER UITabBar has
+        // already been mounted with default UIKit values — which is
+        // the user-reported "icon at top, title at bottom, not
+        // centered together until first selection" race. Setting the
+        // proxy in App.init guarantees the values are ready by the
+        // time SwiftUI's TabView creates its hosting
+        // UITabBarController, so the very first frame already has
+        // our `titlePositionAdjustment = -12` + matching
+        // `imageInsets` baked in. iOS 26+ keeps its native glass tab
+        // bar — we early-return out of this block and let UIKit's
+        // pre-26 fallback never apply.
+        if #available(iOS 26.0, *) {
+            // iOS 26+ tab bar configuration is handled per-instance
+            // inside `MainTabView.configureAppearance()` (the iOS 26+
+            // branch needs `shadowColor` set to a translucent grey
+            // for the glass canvas — different value than pre-26).
+        } else {
+            let tabAppearance = UITabBarAppearance()
+            tabAppearance.configureWithOpaqueBackground()
+            tabAppearance.backgroundColor = UIColor(named: "primaryBackgroundColor")
+                ?? UIColor.systemBackground
+            tabAppearance.backgroundEffect = nil
+            // Hide the 1pt grey hairline at the top of the tab bar.
+            tabAppearance.shadowColor = .clear
+            tabAppearance.shadowImage = UIImage()
+
+            // Item appearance — colors are dynamic UIColor providers
+            // so they auto-adapt to light/dark on the trait flip,
+            // matching `MainTabView.configureAppearance()`'s palette
+            // bit-for-bit.
+            let softWhiteUIColor = UIColor(named: "softWhiteTextColor") ?? .white
+            let unselectedIconColor = UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? softWhiteUIColor.withAlphaComponent(0.55)
+                    : UIColor.black.withAlphaComponent(0.55)
+            }
+            let unselectedTitleColor = UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? softWhiteUIColor.withAlphaComponent(0.6)
+                    : UIColor.black.withAlphaComponent(0.6)
+            }
+            let selectedColor = UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? softWhiteUIColor
+                    : UIColor.black
+            }
+
+            let tabItemAppearance = UITabBarItemAppearance()
+            tabItemAppearance.normal.iconColor = unselectedIconColor
+            tabItemAppearance.normal.titleTextAttributes = [
+                .foregroundColor: unselectedTitleColor
+            ]
+            tabItemAppearance.selected.iconColor = selectedColor
+            tabItemAppearance.selected.titleTextAttributes = [
+                .foregroundColor: selectedColor
+            ]
+
+            // ZERO position adjustments — let UIKit's default stacked
+            // layout center the icon directly above the title. Why
+            // we removed the previous -12pt title adjustment + paired
+            // imageInsets:
+            //
+            //   • `titlePositionAdjustment` IS appearance-compliant —
+            //     it propagates through `UITabBar.appearance()` and
+            //     applies on the FIRST render, immediately moving
+            //     titles up by -12pt.
+            //   • `imageInsets` is NOT appearance-compliant on the
+            //     `UITabBarItem.appearance()` proxy. SwiftUI-created
+            //     UITabBarItem instances do NOT pick the value up,
+            //     so the icon stays at its default position.
+            //
+            // The combination produced exactly the user-reported
+            // "icon and title not center-aligned each other on first
+            // run" symptom: title moved up via the proxy, icon stayed
+            // put, group looked misaligned. After the user tapped a
+            // tab, our per-item `imageInsets` write inside
+            // `setupCustomSelectionViewIfNeeded` finally landed and
+            // shifted the icon up too — that's the "fixes itself
+            // after selection" behaviour they reported.
+            //
+            // Removing both adjustments means there's NOTHING async
+            // to race against — every UITabBarItem is born with
+            // UIKit's stock stacked layout, icon and title naturally
+            // centered together, identical from the very first frame
+            // through every tab tap. The visual is slightly more
+            // spaced than UIKit pre-26's storyboard had, but it is
+            // CONSISTENT — no fluctuation, no flicker, no snap.
+            tabAppearance.stackedLayoutAppearance = tabItemAppearance
+            tabAppearance.inlineLayoutAppearance = tabItemAppearance
+            tabAppearance.compactInlineLayoutAppearance = tabItemAppearance
+
+            UITabBar.appearance().standardAppearance = tabAppearance
+            UITabBar.appearance().scrollEdgeAppearance = tabAppearance
+        }
     }
 
     var body: some Scene {

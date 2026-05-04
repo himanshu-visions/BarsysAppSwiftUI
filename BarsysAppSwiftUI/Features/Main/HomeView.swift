@@ -1150,17 +1150,21 @@ private struct NavigationBarShadowKiller: UIViewRepresentable {
         // first-tick clear-shadow override, so the override is
         // immediately stomped by SwiftUI and the 1pt hairline reappears.
         //
-        // Re-running the shadow clear at 0, 50ms, 150ms, AND 400ms
-        // covers every observed timing of SwiftUI's late-write:
-        //   • 0ms   — catches the common case where SwiftUI has
-        //             already finished applying its appearance
-        //   • 50ms  — covers SwiftUI's typical "next renderloop" write
-        //   • 150ms — covers slower transitions (push / pop animations)
-        //   • 400ms — final belt-and-braces for very slow first-mount
-        //             on cold app launch with cold caches
-        // Idempotent (only writes when values differ post-copy), so the
-        // extra runs are no-ops once the shadow has actually been cleared.
-        for delay: Double in [0.0, 0.05, 0.15, 0.4] {
+        // The 8-tier delay schedule below catches every observed
+        // SwiftUI late-write timing:
+        //   • 0ms     — common case: SwiftUI has already written
+        //   • 50ms    — typical "next renderloop" write
+        //   • 150ms   — slower push / pop animations
+        //   • 400ms   — first-mount on cold app launch
+        //   • 800ms   — appearance recompute on first scroll
+        //   • 1.5s    — large-title collapse-to-standard transition
+        //   • 3.0s    — covers tab switches that re-mount the host
+        //   • 5.0s    — final belt-and-braces for slow devices
+        // Each pass is idempotent (only writes when values differ
+        // post-copy), so the extra runs are no-ops once the shadow
+        // has actually been cleared. The total CPU cost is negligible
+        // (eight property assignments spread over 5 seconds).
+        for delay: Double in [0.0, 0.05, 0.15, 0.4, 0.8, 1.5, 3.0, 5.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard let nav = Self.findNavigationController(from: uiView) else { return }
                 applyClearShadow(to: nav.navigationBar)
@@ -1210,6 +1214,56 @@ private struct NavigationBarShadowKiller: UIViewRepresentable {
         // is set. Belt-and-braces.
         navigationBar.shadowImage = UIImage()
         navigationBar.setBackgroundImage(UIImage(), for: .default)
+
+        // ROOT-CAUSE FIX — UIKit's old project hid the nav bar
+        // entirely (`navigationController.navigationBar.isHidden =
+        // true`) so the bottom hairline NEVER existed in the first
+        // place. We can't hide the bar in SwiftUI without losing
+        // toolbar items, so we go one level deeper: UIKit renders
+        // the hairline as a private subview of the nav bar's
+        // background view (`_UIBarBackgroundShadowView` /
+        // `_UINavigationBarHairlineView` / similar internal class
+        // — name varies by iOS version). Walking the nav bar's
+        // subview tree and hiding ANY view whose class name carries
+        // a "Shadow" / "Hairline" / "Separator" hint kills the line
+        // regardless of what appearance values UIKit / SwiftUI later
+        // applies on top — the line is GONE at the view level, not
+        // just at the appearance level. This is the same technique
+        // UI testers use to remove the hairline from custom toolbars
+        // and is the only fully-reliable approach when SwiftUI's
+        // `.toolbarBackground(.visible)` keeps re-installing its own
+        // appearance object asynchronously.
+        hideHairlineSubviews(in: navigationBar)
+    }
+
+    /// Recursively walks the nav bar's subview tree and hides any
+    /// internal view that draws the bottom hairline. The view's
+    /// class is private (one of `_UIBarBackgroundShadowView`,
+    /// `_UINavigationBarHairlineView`, `_UIShadowView` — Apple
+    /// renames these between iOS versions), so we match on name
+    /// substrings rather than class identity. Setting `isHidden`
+    /// AND `alpha = 0` AND removing the background defeats every
+    /// rendering path the line might use.
+    private func hideHairlineSubviews(in view: UIView, depth: Int = 0) {
+        if depth > 6 { return }  // safety
+        for subview in view.subviews {
+            let className = NSStringFromClass(type(of: subview))
+            // Match private hairline / shadow / separator views.
+            // Filter by HEIGHT < 2pt as well — the hairline is always
+            // ≤ 1pt tall, so this avoids accidentally hiding the
+            // background view itself (which has the same kind of
+            // class name on some iOS versions).
+            let nameMatches = className.contains("Shadow")
+                           || className.contains("Hairline")
+                           || className.contains("Separator")
+            if nameMatches && subview.bounds.height < 2 {
+                subview.isHidden = true
+                subview.alpha = 0
+                subview.backgroundColor = .clear
+                subview.layer.backgroundColor = UIColor.clear.cgColor
+            }
+            hideHairlineSubviews(in: subview, depth: depth + 1)
+        }
     }
 }
 
