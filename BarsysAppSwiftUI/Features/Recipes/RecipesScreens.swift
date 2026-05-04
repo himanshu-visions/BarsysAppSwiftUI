@@ -3776,9 +3776,16 @@ struct EditRecipeView: View {
     private var header: some View {
         // Storyboard: "Edit" label x:24 y:24 size 16pt + cross 24×24 at x:345.
         // Cross uses the `crossIcon` asset (same visual as Recipe Detail).
-        HStack {
+        //
+        // iPad-only sizing knobs. iPhone keeps the storyboard 16pt
+        // header / 12pt icon / 24pt tap-target bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 22 : 16
+        let crossIconSize: CGFloat = isIPad ? 18 : 12
+        let crossButtonSize: CGFloat = isIPad ? 40 : 24
+        return HStack {
             Text("Edit")
-                .font(.system(size: 16))
+                .font(.system(size: titleSize))
                 .foregroundStyle(Color("appBlackColor"))
                 .accessibilityAddTraits(.isHeader)
             Spacer()
@@ -3792,17 +3799,21 @@ struct EditRecipeView: View {
                 //     NOT stretched (UIButton default, no imageEdgeInsets)
                 // SwiftUI match: image rendered at native 12pt, centered
                 // inside a 24pt tap-target frame.
+                //
+                // iPad bumps the cross icon 12 → 18pt inside a larger
+                // 40pt tap target so the close button is comfortably
+                // tappable on the wider canvas. iPhone unchanged.
                 Image("crossIcon")
                     .resizable()
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 12, height: 12)
+                    .frame(width: crossIconSize, height: crossIconSize)
                     .foregroundStyle(Color("appBlackColor"))
-                    .frame(width: 24, height: 24)
-                    // The inner 12pt icon left an empty 6pt margin
-                    // inside the 24pt tap-target. `contentShape` makes
-                    // the whole 24×24 frame hit-testable so the close
-                    // button works anywhere inside the visible area.
+                    .frame(width: crossButtonSize, height: crossButtonSize)
+                    // The inner icon leaves an empty margin inside the
+                    // tap target. `contentShape` makes the whole frame
+                    // hit-testable so the close button works anywhere
+                    // inside the visible area.
                     .contentShape(Rectangle())
             }
             .buttonStyle(BounceButtonStyle())
@@ -4734,7 +4745,49 @@ struct EditRecipeView: View {
     /// (L304-326) → `RecipeCraftingClass.craftCoasterRecipeWithUpdatedQuantity`
     /// or `craft360RecipeForUpdatedQuantity`. The SwiftUI `CraftingView`
     /// route handles the device-specific dispatch internally.
+    ///
+    /// **Barsys 360 preflight pipeline** — 1:1 with the Recipe Page's
+    /// `craft(_:)` flow (RecipesScreens.swift L2631 →
+    /// `validateAndPushBarsys360Craft`). UIKit
+    /// `RecipeCraftingClass.craft360RecipeForUpdatedQuantity` runs
+    /// these checks BEFORE pushing CraftingVC; the previous SwiftUI
+    /// port let the user tap Craft on Edit Recipe straight through to
+    /// the crafting screen which then surfaced the error and bounced
+    /// back. Mirroring the recipe-page pipeline here brings the Edit
+    /// flow to parity:
+    ///
+    ///   1. 5 ml minimum check on every base/mixer ingredient.
+    ///   2. All-6-empty stations guard.
+    ///   3. Per-ingredient station match (`primary` + `secondary`
+    ///      lower-cased) — surface `ingredientDoesNotExistInStation`
+    ///      when no match.
+    ///   4. Per-ingredient station quantity check — surface
+    ///      `insufficientIngredientQuantityFor360` when the matched
+    ///      station's `ingredientQuantity` is less than the recipe's.
+    ///   5. Perishable-expired guard — surface the cleaning prompt
+    ///      with Clean / Okay actions.
+    ///
+    /// Coaster / Shaker / no-360 paths fall straight through to the
+    /// crafting screen — UIKit's
+    /// `craftCoasterRecipeWithUpdatedQuantity` only enforces the 5 ml
+    /// minimum which `CraftingViewModel.start(...)` handles
+    /// downstream, same as the recipe-page Coaster path.
     private func proceedToCraft() {
+        let id = recipeID ?? RecipeID()
+        if ble.isBarsys360Connected() {
+            Task { @MainActor in
+                await validateAndPushBarsys360Craft(id: id)
+            }
+            return
+        }
+        pushCrafting(id: id)
+    }
+
+    /// Push the crafting screen onto the appropriate navigation path —
+    /// the `EditRecipeCoverContent` cover's local path when Edit is
+    /// hosted there (so Crafting layers on top of Edit inside the
+    /// cover), else the global router path.
+    private func pushCrafting(id: RecipeID) {
         // 1:1 UIKit parity — `EditViewController.craftActionInEditScreen`
         // pushes CraftingVC on top of the nav stack WITHOUT popping itself
         // (RecipeCraftingClass.swift L28 does
@@ -4747,12 +4800,123 @@ struct EditRecipeView: View {
         // cover and it would render invisibly behind Edit. When Edit
         // was pushed directly via `Route.editRecipe`, fall back to the
         // router path (the test for that is `editCoverPath == nil`).
-        let id = recipeID ?? RecipeID()
         if let localPath = editCoverPath {
             localPath.wrappedValue.append(Route.crafting(id))
         } else {
             router.push(.crafting(id))
         }
+    }
+
+    /// Ports the Barsys-360 branch of UIKit
+    /// `RecipePageViewController+Actions.performBarsys360CraftCheck` +
+    /// `RecipeCraftingClass.craft360RecipeForUpdatedQuantity` for the
+    /// Edit-Recipe flow. Fetches live stations, runs the full
+    /// validation chain against the user's edited (in-memory)
+    /// quantities, and either surfaces the matching alert or pushes
+    /// `.crafting` onto the appropriate nav path.
+    ///
+    /// The validation MUST use the live `ingredients` @State (not
+    /// `existingRecipe.ingredients`) so the user's edited quantities
+    /// participate in the station-quantity check — UIKit's
+    /// `craft360RecipeForUpdatedQuantity` builds
+    /// `recipeIngredientsWithStationName` from the in-memory edits
+    /// for the same reason.
+    @MainActor
+    private func validateAndPushBarsys360Craft(id: RecipeID) async {
+        let deviceName = ble.getConnectedDeviceName()
+        guard !deviceName.isEmpty else {
+            env.alerts.show(title: Constants.deviceNotConnected)
+            return
+        }
+        env.loading.show("Checking stations…")
+        let stations = await StationsAPIService.loadStations(deviceName: deviceName)
+        env.loading.hide()
+
+        // Edit screen's `ingredients` @State already holds the BASE +
+        // MIXER slice (garnish / additional are filtered out in
+        // `.onAppear` — see L4779 hasUnsavedChanges note). Dedupe
+        // case-insensitive on name, mirroring UIKit
+        // `RecipePageViewModel+DataLoading.swift` L27-28.
+        var seen = Set<String>()
+        var baseAndMixer: [Ingredient] = []
+        for ing in ingredients {
+            let key = ing.name.lowercased()
+            if key.isEmpty { continue }
+            if seen.insert(key).inserted { baseAndMixer.append(ing) }
+        }
+
+        // 5 ml minimum — UIKit
+        // `RecipeCraftingClass.craft360RecipeForUpdatedQuantity`
+        // surfaces `lowIngredientQty` when any ingredient is below the
+        // threshold.
+        for ing in baseAndMixer {
+            if (ing.quantity ?? 0) < 5.0 {
+                env.alerts.show(title: Constants.lowIngredientQty)
+                return
+            }
+        }
+
+        // All-6-empty guard — UIKit
+        // `MainBarBotCell+Actions.craftAction` L62-70.
+        let emptyCount = stations.filter {
+            $0.ingredientName.isEmpty || $0.ingredientName == Constants.emptyDoubleDash
+        }.count
+        if emptyCount == 6 {
+            env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+            return
+        }
+
+        // Per-ingredient station match + quantity check — UIKit
+        // `RecipeCraftingClass.craft360RecipeForUpdatedQuantity`
+        // L42-65. Primary+secondary (lower-cased) comparison; no
+        // match fires `ingredientDoesNotExistInStation`; matching
+        // station with insufficient quantity fires
+        // `insufficientIngredientQuantityFor360`.
+        for ing in baseAndMixer {
+            let rp = (ing.category?.primary ?? "").lowercased()
+            let rs = (ing.category?.secondary ?? "").lowercased()
+            let matching = stations.first { slot in
+                let sp = (slot.category?.primary ?? "").lowercased()
+                let ss = (slot.category?.secondary ?? "").lowercased()
+                return !sp.isEmpty && sp == rp && ss == rs
+            }
+            guard let station = matching else {
+                env.alerts.show(title: Constants.ingredientDoesNotExistInStation)
+                return
+            }
+            if !station.ingredientName.isEmpty,
+               station.ingredientQuantity < (ing.quantity ?? 0) {
+                env.alerts.show(title: Constants.insufficientIngredientQuantityFor360)
+                return
+            }
+        }
+
+        // Perishable-expired guard — UIKit
+        // `RecipePageViewController+Actions` L90-99: show
+        // `perishableDescriptionTitle` alert with Clean/Okay. Clean
+        // routes to the cleaning flow (control-center origin — NOT
+        // setup, so we clear the setup context); Okay is a no-op
+        // (user stays on the Edit screen, can't craft until cleaned).
+        let expiredPerishables = stations.filter { $0.isPerishableExpired }
+        if !expiredPerishables.isEmpty {
+            env.alerts.show(
+                title: Constants.perishableDescriptionTitle,
+                primaryTitle: Constants.cleanAlertTitle,
+                secondaryTitle: Constants.okayButtonTitle,
+                onPrimary: {
+                    router.setupStationsContext = nil
+                    router.push(.stationCleaning)
+                },
+                onSecondary: {
+                    // UIKit "Okay" is a no-op — user stays on Edit
+                    // and must clean before retrying craft.
+                }
+            )
+            return
+        }
+
+        // All checks pass → push the crafting screen.
+        pushCrafting(id: id)
     }
 
     /// 1:1 port of UIKit `EditViewModel.hasUnsavedChanges(currentName:)`
