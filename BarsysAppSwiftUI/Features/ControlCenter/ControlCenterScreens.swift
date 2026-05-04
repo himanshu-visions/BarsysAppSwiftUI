@@ -416,7 +416,7 @@ struct ControlCenterTile: View {
     private var tileHeight: CGFloat        { isIPad ? 220 : 120 }
     private var iconSize: CGFloat          { isIPad ? 70  : 40  }
     private var iconTopPadding: CGFloat    { isIPad ? 56  : 30  }
-    private var labelFontSize: CGFloat     { isIPad ? 18  : 12  }
+    private var labelFontSize: CGFloat     { isIPad ? 24  : 12  }
     private var labelBottomPadding: CGFloat { isIPad ? 32 : 17  }
 
     var body: some View {
