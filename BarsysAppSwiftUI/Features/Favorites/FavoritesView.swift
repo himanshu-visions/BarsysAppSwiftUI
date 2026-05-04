@@ -1075,12 +1075,37 @@ struct BarsysRecipeRow: View {
         return raw.getImageUrl()
     }
 
-    private var isFavourite: Bool { recipe.isFavourite ?? false }
+    /// Heart-icon source. 1:1 with UIKit
+    /// `BarsysRecipeTableViewCell.configure(recipe:tab:)` (L82-90):
+    ///   • Barsys Recipes tab → `recipe.isFavourite`
+    ///   • My Drinks tab      → `recipe.isMyDrinkFavourite` (a.k.a.
+    ///     `isDrinkFavorite` in older snapshots of the UIKit code)
+    /// The two flags are tracked separately because a heart-tap on a
+    /// My Drink must NEVER pollute the Barsys Recipes favourites tab
+    /// — those rows are sourced from `env.storage.favorites()` which
+    /// only contains Barsys-side IDs.
+    private var isFavourite: Bool {
+        if tab == .myDrinks {
+            return recipe.isMyDrinkFavourite ?? false
+        }
+        return recipe.isFavourite ?? false
+    }
 
     /// UIKit BarsysRecipeTableViewCell L63-77: iOS 26 uses 40×40 glass buttons
     /// with black@0.3 tint; pre-26 uses 30×30 plain buttons with white tint.
+    /// iPad bumps both sizes to 60×60 — the iPhone-spec frames read as
+    /// thumbnail-scale on the wider iPad canvas and QA reported the
+    /// favourite / more icons were too small to reliably tap. iPhone
+    /// (any iOS) is unchanged.
     private var favButtonSize: CGFloat {
+        if UIDevice.current.userInterfaceIdiom == .pad { return 60 }
         if #available(iOS 26.0, *) { return 40 } else { return 30 }
+    }
+    /// Icon glyph size INSIDE the button frame. iPhone keeps the
+    /// storyboard-spec 22pt; iPad bumps to 36pt so the heart / more
+    /// glyphs scale in proportion with the larger 60pt button frame.
+    private var favIconSize: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 36 : 22
     }
     private var favButtonTint: Color {
         if #available(iOS 26.0, *) {
@@ -1090,24 +1115,31 @@ struct BarsysRecipeRow: View {
         }
     }
 
-    /// On iPad + pre-iOS-26, SwiftUI's hit-test routing swallows nested
-    /// `Button` taps inside an outer `Button` — the row's own `onTap`
-    /// absorbed every press on the overlay Favourite / More icon. The
-    /// outer Button is replaced by a `.contentShape + .onTapGesture`
-    /// wrapper ONLY on that platform combination, which lets the inner
-    /// Buttons receive their taps directly. iPhone (any iOS) and iPad
-    /// iOS 26+ keep the original outer Button layout bit-identical.
-    private var isIPadPre26: Bool {
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
-        if #available(iOS 26.0, *) { return false } else { return true }
+    /// On iPad (every iOS), SwiftUI's hit-test routing swallows nested
+    /// `Button` taps inside an outer wrapper that owns its own gesture
+    /// — both `Button(action: onTap)` AND
+    /// `.contentShape(Rectangle()).onTapGesture { onTap() }` were
+    /// observed to absorb every press on the overlay Favourite /
+    /// More icons, leaving them unclickable (QA "favourite / info /
+    /// more / show more buttons not clickable for iPad" reports —
+    /// initial fix scoped to pre-iOS-26 iPad, second pass extended to
+    /// all iPad iOS, third pass moved the gesture down to the leaf
+    /// columns when neither outer wrapper proved reliable on iPad
+    /// iOS 26). iPhone (any iOS) keeps the original outer Button
+    /// layout bit-identical because there's no hit-test conflict
+    /// there.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
     }
 
     var body: some View {
-        if isIPadPre26 {
+        if isIPad {
+            // On iPad the row navigation tap lives on the leaf
+            // columns (text + image) inside `rowContent` itself —
+            // not on this outer view — so the overlay Favourite /
+            // More buttons can receive their taps without competing
+            // with a parent gesture.
             rowContent
-                .contentShape(Rectangle())
-                .onTapGesture { onTap() }
-                .accessibilityAddTraits(.isButton)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(
                     "\(recipe.displayName), \(isFavourite ? "favourited" : "not favourited")"
@@ -1149,6 +1181,12 @@ struct BarsysRecipeRow: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                // iPad-only leaf-level row tap. iPhone (any iOS) does
+                // NOT register this — its outer `Button(action: onTap)`
+                // already handles row navigation, and an additional
+                // inner gesture would re-introduce the same nesting
+                // problem this whole structure exists to avoid.
+                .modifier(IPadRowTapModifier(active: isIPad, onTap: onTap))
 
                 // Right half — square image with favourite + more overlays.
                 //
@@ -1192,65 +1230,10 @@ struct BarsysRecipeRow: View {
                 .frame(width: cellHeight, height: cellHeight)
                 .background(Color("lightBorderGrayColor"))
                 .clipped()
-                // Favourite button — TOP-RIGHT corner of the image
-                // (UIKit `aHb-2f-Xkm` constraints: top=5, trailing=5).
-                // Glass background lives INSIDE the label so it scales
-                // with the BounceButtonStyle press animation.
-                .overlay(alignment: .topTrailing) {
-                    Button {
-                        onFavourite()
-                    } label: {
-                        Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                            .frame(width: favButtonSize, height: favButtonSize)
-                            .foregroundStyle(favButtonTint)
-                            .glassButtonIfAvailable(size: favButtonSize)
-                    }
-                    .buttonStyle(BounceButtonStyle())
-                    .accessibilityLabel(isFavourite
-                                        ? "Remove from favourites"
-                                        : "Add to favourites")
-                    .padding(.top, 5)
-                    .padding(.trailing, 5)
-                }
-                // More (info) button — BOTTOM-RIGHT corner of the image,
-                // visible only on the My Drinks tab (UIKit
-                // `dZv-df-fwc` constraints: bottom=5, trailing=5;
-                // visibility gated by `data.isMoreButtonHidden` which is
-                // false only for My Drinks rows).
-                .overlay(alignment: .bottomTrailing) {
-                    if tab == .myDrinks {
-                        Button {
-                            onMore()
-                        } label: {
-                            Image("more")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 22, height: 22)
-                                .frame(width: favButtonSize, height: favButtonSize)
-                                .foregroundStyle(favButtonTint)
-                                .glassButtonIfAvailable(size: favButtonSize)
-                        }
-                        .buttonStyle(BounceButtonStyle())
-                        .accessibilityLabel("More options for \(recipe.displayName)")
-                        .padding(.bottom, 5)
-                        .padding(.trailing, 5)
-                    }
-                }
-                // Edit / Delete popup — UIKit `3gv-w4-LyK` (moreView)
-                // anchored bottom=10pt, trailing=8pt of the card. Now
-                // hangs from the moreButton (which lives at the same
-                // bottom-right corner).
-                .overlay(alignment: .bottomTrailing) {
-                    if tab == .myDrinks && isMoreMenuOpen {
-                        morePopup
-                            .padding(.bottom, 10)
-                            .padding(.trailing, 8)
-                            .transition(.opacity)
-                    }
-                }
+                // iPad-only leaf-level row tap on the image area.
+                // iPhone (any iOS) does NOT register this — its outer
+                // `Button(action: onTap)` already handles row navigation.
+                .modifier(IPadRowTapModifier(active: isIPad, onTap: onTap))
             }
             .frame(height: cellHeight)
             .frame(maxWidth: .infinity)
@@ -1264,6 +1247,80 @@ struct BarsysRecipeRow: View {
                     .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
             )
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            // ──────────────────────────────────────────────────────
+            // Action buttons live at the OUTER container level (not
+            // nested inside the AsyncImage chain) so their hit
+            // testing isn't competing with the image's row-tap
+            // gesture. Previous attempts that put these `.overlay`
+            // calls on the AsyncImage left them un-tappable on
+            // iPad — moving them up here turns them into siblings
+            // of the HStack, where they get their own clean
+            // hit-test pass on every iOS / device combination.
+            //
+            // Position: `.topTrailing` / `.bottomTrailing` of the
+            // row container — the image fills the right portion
+            // of the row exactly, so these align visually with the
+            // image's top-right / bottom-right corners just like
+            // when they were chained off the AsyncImage.
+            //
+            // 1:1 port of UIKit `BarsysRecipeTableViewCell.xib`:
+            //   • favouriteButton `aHb-2f-Xkm` — TOP-RIGHT, top=5,
+            //     trailing=5; iOS 26 → 40×40 glass / black@0.3,
+            //     pre-26 → 30×30 plain / white. iPad bumps to 60×60
+            //     so the glyph is large enough to reliably tap on
+            //     the wider canvas.
+            //   • moreButton `dZv-df-fwc` — BOTTOM-RIGHT, bottom=5,
+            //     trailing=5; visible only for My Drinks rows
+            //     (matches UIKit `data.isMoreButtonHidden`).
+            //   • Edit / Delete popup `3gv-w4-LyK` — bottom=10,
+            //     trailing=8 from the moreButton corner.
+            // ──────────────────────────────────────────────────────
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    onFavourite()
+                } label: {
+                    Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: favIconSize, height: favIconSize)
+                        .frame(width: favButtonSize, height: favButtonSize)
+                        .foregroundStyle(favButtonTint)
+                        .glassButtonIfAvailable(size: favButtonSize)
+                }
+                .buttonStyle(BounceButtonStyle())
+                .accessibilityLabel(isFavourite
+                                    ? "Remove from favourites"
+                                    : "Add to favourites")
+                .padding(.top, 5)
+                .padding(.trailing, 5)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if tab == .myDrinks {
+                    Button {
+                        onMore()
+                    } label: {
+                        Image("more")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: favIconSize, height: favIconSize)
+                            .frame(width: favButtonSize, height: favButtonSize)
+                            .foregroundStyle(favButtonTint)
+                            .glassButtonIfAvailable(size: favButtonSize)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .accessibilityLabel("More options for \(recipe.displayName)")
+                    .padding(.bottom, 5)
+                    .padding(.trailing, 5)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if tab == .myDrinks && isMoreMenuOpen {
+                    morePopup
+                        .padding(.bottom, 10)
+                        .padding(.trailing, 8)
+                        .transition(.opacity)
+                }
+            }
             .padding(.bottom, 12)
     }
 
@@ -1455,6 +1512,28 @@ extension View {
                     )
                     .frame(width: size, height: size)
             )
+        }
+    }
+}
+
+/// Conditionally attaches a `.contentShape(Rectangle()) +
+/// .onTapGesture` to a leaf view when running on iPad — used by
+/// `BarsysRecipeRow` to fire row navigation from the text and image
+/// columns directly so the overlay Favourite / More buttons keep
+/// their own hit testing. iPhone path is a complete pass-through so
+/// the existing outer `Button(action: onTap)` wrapper handles row
+/// navigation bit-identical to before.
+private struct IPadRowTapModifier: ViewModifier {
+    let active: Bool
+    let onTap: () -> Void
+
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture { onTap() }
+        } else {
+            content
         }
     }
 }
