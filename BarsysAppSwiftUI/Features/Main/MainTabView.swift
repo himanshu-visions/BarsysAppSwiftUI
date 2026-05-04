@@ -468,6 +468,13 @@ struct MainTabView: View {
                     router.selectedTab = restored
                 }
                 let idx = router.selectedTab.rawValue
+                // SEED the cached pill index IMMEDIATELY (no defer)
+                // so a tap-during-foreground-transition bounds KVO
+                // that fires before our 0.1s asyncAfter still reads
+                // the correct index. Fixes the user-reported "tap a
+                // tab right after foregrounding and pill lands on
+                // the wrong tab" race.
+                Self.lastKnownSelectedIndex = idx
                 // 0.1s defer — UIKit's trait-collection propagation
                 // on foreground activation can land AFTER SwiftUI's
                 // colorScheme update; waiting a tick guarantees we
@@ -1434,10 +1441,19 @@ struct MainTabView: View {
             Self.tabBarBoundsObserver = tabBar.observe(\.bounds, options: [.new]) { obs, _ in
                 DispatchQueue.main.async { [weak obs] in
                     guard let obs else { return }
-                    let parentTBC = obs.next as? UITabBarController
-                    let idx = parentTBC?.selectedIndex ?? 0
+                    // Use the CACHED last-known-selected index instead
+                    // of `tabBarController.selectedIndex`. The
+                    // controller's index can drift out of sync with
+                    // the user's intent during layout transitions
+                    // (especially when the user taps a tab right after
+                    // foregrounding — UIKit's selectedIndex hasn't
+                    // yet caught up to SwiftUI's binding write, and a
+                    // bounds change in that window would land the
+                    // pill on the OLD tab). Reading the cached index
+                    // pins the pill to wherever `repositionPillAtIndex`
+                    // last said it should be.
                     Self.positionSelectionView(in: obs,
-                                               atIndex: idx,
+                                               atIndex: Self.lastKnownSelectedIndex,
                                                animated: false)
                     // Tab bar lift is now SwiftUI-managed via
                     // `applyIOSLessThan26TabBarLift()` — no transform
@@ -1452,6 +1468,16 @@ struct MainTabView: View {
             Self.observedTabBar = tabBar
         }
 
+        // Seed the cached index from `router.selectedTab` BEFORE
+        // positioning, so any subsequent KVO-triggered reposition
+        // (e.g. a rotation that fires before the user has tapped a
+        // tab) reads the SAME source-of-truth value the initial
+        // setup uses. Without this seed, the cached index would
+        // remain at its default (3 = homeOrControlCenter) until the
+        // user taps a tab — leaving rotations on a non-default-tab
+        // launch (like deep-link to Explore) positioning the pill
+        // back at homeOrControlCenter.
+        Self.lastKnownSelectedIndex = router.selectedTab.rawValue
         // Initial position — UIKit calls `moveSelectionView(animated: false)`
         // from `setupSelectionView()` so the pill snaps to the current
         // tab without animating from (0,0).
