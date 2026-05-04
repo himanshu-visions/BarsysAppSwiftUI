@@ -129,9 +129,14 @@ struct ControlCenterView: View {
                     .padding(.leading, 24)
                     .padding(.top, 0)
 
-                // Description — BjM-cP-3cB, 12pt, appBlackColor, leading 24, top +20
+                // Description — BjM-cP-3cB, 12pt, appBlackColor, leading 24, top +20.
+                // iPad bumps to 18pt so the description reads at a
+                // comfortable scale on the wider canvas (matches the
+                // per-device font ramp applied to the Control Center
+                // title and tile labels). iPhone stays at the
+                // storyboard 12pt spec — bit-identical.
                 Text(descriptionText)
-                    .font(.system(size: 12))
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 12))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.horizontal, 24)
                     .padding(.top, 20)
