@@ -842,13 +842,18 @@ struct DevicePairedView: View {
                 // `decideTutorialOnAppear()`.
                 if isConnected && !hideTutorialThisSession {
                     VStack(alignment: .leading, spacing: 0) {
+                        // iPad bumps Tutorial header 20 → 26pt bold and
+                        // description 12 → 16pt so the explore-tab
+                        // tutorial card scales with the larger video
+                        // frame. iPhone keeps storyboard 20pt / 12pt
+                        // bit-identically.
                         Text("Tutorial")
-                            .font(.system(size: 20, weight: .bold))
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 26 : 20, weight: .bold))
                             .foregroundStyle(Color("charcoalGrayColor"))
                             .padding(.top, 17)
 
                         Text(tutorialDescription)
-                            .font(.system(size: 12))
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12))
                             .foregroundStyle(Color("charcoalGrayColor"))
                             .padding(.top, 4)
 
@@ -1036,13 +1041,18 @@ struct DevicePairedView: View {
                                 // charcoalGray, center, 2 lines max.
                                 // UIKit frame: 184pt wide × 30pt tall,
                                 // 10pt below the image (y=210).
+                                // iPad bumps the menu-tile label 16 →
+                                // 22pt medium with a taller 42pt label
+                                // band so 2-line labels still fit on
+                                // the wider canvas. iPhone keeps
+                                // storyboard 16pt / 30pt bit-identically.
                                 Text(item.name)
-                                    .font(.system(size: 16, weight: .medium))
+                                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16, weight: .medium))
                                     .foregroundStyle(Color("charcoalGrayColor"))
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
                                     .truncationMode(.tail)
-                                    .frame(height: 30)
+                                    .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 42 : 30)
                                     .frame(maxWidth: .infinity)
                                     .padding(.horizontal, 8)
                                     .padding(.top, 10)  // 10pt image→label gap (y=210 − y=200)
@@ -1095,20 +1105,21 @@ struct DevicePairedView: View {
                     .padding(.top, 24)
 
                 GeometryReader { geo in
-                    // Clamp card width on iPad + pre-iOS-26 only. The
-                    // responsive formula `(geo.size.width - 24 - 32) / 2.15`
-                    // yields ≈157pt on an iPhone 14 (correct, fits in the
-                    // 210pt section frame) but ≈450pt on a 1024pt-wide
-                    // iPad — the square image (`cardW × cardW`) overflows
-                    // the section frame by ~240pt and visibly bleeds into
-                    // the "Connect with Barsys online" section below.
-                    // iPad iOS 26+ was reported as fine, so we leave it
-                    // on the original formula; iPad pre-iOS 26 caps at
-                    // 180pt (same visual scale as a large iPhone card).
-                    // iPhone (every iOS) is bit-identical to before
-                    // because the formula is never > 180 on iPhone widths.
+                    // Card-width sizing rules:
+                    //   • iPhone (any iOS) → responsive formula
+                    //     `(geo.size.width - 24 - 32) / 2.15` yields
+                    //     ≈157pt on iPhone 14 — bit-identical to before.
+                    //   • iPad pre-iOS 26 → previously capped at 180pt
+                    //     (same scale as a large iPhone card). QA
+                    //     reported the cards looked too small on the
+                    //     wider iPad canvas, so the cap is now 280pt.
+                    //   • iPad iOS 26+ → also capped at 280pt so the
+                    //     image+label tile reads proportional to the
+                    //     other Explore tiles instead of stretching to
+                    //     ≈450pt across the screen.
+                    let isIPad = UIDevice.current.userInterfaceIdiom == .pad
                     let rawCardW = (geo.size.width - 24 - 32) / 2.15
-                    let cardW = shouldClampCatalogCard ? min(180, rawCardW) : rawCardW
+                    let cardW: CGFloat = isIPad ? min(280, rawCardW) : rawCardW
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(Array(partnerships.enumerated()), id: \.offset) { _, p in
@@ -1118,8 +1129,13 @@ struct DevicePairedView: View {
                                         .aspectRatio(contentMode: .fill)
                                         .frame(width: cardW, height: cardW)
                                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    // iPad bumps the partnership label
+                                    // 14 → 18pt medium so it reads
+                                    // proportional to the larger card
+                                    // on the wider canvas. iPhone is
+                                    // unchanged.
                                     Text(p.name)
-                                        .font(.system(size: 14, weight: .medium))
+                                        .font(.system(size: isIPad ? 18 : 14, weight: .medium))
                                         .foregroundStyle(Color("charcoalGrayColor"))
                                         .frame(width: cardW)
                                         .multilineTextAlignment(.center)
@@ -1147,7 +1163,9 @@ struct DevicePairedView: View {
                         .padding(.horizontal, 24)
                     }
                 }
-                .frame(height: 210) // image ≈ 165 + 8 spacing + 20 label + buffer
+                // iPhone: image ≈ 165 + 8 spacing + 20 label + buffer = 210.
+                // iPad: image up to 280 + 8 spacing + 24 label + buffer = 320.
+                .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 330 : 210)
                 .padding(.top, 12)
 
                 // ══════════════════════════════════════════════════
@@ -1158,10 +1176,12 @@ struct DevicePairedView: View {
                     .padding(.top, 24)
 
                 GeometryReader { geo in
-                    // Same clamp rationale as the Partnerships section —
-                    // keeps cards at a sensible size on iPad pre-iOS 26.
+                    // Same iPad-up sizing rule as Partnerships above —
+                    // 280pt cards on iPad (every iOS), responsive
+                    // formula on iPhone. iPhone bit-identical.
+                    let isIPad = UIDevice.current.userInterfaceIdiom == .pad
                     let rawCardW = (geo.size.width - 24 - 32) / 2.15
-                    let cardW = shouldClampCatalogCard ? min(180, rawCardW) : rawCardW
+                    let cardW: CGFloat = isIPad ? min(280, rawCardW) : rawCardW
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(Array(barsysProducts.enumerated()), id: \.offset) { _, p in
@@ -1172,8 +1192,12 @@ struct DevicePairedView: View {
                                         .frame(width: cardW, height: cardW)
                                         .background(Color.white)
                                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    // iPad bumps the Barsys Products
+                                    // label 14 → 18pt medium to match
+                                    // Partnerships above. iPhone is
+                                    // unchanged.
                                     Text(p.name)
-                                        .font(.system(size: 14, weight: .medium))
+                                        .font(.system(size: isIPad ? 18 : 14, weight: .medium))
                                         .foregroundStyle(Color("charcoalGrayColor"))
                                         .frame(width: cardW)
                                         .multilineTextAlignment(.center)
@@ -1190,7 +1214,9 @@ struct DevicePairedView: View {
                         .padding(.horizontal, 24)
                     }
                 }
-                .frame(height: 210)
+                // iPhone: 210pt (unchanged). iPad: 330pt to fit the
+                // larger 280pt image + label band.
+                .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 330 : 210)
                 .padding(.top, 12)
                 .padding(.bottom, devicePairedBottomInset)
 
@@ -1352,8 +1378,11 @@ struct DevicePairedView: View {
     }
 
     private func sectionHeader(_ title: String) -> some View {
+        // iPad bumps section headers 20 → 26pt bold ("We think you'll
+        // love these", "Partnerships", "Barsys Products"). iPhone
+        // keeps storyboard 20pt bit-identically.
         Text(title)
-            .font(.system(size: 20, weight: .bold))
+            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 26 : 20, weight: .bold))
             .foregroundStyle(Color("charcoalGrayColor"))
             .padding(.leading, 24)
     }
@@ -1430,17 +1459,29 @@ private struct RecommendedRecipeCard: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        // iPad-only sizing knobs for the "We think you'll love these"
+        // recommended recipe carousel card. iPhone keeps storyboard
+        // 300×170 / 16pt name / 11pt ingredients / 22×20 heart inside
+        // 30×30 button bit-identically.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let cardWidth: CGFloat = isIPad ? 380 : 300
+        let cardHeight: CGFloat = isIPad ? 220 : 170
+        let imageWidth: CGFloat = isIPad ? 200 : 150
+        let nameSize: CGFloat = isIPad ? 20 : 16
+        let descriptionSize: CGFloat = isIPad ? 14 : 11
+        let heartGlyph: CGFloat = isIPad ? 28 : 22
+        let heartButton: CGFloat = isIPad ? 40 : 30
+        return ZStack(alignment: .topTrailing) {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(recipe.displayName)
-                        .font(.system(size: 16))
+                        .font(.system(size: nameSize))
                         .foregroundStyle(Color("charcoalGrayColor"))
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                     if let names = recipe.ingredientNames, !names.isEmpty {
                         Text(names)
-                            .font(.system(size: 11))
+                            .font(.system(size: descriptionSize))
                             .foregroundStyle(Color("unSelectedColor"))
                             .lineLimit(4)
                             .multilineTextAlignment(.leading)
@@ -1450,7 +1491,7 @@ private struct RecommendedRecipeCard: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
 
                 thumbnail
-                    .frame(width: 150, height: 170)
+                    .frame(width: imageWidth, height: cardHeight)
                     .clipped()
             }
 
@@ -1460,13 +1501,13 @@ private struct RecommendedRecipeCard: View {
                 Image(recipe.isFavourite == true ? "favIconRecipeSelected" : "favIconRecipe")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 22, height: 20)
-                    .frame(width: 30, height: 30)
+                    .frame(width: heartGlyph, height: heartGlyph)
+                    .frame(width: heartButton, height: heartButton)
             }
             .padding(.top, 6)
             .padding(.trailing, 6)
         }
-        .frame(width: 300, height: 170)
+        .frame(width: cardWidth, height: cardHeight)
         .background(Color("warmBackgroundColor"))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(Rectangle())
