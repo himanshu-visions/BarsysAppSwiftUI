@@ -558,9 +558,16 @@ struct ExploreRecipesView: View {
                         let willBeFav = !env.storage.favorites().contains(recipe.id)
                         catalog.toggleFavourite(recipeId: recipe.id)
                         favouritesRefreshTick &+= 1
+                        // 1:1 with UIKit `FavoriteRecipeApiService.swift`
+                        // — Braze event carries `recipe_id` + `recipe_name`
+                        // for both the add and remove side of the toggle.
                         env.analytics.track(
                             (willBeFav ? TrackEventName.favouriteRecipeAdded
-                                       : TrackEventName.favouriteRecipeRemoved).rawValue
+                                       : TrackEventName.favouriteRecipeRemoved).rawValue,
+                            properties: [
+                                "recipe_id": recipe.id.value,
+                                "recipe_name": recipe.displayName
+                            ]
                         )
                         env.alerts.show(message: willBeFav
                                         ? Constants.likeSuccessMessage
@@ -2349,7 +2356,17 @@ struct RecipeDetailView: View {
                             await MainActor.run { env.catalog.reloadRecipesFromStorage() }
                         }
                     }
-                    env.analytics.track(TrackEventName.favouriteRecipeAdded.rawValue)
+                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
+                    // Braze event — `favorite_recipe_added` carries
+                    // `recipe_id` + `recipe_name` so audiences can be
+                    // segmented by individual recipe in dashboards.
+                    env.analytics.track(
+                        TrackEventName.favouriteRecipeAdded.rawValue,
+                        properties: [
+                            "recipe_id": recipe.id.value,
+                            "recipe_name": recipe.displayName
+                        ]
+                    )
                     env.alerts.show(message: Constants.likeSuccessMessage)
                 case .unfavourite:
                     localIsFavourite = false
@@ -2397,7 +2414,16 @@ struct RecipeDetailView: View {
                             await MainActor.run { env.catalog.reloadRecipesFromStorage() }
                         }
                     }
-                    env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)
+                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
+                    // Braze event — `favorite_recipe_removed` carries
+                    // `recipe_id` + `recipe_name` to mirror the add event.
+                    env.analytics.track(
+                        TrackEventName.favouriteRecipeRemoved.rawValue,
+                        properties: [
+                            "recipe_id": recipe.id.value,
+                            "recipe_name": recipe.displayName
+                        ]
+                    )
                     env.alerts.show(message: Constants.unlikeSuccessMessage)
                 }
             } label: {

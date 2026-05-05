@@ -269,7 +269,16 @@ struct FavoritesView: View {
         .onAppear {
             if !didTrackView {
                 didTrackView = true
-                env.analytics.track(TrackEventName.favouratesScreenViewed.rawValue)
+                // 1:1 with UIKit `FavouritesRecipesAndDrinksViewController`
+                // — Braze receives the same `user_id` + `date` pair so
+                // the event can be tied to a known user in dashboards.
+                env.analytics.track(
+                    TrackEventName.favouratesScreenViewed.rawValue,
+                    properties: [
+                        "user_id": UserDefaultsClass.getUserId() ?? "",
+                        "date": Date()
+                    ]
+                )
             }
             // 1:1 port of UIKit viewWillAppear (L153-169):
             //   viewModel.resetMyDrinksForRefresh()
@@ -804,7 +813,16 @@ struct FavoritesView: View {
             Task { @MainActor in
                 do {
                     _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: false)
-                    env.analytics.track(TrackEventName.favouriteRecipeRemoved.rawValue)
+                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
+                    // Braze event — `recipe_id` + `recipe_name` so the
+                    // event can be segmented per-recipe in dashboards.
+                    env.analytics.track(
+                        TrackEventName.favouriteRecipeRemoved.rawValue,
+                        properties: [
+                            "recipe_id": recipe.id.value,
+                            "recipe_name": recipe.displayName
+                        ]
+                    )
                     // UIKit: showDefaultAlert(message: responseMessage,
                     //                         okTitle: "OK") { okAction in ... }
                     env.alerts.show(message: Constants.unlikeSuccessMessage) {
@@ -840,9 +858,17 @@ struct FavoritesView: View {
             Task { @MainActor in
                 do {
                     _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: willBeFav)
+                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
+                    // Braze event — `recipe_id` + `recipe_name` for both
+                    // sides of the toggle (consistent with the Tab 0
+                    // unlike branch above and the listing screens).
                     env.analytics.track(
                         (willBeFav ? TrackEventName.favouriteRecipeAdded
-                                   : TrackEventName.favouriteRecipeRemoved).rawValue
+                                   : TrackEventName.favouriteRecipeRemoved).rawValue,
+                        properties: [
+                            "recipe_id": recipe.id.value,
+                            "recipe_name": recipe.displayName
+                        ]
                     )
                     env.alerts.show(message: willBeFav
                                     ? Constants.likeSuccessMessage

@@ -1906,8 +1906,7 @@ extension BLEService: CBCentralManagerDelegate {
             if wasReconnecting {
                 BrazeService.shared.track(
                     event: TrackEventName.bluetoothAutoReconnected.rawValue,
-                    properties: ["device_id": deviceName,
-                                 "device_type": kind.displayName]
+                    properties: brazeProps
                 )
             } else {
                 BrazeService.shared.track(

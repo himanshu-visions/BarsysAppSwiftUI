@@ -87,6 +87,20 @@ final class BrazeService {
     /// after the OS already delivered the token (race tolerated).
     private var pendingPushToken: Data?
 
+    /// Closure that resolves the current login state for the IAM display
+    /// gate. Wired from app bootstrap once `AuthService` is available.
+    /// Mirrors UIKit `inAppMessage(_:displayChoiceForMessage:)` which
+    /// reads `UserDefaultsClass.getUserId()` (AppDelegate.swift L307-315)
+    /// — `.discard` for anonymous users, `.now` once a user is logged in.
+    var isUserLoggedInProvider: () -> Bool = {
+        (UserDefaultsClass.getUserId() ?? "").isEmpty == false
+    }
+
+    /// Strong reference to the IAM UI delegate so it stays alive for the
+    /// lifetime of the Braze instance. Held as `Any?` so this file
+    /// compiles without BrazeUI linked.
+    private var inAppMessageDelegate: Any?
+
     private init() {}
 
     // MARK: - Configuration (ports AppDelegate.configureBraze, L79-103)
@@ -123,16 +137,24 @@ final class BrazeService {
         brazeInstance = braze
 
         #if canImport(BrazeUI)
-        // 1:1 with UIKit AppDelegate.swift L94-96:
+        // 1:1 with UIKit AppDelegate.swift L94-96 + L307-315:
         //   let brazeUI = BrazeInAppMessageUI()
-        //   brazeUI.delegate = self
+        //   brazeUI.delegate = self    ← AppDelegate adopts the delegate
         //   AppDelegate.braze?.inAppMessagePresenter = brazeUI
+        //   func inAppMessage(_:displayChoiceForMessage:) -> .discard | .now
         //
-        // The IAM delegate decision (discard vs show) is brokered by
-        // `inAppMessageDisplayChoice(isUserLoggedIn:)` — wire it up at the
-        // call site (e.g. an IAM delegate in `AppDelegateAdaptor`) once
-        // BrazeUI is linked.
+        // The IAM display gate (`.discard` for anonymous users, `.now`
+        // for logged-in) is brokered by `BrazeIAMDelegate` defined below
+        // — held as a strong ref via `inAppMessageDelegate` so it stays
+        // alive while the Braze instance is alive.
         let inAppMessageUI = BrazeInAppMessageUI()
+        let iamDelegate = BrazeIAMDelegate(
+            isUserLoggedIn: { [weak self] in
+                self?.isUserLoggedInProvider() ?? false
+            }
+        )
+        inAppMessageUI.delegate = iamDelegate
+        inAppMessageDelegate = iamDelegate
         braze.inAppMessagePresenter = inAppMessageUI
         #endif
 
@@ -334,3 +356,40 @@ final class BrazeService {
     /// keep working without churn.
     func setUser(id: String) { loginUser(userId: id) }
 }
+
+// MARK: - In-App Message UI delegate
+//
+// 1:1 port of UIKit `AppDelegate.inAppMessage(_:displayChoiceForMessage:)`
+// (AppDelegate.swift L307-315):
+//   func inAppMessage(_ ui:displayChoiceForMessage message:) -> DisplayChoice {
+//       guard UserDefaultsClass.getUserId() != nil else { return .discard }
+//       return .now
+//   }
+//
+// In SwiftUI we don't have an `AppDelegate` adopting the BrazeUI delegate
+// directly — instead, this small NSObject wrapper holds a closure-based
+// "is the user logged in" probe (provided by `BrazeService.configure()`)
+// and answers the same way UIKit does. Kept inside `#if canImport(BrazeUI)`
+// so the file still compiles when the pods are not yet installed.
+
+#if canImport(BrazeUI)
+final class BrazeIAMDelegate: NSObject, BrazeInAppMessageUIDelegate {
+    private let isUserLoggedIn: () -> Bool
+
+    init(isUserLoggedIn: @escaping () -> Bool) {
+        self.isUserLoggedIn = isUserLoggedIn
+    }
+
+    func inAppMessage(
+        _ ui: BrazeInAppMessageUI,
+        displayChoiceForMessage message: Braze.InAppMessage
+    ) -> BrazeInAppMessageUI.DisplayChoice {
+        // UIKit AppDelegate L312-313: anonymous users never see IAMs.
+        // This protects the user from receiving Braze IAMs that target
+        // an attribute / segment that has not been populated yet (the
+        // user hasn't logged in, so `changeUser(userId:)` hasn't run
+        // and `firstName` / `email` / `phoneNumber` are still nil).
+        return isUserLoggedIn() ? .now : .discard
+    }
+}
+#endif

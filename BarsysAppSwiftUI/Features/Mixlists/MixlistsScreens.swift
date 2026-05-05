@@ -1744,9 +1744,17 @@ struct MixlistDetailView: View {
             _ = try? await env.api.likeUnlike(
                 recipeId: recipe.id.value, isLike: willBeFav)
         }
+        // 1:1 with UIKit `FavoriteRecipeApiService.swift` Braze event —
+        // carries `recipe_id` + `recipe_name` so the same audience the
+        // RecipesScreens path produces is generated from the Mixlist
+        // recipes-list path too.
         env.analytics.track(
             (willBeFav ? TrackEventName.favouriteRecipeAdded
-                       : TrackEventName.favouriteRecipeRemoved).rawValue
+                       : TrackEventName.favouriteRecipeRemoved).rawValue,
+            properties: [
+                "recipe_id": recipe.id.value,
+                "recipe_name": recipe.displayName
+            ]
         )
         env.alerts.show(message: wasFav ? Constants.unlikeSuccessMessage : Constants.likeSuccessMessage)
     }

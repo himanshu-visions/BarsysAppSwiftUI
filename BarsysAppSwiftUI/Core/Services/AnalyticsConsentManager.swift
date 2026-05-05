@@ -93,4 +93,54 @@ enum AnalyticsConsentManager {
             }
         }
     }
+
+    /// Surface the analytics + ATT consent prompt the first time the
+    /// user lands on Home after a successful login.
+    ///
+    /// 1:1 port of UIKit
+    /// `AnalyticsConsentManager.requestConsentIfNeeded(from: UIViewController)`
+    /// (BarsysApp/Helpers/TrackEventsClass/AnalyticsConsentManager.swift L51-54)
+    /// + the private `showConsentAlert(from:)` helper L71-88. The
+    /// SwiftUI variant takes an `AlertQueue` instead of a presenting
+    /// view-controller because the SwiftUI app routes every popup
+    /// through the shared `env.alerts` queue (Services.swift `AlertQueue`).
+    ///
+    /// Critical: without this prompt being surfaced, `hasPromptBeenShown`
+    /// stays `false` forever, `isConsentGranted` returns `false` from
+    /// the guard at the top of every Braze entry-point in
+    /// `BrazeService` (`loginUser`, `updateProfile`, `track`,
+    /// `requestAuthorizationAtLaunch`), and **no Braze events ever
+    /// fire**. This was the missing piece in the SwiftUI port — the
+    /// service code was correct but it was permanently gated off.
+    ///
+    /// Copy is identical to UIKit so a user upgrading from the UIKit
+    /// build sees the same wording (and the same UserDefaults keys
+    /// keep the existing decision sticky — see `setConsent`).
+    @MainActor
+    static func requestConsentIfNeeded(alertQueue: AlertQueue) {
+        guard !hasPromptBeenShown else { return }
+        alertQueue.show(
+            title: "Analytics & Tracking",
+            message: "We collect device info, usage data, and IP address to improve your experience. Your name, email, and phone number may be shared with our analytics partners. This includes Apple's App Tracking Transparency. You can change this anytime in Settings.",
+            primaryTitle: "Allow",
+            secondaryTitle: "Don't Allow",
+            onPrimary: {
+                // Mirrors UIKit `showConsentAlert` "Allow" branch
+                // (AnalyticsConsentManager.swift L78-81): record consent
+                // first, then surface the system ATT prompt so the user
+                // sees one decision at a time. ATT denial later flips
+                // analytics consent back to false via the callback in
+                // `requestATTPermission()`.
+                setConsent(true)
+                Task { @MainActor in requestATTPermission() }
+            },
+            onSecondary: {
+                // UIKit "Don't Allow" branch (L83-85). Records the
+                // declined decision so we still set
+                // `hasPromptBeenShown = true` and never re-prompt.
+                setConsent(false)
+            },
+            hideClose: true
+        )
+    }
 }

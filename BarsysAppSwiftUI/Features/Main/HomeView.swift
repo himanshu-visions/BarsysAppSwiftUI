@@ -289,7 +289,18 @@ struct HomeView: View {
         .task {
             // viewWillAppear → getProfileHere() refreshes "Hi {name}".
             await refreshProfile()
-            env.analytics.track(TrackEventName.homeScreenViewed.rawValue)
+            // 1:1 with UIKit `DevicePairedViewController` Home_Screen_Viewed
+            // event — Braze receives the same `screenName` / `user_id` /
+            // `date` triple so the event is attributable to a known user
+            // and "Home" segment in dashboards.
+            env.analytics.track(
+                TrackEventName.homeScreenViewed.rawValue,
+                properties: [
+                    "screenName": "Home",
+                    "user_id": UserDefaultsClass.getUserId() ?? "",
+                    "date": Date()
+                ]
+            )
         }
         .onAppear {
             // viewDidLoad:
@@ -297,6 +308,17 @@ struct HomeView: View {
             //   reconnectNowIfPreviouslyConnected()
             AppStateManager.shared.setSpeakEasyCaseState(false)
             reconnectIfPreviouslyConnected()
+            // 1:1 with UIKit `ChooseOptionsDashboardViewController`
+            // L30: `AnalyticsConsentManager.requestConsentIfNeeded(from:
+            // self)` — surfaces the analytics + ATT consent prompt the
+            // first time the user lands on Home after a successful
+            // login. The consent decision is sticky in UserDefaults
+            // (`hasPromptBeenShown`) so this is a no-op on every
+            // subsequent appearance. Critical for Braze: without this
+            // prompt being shown, `isConsentGranted` returns false
+            // forever and every `BrazeService.track` / `loginUser` /
+            // `updateProfile` early-returns at the consent guard.
+            AnalyticsConsentManager.requestConsentIfNeeded(alertQueue: env.alerts)
         }
         .dynamicTypeSize(.small ... .accessibility2)
     }

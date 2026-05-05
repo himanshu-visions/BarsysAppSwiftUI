@@ -814,12 +814,17 @@ struct MyProfileView: View {
             }
             // 1:1 with UIKit `MyProfileViewController` L130 —
             //   TrackEventsClass().addBrazeCustomEventWithEventName(
-            //       eventName: TrackEventName.viewProfile.rawValue)
-            // When a BLE device is connected, UIKit also forwards
-            // `deviceId` in the properties dict (L130-133). We
-            // mirror that here so Braze sees the same event with
-            // the same optional deviceId for connected users.
-            var props: [String: Any] = [:]
+            //       eventName: TrackEventName.viewProfile.rawValue,
+            //       properties: ["user_id": ..., "date": Date()])
+            // UIKit always sends `user_id` + `date` and adds `deviceId`
+            // when a BLE device is connected. Mirroring all three so
+            // Braze can segment "profile viewers in last N days" and
+            // tie the event to a user even when the SDK has not yet
+            // finished a `changeUser(...)` round-trip.
+            var props: [String: Any] = [
+                "user_id": UserDefaultsClass.getUserId() ?? "",
+                "date": Date()
+            ]
             if let connected = env.ble.connected.first {
                 props["deviceId"] = connected.name
             }

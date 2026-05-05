@@ -299,19 +299,39 @@ final class SignUpViewModel: ObservableObject {
             } else {
                 try await api.sendOtp(phone: formattedPhone)
             }
+            // 1:1 with UIKit `SignUpViewModel` — Braze events for signup
+            // OTP requests carry `phone_number` (digits, prefixed with the
+            // country dial code via `formattedPhone`) and `country_code`
+            // (the user-picked dial code, e.g. "1" for US, "91" for IN)
+            // so audiences can be segmented by country / phone in Braze
+            // without re-deriving from the raw string.
+            let signupProps: [String: Any] = [
+                "phone_number": formattedPhone,
+                "country_code": selectedCountry?.dial_code ?? ""
+            ]
             if isResend {
-                analytics.track(TrackEventName.tapSignupResend.rawValue)
+                analytics.track(TrackEventName.tapSignupResend.rawValue,
+                                properties: signupProps)
             } else {
-                analytics.track(TrackEventName.tapSignupGetOTP.rawValue)
+                analytics.track(TrackEventName.tapSignupGetOTP.rawValue,
+                                properties: signupProps)
             }
             otpSent = true
             startTimer()
             alerts.show(message: Constants.otpSentSuccessfully)
         } catch let appErr as AppError {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
+                            properties: [
+                                "phone_number": formattedPhone,
+                                "country_code": selectedCountry?.dial_code ?? ""
+                            ])
             alerts.show(message: appErr.errorDescription ?? Constants.signUpError)
         } catch {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
+                            properties: [
+                                "phone_number": formattedPhone,
+                                "country_code": selectedCountry?.dial_code ?? ""
+                            ])
             alerts.show(message: error.localizedDescription)
         }
     }
@@ -370,15 +390,31 @@ final class SignUpViewModel: ObservableObject {
                                       phone: formattedPhone,
                                       dob: dob)
             }
-            analytics.track(TrackEventName.tapSignupRegister.rawValue)
+            // 1:1 with UIKit signup-success Braze event — carries
+            // `phone_number` + `country_code` so a `signup_successful`
+            // event in Braze can be tied to the same audience as the
+            // upstream `signup_get_otp` / `signup_resend_otp` events.
+            analytics.track(TrackEventName.tapSignupRegister.rawValue,
+                            properties: [
+                                "phone_number": formattedPhone,
+                                "country_code": selectedCountry?.dial_code ?? ""
+                            ])
             stopTimerInternal()
             onSuccess()
         } catch let appErr as AppError {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
+                            properties: [
+                                "phone_number": formattedPhone,
+                                "country_code": selectedCountry?.dial_code ?? ""
+                            ])
             otp = ""
             alerts.show(message: appErr.errorDescription ?? Constants.signUpError)
         } catch {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
+                            properties: [
+                                "phone_number": formattedPhone,
+                                "country_code": selectedCountry?.dial_code ?? ""
+                            ])
             otp = ""
             alerts.show(message: error.localizedDescription)
         }
