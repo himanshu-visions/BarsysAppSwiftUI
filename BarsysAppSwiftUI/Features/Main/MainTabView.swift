@@ -1106,18 +1106,15 @@ struct MainTabView: View {
         //   • Light mode: opaque white (UIKit pre-26 parity, exactly
         //     matches the `selectionView.backgroundColor = UIColor.white`
         //     from `TabBarViewController.setupSelectionView()`).
-        //   • Dark mode: TRANSLUCENT BLACK (35% alpha). Per the user's
-        //     "make it black transparent" instruction — on the dark
-        //     tab-bar canvas a translucent BLACK pill creates a
-        //     subtly-recessed "selected" look (the pill darkens the
-        //     selected slot rather than brightening it), which reads
-        //     much smoother than a bright white highlight on a dark
-        //     bar. The 35% alpha is enough for the pill to be clearly
-        //     visible against the surrounding bar without overpowering
-        //     the icon+title rendered on top.
+        //   • Dark mode: TRANSLUCENT MEDIUM GREY. Previous translucent
+        //     black darkened the slot but read as "muddy" on the dark
+        //     tab bar. A medium grey (~50% white, 55% alpha) lifts the
+        //     pill slightly above the bar surface so the selected tab
+        //     reads as a soft greyish highlight — visible without the
+        //     harsh contrast of pure white.
         view.backgroundColor = UIColor { trait in
             trait.userInterfaceStyle == .dark
-                ? UIColor.black.withAlphaComponent(0.35)
+                ? UIColor(white: 0.5, alpha: 0.55)
                 : UIColor.white
         }
         // Initial corner radius — replaced dynamically inside
