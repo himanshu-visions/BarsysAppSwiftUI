@@ -279,6 +279,32 @@ struct ScreenEdgePanGesture: UIViewRepresentable {
         /// touches FALL THROUGH, never blocks them).
         var topInsetSafeFromHitTest: CGFloat = 110
 
+        /// Vertical strip at the BOTTOM of the view that always passes
+        /// through — protects the BarBot chat input bar (the
+        /// `barBotPlus` "+" attachment button at x≈12pt overlaps the
+        /// leftmost 40pt edge-hit zone), the tab bar, and any other
+        /// bottom-of-screen control from being captured by the edge-
+        /// pan recognizer.
+        ///
+        /// On BarBot the chat input bar STACKS on top of the tab
+        /// bar — the "+" button center sits roughly at:
+        ///   tab_bar (≈50pt) + lift (≈15pt) + bottom safe area
+        ///   (0–34pt) + input_bar_padding (~10pt) + input_bar_half_height
+        ///   (~35pt) ≈ 110pt above the screen bottom.
+        ///
+        /// 200pt covers:
+        ///   • Tab bar + lift     ≈ 64pt
+        ///   • Chat input bar     ≈ 80pt (BarBot, sits ABOVE tab bar)
+        ///   • Bottom safe area   ≈ 0–34pt (home indicator)
+        ///   • Safety margin      ≈ 22pt
+        /// — the union (≈200pt) is the safe lower bound that
+        /// guarantees the BarBot "+" button at y≈(screen_height−110)
+        /// lands inside the pass-through region. Like the top inset,
+        /// this is a defensive PASS-THROUGH (returns nil for the
+        /// bottom band) — it can never BLOCK a touch from reaching
+        /// whatever sits below.
+        var bottomInsetSafeFromHitTest: CGFloat = 200
+
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
             // Top-of-screen guard — any touch in the top
             // `topInsetSafeFromHitTest` points is passed through to the
@@ -289,6 +315,18 @@ struct ScreenEdgePanGesture: UIViewRepresentable {
             // Button for the right-edge tap that lands on the profile
             // icon.
             if point.y < topInsetSafeFromHitTest {
+                return nil
+            }
+
+            // Bottom-of-screen guard — any touch in the BOTTOM
+            // `bottomInsetSafeFromHitTest` points is passed through to
+            // the SwiftUI content below (BarBot chat input bar with
+            // the `barBotPlus` "+" attachment button, tab bar, etc.).
+            // FIX for "BarBot plus / photos / camera button not
+            // working on iPad" — the left-edge recognizer was
+            // claiming taps on the input bar's leading "+" icon
+            // before the SwiftUI `Button` could fire its action.
+            if point.y > bounds.height - bottomInsetSafeFromHitTest {
                 return nil
             }
 

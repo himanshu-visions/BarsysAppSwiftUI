@@ -985,6 +985,45 @@ final class BarBotViewModel: ObservableObject {
 
 // MARK: - Support: Bounce button style (ports addBounceEffect)
 
+/// View modifier that presents the Camera / Photo Library / Cancel
+/// chooser, picking the right SwiftUI presentation style by idiom:
+///
+///   • iPhone → `.confirmationDialog` (UIKit-style bottom action
+///     sheet, matches the historical behaviour of every other
+///     `.confirmationDialog` in the app on iPhone).
+///   • iPad   → `.alert` (centered modal stacked vertically with
+///     three full-width buttons, rendered ABOVE every other view).
+///     `.confirmationDialog` on iPad renders as a tiny popover
+///     anchored near the source view — the user reported the
+///     popover as "very small" and visually hard to tap. The
+///     centered alert is guaranteed to be visible at full size on
+///     every iPad portrait/landscape orientation.
+private struct AttachmentChoiceModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let onCamera: () -> Void
+    let onPhotoLibrary: () -> Void
+
+    func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            content
+                .alert("Select Image", isPresented: $isPresented) {
+                    Button("Camera") { onCamera() }
+                    Button("Photo Library") { onPhotoLibrary() }
+                    Button("Cancel", role: .cancel) { }
+                }
+        } else {
+            content
+                .confirmationDialog("Select Image",
+                                    isPresented: $isPresented,
+                                    titleVisibility: .hidden) {
+                    Button("Camera") { onCamera() }
+                    Button("Photo Library") { onPhotoLibrary() }
+                    Button("Cancel", role: .cancel) { }
+                }
+        }
+    }
+}
+
 /// 1:1 port of UIKit `UIButton.addBounceEffect()`:
 ///   - handleBounceDown: scale 0.95 over 0.08s (curveEaseIn)
 ///   - handleBounceUp: spring back to 1.0 over 0.15s (damping 0.5, velocity 0.8)
@@ -2187,6 +2226,18 @@ struct ChatInputBar: View {
                 ZStack(alignment: .leading) {
                     HStack(alignment: .center, spacing: 0) {
                         // Attachment (`2w6-Oq-jj2`) — 30×22, leading=12.
+                        // Storyboard-exact frame on every device — UI
+                        // is bit-identical to the original layout.
+                        // `contentShape(Rectangle())` makes the entire
+                        // 30×22 rectangle tappable (vs only the icon's
+                        // rendered alpha pixels) so the button reliably
+                        // registers taps on iPad's HiDPI display
+                        // without changing the visible footprint of
+                        // the button or shifting the text view next to
+                        // it. iPhone behaviour is preserved — the
+                        // contentShape is a no-op functionally there
+                        // (the bare image was already filling the
+                        // 30×22 frame).
                         Button {
                             HapticService.light()
                             showAttachmentOptions = true
@@ -2196,6 +2247,7 @@ struct ChatInputBar: View {
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 30, height: 22)
                                 .foregroundStyle(Color("charcoalGrayColor"))
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(BounceButtonStyle())
                         .padding(.leading, 12)
@@ -2214,15 +2266,35 @@ struct ChatInputBar: View {
                     }
 
                     // Placeholder (`QWo-hR-3og`) — overlaid when empty.
+                    //
+                    // Leading inset:
+                    //   • iPhone — 12 + 30 + 5 = 47pt (storyboard
+                    //     parity, matches `2w6-Oq-jj2.trailing + 5`).
+                    //   • iPad   — 12 + 30 + 6 = 48pt so the
+                    //     placeholder leading aligns PIXEL-PERFECT
+                    //     with the visible text leading inside the
+                    //     `GrowingTextView`. The `UITextView` inside
+                    //     `GrowingTextView` carries a
+                    //     `textContainerInset.left = 6` (line 1219),
+                    //     so its first typed character renders at
+                    //     `button_trailing + 6 = 48pt`. Bumping the
+                    //     placeholder padding 47 → 48 on iPad makes
+                    //     the placeholder and the typed text share
+                    //     the exact same leading edge — no visual
+                    //     "jump" when the user starts typing. iPhone
+                    //     stays at 47pt (storyboard-exact, the 1pt
+                    //     gap is barely perceptible at 13pt font and
+                    //     was the original UIKit behaviour).
                     if vm.draft.isEmpty {
+                        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
                         Text("Describe your preferred flavor profile, mood, or occasion")
                             // iPad bumps placeholder 13 → 16pt so the
                             // input prompt reads at a comfortable
                             // scale. iPhone keeps storyboard 13pt.
-                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 13))
+                            .font(.system(size: isIPad ? 16 : 13))
                             .foregroundStyle(Color("charcoalGrayColor"))
                             .lineLimit(2)
-                            .padding(.leading, 12 + 30 + 5)   // attachment + 5pt gap
+                            .padding(.leading, isIPad ? (12 + 30 + 6) : (12 + 30 + 5))
                             .padding(.trailing, 20)
                             .allowsHitTesting(false)
                     }
@@ -2692,17 +2764,31 @@ struct BarBotCraftView: View {
                 router.push(.recipeDetail(stored.id), in: .barBot)
             }
         }
-        .confirmationDialog("Select Image", isPresented: $showAttachmentSheet, titleVisibility: .hidden) {
-            Button("Camera") {
-                imagePickerSource = .camera
-                showImagePicker = true
-            }
-            Button("Photo Library") {
-                imagePickerSource = .photoLibrary
-                showImagePicker = true
-            }
-            Button("Cancel", role: .cancel) { }
-        }
+        // Image-picker presentation:
+        //   • iPhone — `.confirmationDialog` (UIKit-style action sheet
+        //     anchored to the bottom of the screen, exactly the
+        //     historical behaviour). UNCHANGED.
+        //   • iPad   — `.alert` (centered modal that appears ABOVE
+        //     every other view), because `.confirmationDialog` on
+        //     iPad renders as a tiny popover anchored near the
+        //     trigger button — the user reported the popover is
+        //     "very small" and visually hard to tap. A centered alert
+        //     stacks the three actions vertically with full button
+        //     hit areas and is guaranteed to render on top of the
+        //     chat view, the tab bar, and any other underlying UI.
+        .modifier(
+            AttachmentChoiceModifier(
+                isPresented: $showAttachmentSheet,
+                onCamera: {
+                    imagePickerSource = .camera
+                    showImagePicker = true
+                },
+                onPhotoLibrary: {
+                    imagePickerSource = .photoLibrary
+                    showImagePicker = true
+                }
+            )
+        )
         .sheet(isPresented: $showImagePicker) {
             BarBotImagePicker(image: $viewModel.selectedImage, source: imagePickerSource)
                 .ignoresSafeArea()
@@ -2730,40 +2816,102 @@ struct BarBotCraftView: View {
             // screen overlay (known-good behaviour).
             if !showHistory && viewModel.canProcessNewRequest {
                 if SideMenuOverlay.isIPad {
-                    HStack(spacing: 0) {
-                        ScreenEdgePanGesture(
-                            mode: .openFromLeftEdge,
-                            onProgress: { progress in
-                                if !pendingHistoryOpen {
-                                    pendingHistoryOpen = true
-                                    HapticService.light()
-                                    viewModel.fetchSessions()
-                                }
-                                router.historyOpenDragProgress = progress
-                            },
-                            onEnded: { committed, _ in
-                                if committed {
-                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                                        router.historyOpenDragProgress = 1
-                                        router.showBarBotHistory = true
+                    // iPad: mount the left-edge swipe gesture in a
+                    // STRICTLY contained vertical band — the gesture's
+                    // hosting view is geometrically clipped between a
+                    // 120pt top spacer (clears nav bar + toolbar
+                    // chat-history button) and a 220pt bottom spacer
+                    // (clears chat input bar + "+" attachment button
+                    // + tab bar + bottom safe area).
+                    //
+                    // Layout (iPad):
+                    //   ┌─────────────────────────────────────────────┐
+                    //   │ TOP spacer 120pt (allowsHitTesting=false)  │ ← toolbar safe
+                    //   ├─────────────────────────────────────────────┤
+                    //   │┌────┐                                       │
+                    //   ││ G  │  Spacer (full width,                   │
+                    //   ││ E  │  allowsHitTesting=false)               │
+                    //   ││ S  │                                       │
+                    //   ││ T  │                                       │
+                    //   │└────┘                                       │
+                    //   ├─────────────────────────────────────────────┤
+                    //   │ BOTTOM spacer 220pt (allowsHitTesting=false)│ ← input bar / tab bar safe
+                    //   └─────────────────────────────────────────────┘
+                    //
+                    // Bottom 220pt covers:
+                    //   • Tab bar + lift             ≈ 64pt
+                    //   • Chat input bar             ≈ 80pt (BarBot's
+                    //     `barBotPlus` "+" attachment button lives
+                    //     at x≈12pt, exactly where the recognizer's
+                    //     leftmost 40pt hit-zone would otherwise land)
+                    //   • Bottom safe area / home indicator ≈ 0–34pt
+                    //   • Safety margin              ≈ 42pt
+                    //
+                    // BELT-AND-BRACES: even if the geometric
+                    // containment somehow leaked, `PassthroughView.hitTest`
+                    // (top 110pt + bottom 200pt) provides a second
+                    // pass-through guard.
+                    //
+                    // iPhone (any version) keeps the full-screen
+                    // edge-pan representable bit-for-bit (else branch
+                    // below) so the known-good swipe-to-open behaviour
+                    // stays unchanged.
+                    VStack(spacing: 0) {
+                        // TOP spacer — clears nav bar + toolbar
+                        // chat-history button.
+                        Color.clear
+                            .frame(height: SideMenuOverlay.iPadGestureTopInset)
+                            .frame(maxWidth: .infinity)
+                            .allowsHitTesting(false)
+
+                        // Middle — left-edge gesture strip in a 60pt
+                        // wide column at the screen leading edge.
+                        HStack(spacing: 0) {
+                            ScreenEdgePanGesture(
+                                mode: .openFromLeftEdge,
+                                onProgress: { progress in
+                                    if !pendingHistoryOpen {
+                                        pendingHistoryOpen = true
+                                        HapticService.light()
+                                        viewModel.fetchSessions()
                                     }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                                        router.historyOpenDragProgress = 0
+                                    router.historyOpenDragProgress = progress
+                                },
+                                onEnded: { committed, _ in
+                                    if committed {
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                                            router.historyOpenDragProgress = 1
+                                            router.showBarBotHistory = true
+                                        }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                                            router.historyOpenDragProgress = 0
+                                            pendingHistoryOpen = false
+                                        }
+                                    } else {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                            router.historyOpenDragProgress = 0
+                                        }
                                         pendingHistoryOpen = false
                                     }
-                                } else {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                        router.historyOpenDragProgress = 0
-                                    }
-                                    pendingHistoryOpen = false
-                                }
-                            },
-                            totalWidth: UIScreen.main.bounds.width * (351.0 / 393.0)
-                        )
-                        .frame(width: 60)
-                        .frame(maxHeight: .infinity)
+                                },
+                                totalWidth: UIScreen.main.bounds.width * (351.0 / 393.0)
+                            )
+                            .frame(width: 60)
+                            .frame(maxHeight: .infinity)
+                            Color.clear
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .allowsHitTesting(false)
+                        }
+
+                        // BOTTOM spacer — clears chat input bar (with
+                        // its leading "+" attachment button) + tab
+                        // bar + bottom safe area. Geometric guard:
+                        // there is literally NO gesture view in this
+                        // region, so the chat input bar's "+" button
+                        // receives every tap directly.
                         Color.clear
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(height: 220)
+                            .frame(maxWidth: .infinity)
                             .allowsHitTesting(false)
                     }
                     .ignoresSafeArea()
