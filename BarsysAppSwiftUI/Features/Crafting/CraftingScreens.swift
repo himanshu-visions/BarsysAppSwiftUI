@@ -1735,30 +1735,45 @@ private struct CraftingIngredientRowView: View {
     let unit: MeasurementUnit
     let status: CraftingViewModel.IngredientPourStatus
 
+    /// iPad scales every metric on the crafting ingredient row up so
+    /// the 52pt iPhone-spec pill doesn't read as a thumbnail strip on
+    /// the wider iPad canvas. Mirrors the same iPad-bump pattern
+    /// `RecipeIngredientRow` uses for its INGREDIENTS table on
+    /// recipe-detail (RecipesScreens.swift L2948-2951).
+    private var isIPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+    private var nameFontSize: CGFloat { isIPad ? 16 : 12 }
+    private var qtyFontSize: CGFloat { isIPad ? 16 : 12 }
+    private var statusFontSize: CGFloat { isIPad ? 16 : 12 }
+    private var qtyFieldWidth: CGFloat { isIPad ? 90 : 60 }
+    private var statusFieldWidth: CGFloat { isIPad ? 130 : 90 }
+    private var pillHeight: CGFloat { isIPad ? 64 : 52 }
+    private var sideInset: CGFloat { isIPad ? 28 : 24 }
+
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: isIPad ? 10 : 6) {
             Text(displayName)
-                .font(.system(size: 12))
+                .font(.system(size: nameFontSize))
                 .foregroundStyle(textColor)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 24)
+                .padding(.leading, sideInset)
 
             // Quantity + status cluster (Nbg-tv-qKT). 60pt quantity,
-            // 5pt gap, 90pt status, trailing 24pt.
-            HStack(spacing: 5) {
+            // 5pt gap, 90pt status, trailing 24pt. iPad bumps the
+            // widths + gap so the larger fonts don't collide.
+            HStack(spacing: isIPad ? 8 : 5) {
                 Text(quantityText)
-                    .font(.system(size: 12, weight: .light))
+                    .font(.system(size: qtyFontSize, weight: .light))
                     .foregroundStyle(textColor)
-                    .frame(width: 60, alignment: .trailing)
+                    .frame(width: qtyFieldWidth, alignment: .trailing)
                 Text(statusText)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: statusFontSize, weight: .bold))
                     .foregroundStyle(textColor)
-                    .frame(width: 90, alignment: .center)
+                    .frame(width: statusFieldWidth, alignment: .center)
             }
-            .padding(.trailing, 24)
+            .padding(.trailing, sideInset)
         }
-        .frame(height: 52)
+        .frame(height: pillHeight)
         .background(pillBackground)
         .padding(.horizontal, 16)
         .padding(.vertical, 5)
@@ -1800,7 +1815,9 @@ private struct CraftingIngredientRowView: View {
 
     @ViewBuilder
     private var pillBackground: some View {
-        let radius: CGFloat = 26 // fully rounded on a 52pt pill
+        // Always half the pill height so the row stays a true capsule
+        // on both iPhone (52pt → 26) and iPad (64pt → 32).
+        let radius: CGFloat = pillHeight / 2
         switch status {
         case .nowPouring:
             // UIKit L66-75: drops the glass effect and uses the brand
@@ -1832,8 +1849,17 @@ private struct CraftingIngredientRowView: View {
                 .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .stroke(Color(red: 0.949, green: 0.949, blue: 0.949),
-                                lineWidth: 1)
+                        // Trait-resolved border so the rim is visible
+                        // against both the light and the dark crafting
+                        // canvases. Light mode keeps the historical
+                        // #F2F2F2 hairline; dark mode uses a soft
+                        // white@0.18 line so the pill edge reads on
+                        // the dark surface instead of vanishing.
+                        .stroke(Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? UIColor(white: 1.0, alpha: 0.18)
+                                : UIColor(red: 0.949, green: 0.949, blue: 0.949, alpha: 1.0)
+                        }), lineWidth: 1)
                 )
         } else {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -1845,14 +1871,34 @@ private struct CraftingIngredientRowView: View {
                         endPoint: .bottom
                     )
                 )
+                // Pre-iOS 26 fallback: trait-resolved closure so the
+                // pill fill flips automatically when the user toggles
+                // light / dark at runtime. Light mode preserves the
+                // EXACT historical white@0.8 fill (bit-identical
+                // pixels). Dark mode returns a near-clear white@0.10
+                // — same recipe used by `pillGlassBackground` in
+                // `RecipeIngredientRow` (RecipesScreens.swift:3160) —
+                // so the crafting and recipe ingredient pills look
+                // identical on the dark canvas instead of the
+                // crafting variant rendering as a stark white slab.
                 .background(
-                    Color.white.opacity(0.8),
+                    Color(UIColor { trait in
+                        trait.userInterfaceStyle == .dark
+                            ? UIColor(white: 1.0, alpha: 0.10)
+                            : UIColor(white: 1.0, alpha: 0.8) // EXACT historical
+                    }),
                     in: RoundedRectangle(cornerRadius: radius, style: .continuous)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .stroke(Color(red: 0.949, green: 0.949, blue: 0.949),
-                                lineWidth: 1)
+                        // Trait-resolved border — see iOS 26+ branch
+                        // for the same rationale (rim must be visible
+                        // on both canvases).
+                        .stroke(Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? UIColor(white: 1.0, alpha: 0.18)
+                                : UIColor(red: 0.949, green: 0.949, blue: 0.949, alpha: 1.0)
+                        }), lineWidth: 1)
                 )
         }
     }
