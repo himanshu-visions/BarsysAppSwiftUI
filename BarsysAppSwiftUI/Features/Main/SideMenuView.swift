@@ -612,6 +612,16 @@ private struct SideMenuPanel: View {
                     // the bumped 32pt "My Account" title beside it.
                     // iPhone keeps the storyboard 13×12 / 40×45
                     // bit-identically.
+                    //
+                    // `.contentShape(Rectangle())` (applied below the
+                    // ZStack) is REQUIRED so the panel's parent
+                    // `.highPriorityGesture(DragGesture)` cannot eat
+                    // the tap: without an explicit hit region the
+                    // button area outside the small icon glyph was
+                    // not registering, so on iPad (where the
+                    // 50×55 target dwarfs the 18×17 icon) the cross
+                    // appeared "dead" unless the user tapped the
+                    // icon itself dead-centre.
                     ZStack {
                         Color.clear.frame(
                             width: SideMenuPanel.isIPad ? 50 : 40,
@@ -651,6 +661,12 @@ private struct SideMenuPanel: View {
                                 )
                         }
                     }
+                    // Whole 50×55 (iPad) / 40×45 (iPhone) ZStack is the
+                    // tap surface — without this, only the inner icon
+                    // glyph was hit-testable on iPad, so taps on the
+                    // surrounding padding fell through to the panel's
+                    // parent DragGesture and the menu never closed.
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close menu")
