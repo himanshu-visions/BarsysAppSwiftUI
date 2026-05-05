@@ -5479,6 +5479,17 @@ struct EditIngredientRow: View {
             // Quantity controls — 130pt wide stack:
             HStack(spacing: 0) {
                 // Minus button — 30×30, `grayBorderColor` tint.
+                //
+                // Tint resolves at draw time via a trait-aware
+                // `UIColor` so dark mode flips to a near-white tone
+                // (`softWhiteTextColor`) — matches the
+                // `RecipeIngredientRow` stepper (Recipe Detail page,
+                // line 3145-3155). The bare `grayBorderColor` asset
+                // resolved to a near-invisible mid-grey on the dark
+                // glass cell, leaving the +/- glyphs unreadable in
+                // dark mode. Light-mode pixels stay BIT-IDENTICAL —
+                // the trait closure returns the historical
+                // `grayBorderColor` for the light branch.
                 Button {
                     HapticService.light()
                     adjust(by: -10)   // UIKit maxIncrementDecrementValueForMl
@@ -5488,7 +5499,11 @@ struct EditIngredientRow: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 24, height: 24)
-                        .foregroundStyle(Color("grayBorderColor"))
+                        .foregroundStyle(Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? (UIColor(named: "softWhiteTextColor") ?? .white)
+                                : (UIColor(named: "grayBorderColor") ?? .gray)
+                        }))
                         .frame(width: 30, height: 30)
                 }
                 .accessibilityLabel("Decrease \(ingredient.name)")
@@ -5529,7 +5544,10 @@ struct EditIngredientRow: View {
                 }
                 .frame(height: 30)
 
-                // Plus button — 30×30, `grayBorderColor` tint.
+                // Plus button — 30×30, `grayBorderColor` tint with
+                // dark-mode flip to `softWhiteTextColor`. Same
+                // rationale as the minus button above. Light-mode
+                // pixels stay BIT-IDENTICAL.
                 Button {
                     HapticService.light()
                     adjust(by: +10)
@@ -5539,12 +5557,34 @@ struct EditIngredientRow: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 24, height: 24)
-                        .foregroundStyle(Color("grayBorderColor"))
+                        .foregroundStyle(Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? (UIColor(named: "softWhiteTextColor") ?? .white)
+                                : (UIColor(named: "grayBorderColor") ?? .gray)
+                        }))
                         .frame(width: 30, height: 30)
                 }
                 .accessibilityLabel("Increase \(ingredient.name)")
             }
-            .padding(.trailing, 4)
+            // Stepper trailing inset bumped 4 → 20pt so the plus
+            // button has breathing room from the right edge of the
+            // glass cell — matches the Recipe Detail stepper which
+            // uses `.padding(.trailing, 24)` against the screen edge
+            // (line 3257). The glass cell here already carries an
+            // outer `.padding(.horizontal, …)` from its caller, so
+            // 20pt — slightly less than Recipe Detail's 24 — lands
+            // the plus button at visually the same distance from
+            // the visible cell edge as Recipe Detail's row does
+            // from its container edge. Applies on every device
+            // (iPhone + iPad) — the storyboard's UIKit
+            // `EditTableViewCell.xib` shows the plus glyph at
+            // x=290 inside a 320pt cell, i.e. ≈30pt from the
+            // right edge — closer to the new 20pt value than the
+            // old 4pt. iPhone gets a small visual improvement
+            // (more breathing room around the plus button) without
+            // changing button hit-targets, sizes, or any other
+            // pixel positions inside the row.
+            .padding(.trailing, 20)
         }
         .frame(height: 52)
         .background(editCellBackground)
