@@ -56,15 +56,15 @@ struct PairDeviceView: View {
         GeometryReader { outerGeo in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12) {
                         Text("Pair your device")
-                            // iPad bumps to 32pt so the screen title
+                            // iPad bumps to 40pt so the screen title
                             // matches the Ready to Pour title size on
                             // the wider canvas. iPhone unchanged.
-                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 40 : 24))
                             .foregroundStyle(Color("appBlackColor"))
                         Text("Please select your device to be paired. Make sure that your Bluetooth is discoverable and your Barsys device is turned ON.")
-                            .font(.system(size: 12))
+                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12))
                             .foregroundStyle(Color("appBlackColor"))
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -74,13 +74,14 @@ struct PairDeviceView: View {
                     .padding(.trailing, 24)
 
                     // Title block (Pair your device + description) renders
-                    // at ~100pt; the remaining viewport height is split
-                    // evenly across 3 device cards.
-                    let titleBlockHeight: CGFloat = 100
+                    // at ~100pt on iPhone, ~140pt on iPad (larger title +
+                    // description fonts). The remaining viewport height
+                    // is split evenly across 3 device cards.
+                    let titleBlockHeight: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 140 : 100
                     let availableHeight = outerGeo.size.height
                         - titleBlockHeight
                         - pairDeviceBottomInset
-                    let rowHeight = max(140, availableHeight / 3)
+                    let rowHeight = max(UIDevice.current.userInterfaceIdiom == .pad ? 210 : 140, availableHeight / 3)
 
                     VStack(spacing: 0) {
                         ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
@@ -175,15 +176,16 @@ struct PairDeviceView: View {
 
     @ViewBuilder
     private func deviceCard(device: (kind: DeviceKind, name: String, image: String)) -> some View {
-        VStack(spacing: 16) {
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        VStack(spacing: isPad ? 20 : 16) {
             Image(device.image)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(height: 100)
+                .frame(height: isPad ? 140 : 100)
             Text(device.name)
-                .font(Theme.Font.bold(12))
+                .font(Theme.Font.bold(isPad ? 18 : 12))
                 .foregroundStyle(Color("charcoalGrayColor"))
-                .frame(height: 18)
+                .frame(height: isPad ? 24 : 18)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
