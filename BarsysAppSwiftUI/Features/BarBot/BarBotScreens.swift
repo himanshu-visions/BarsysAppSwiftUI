@@ -1006,14 +1006,14 @@ private struct AttachmentChoiceModifier: ViewModifier {
     func body(content: Content) -> some View {
         if UIDevice.current.userInterfaceIdiom == .pad {
             content
-                .alert("Select Image", isPresented: $isPresented) {
+                .alert("Please select an option", isPresented: $isPresented) {
                     Button("Camera") { onCamera() }
                     Button("Photo Library") { onPhotoLibrary() }
                     Button("Cancel", role: .cancel) { }
                 }
         } else {
             content
-                .confirmationDialog("Select Image",
+                .confirmationDialog("Please select an option",
                                     isPresented: $isPresented,
                                     titleVisibility: .hidden) {
                     Button("Camera") { onCamera() }
