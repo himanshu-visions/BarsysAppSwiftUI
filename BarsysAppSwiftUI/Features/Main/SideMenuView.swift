@@ -460,6 +460,12 @@ private struct SideMenuPanel: View {
     @EnvironmentObject private var ble: BLEService
     @EnvironmentObject private var userStore: UserProfileStore
 
+    /// Reactive color scheme — drives the dark-mode-only template-tint
+    /// branch for the `crossIcon` dismiss button so the near-black PNG
+    /// flips to a near-white render against the dark side-menu canvas.
+    /// Light mode keeps the bare PNG (bit-identical to UIKit-parity).
+    @Environment(\.colorScheme) private var colorScheme
+
     let onDismiss: () -> Void
 
     /// Ports `selectedSection` — only one section is expanded at a time.
@@ -611,14 +617,39 @@ private struct SideMenuPanel: View {
                             width: SideMenuPanel.isIPad ? 50 : 40,
                             height: SideMenuPanel.isIPad ? 55 : 45
                         )
-                        Image("crossIcon")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(
-                                width: SideMenuPanel.isIPad ? 18 : 13,
-                                height: SideMenuPanel.isIPad ? 17 : 12
-                            )
-                            .foregroundStyle(Color("appBlackColor"))
+                        // DARK MODE ONLY template-tint — same pattern
+                        // SideMenuView's profile/section/sub-row icons
+                        // and BarBot's chatHistory icon use. The
+                        // `crossIcon` asset is a near-black PNG that
+                        // sinks into the dark `Theme.Color.surface`
+                        // panel canvas in dark mode (no `.renderingMode`
+                        // means the `.foregroundStyle` modifier was
+                        // being IGNORED — the raw PNG colour bled
+                        // through as black-on-dark).
+                        //
+                        // Light-mode branch keeps the bare PNG (no
+                        // `.renderingMode`, no `.foregroundStyle`) so
+                        // light-mode pixels stay BIT-IDENTICAL to the
+                        // existing UIKit-parity design.
+                        if colorScheme == .dark {
+                            Image("crossIcon")
+                                .renderingMode(.template)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(
+                                    width: SideMenuPanel.isIPad ? 18 : 13,
+                                    height: SideMenuPanel.isIPad ? 17 : 12
+                                )
+                                .foregroundStyle(Theme.Color.softWhiteText)
+                        } else {
+                            Image("crossIcon")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(
+                                    width: SideMenuPanel.isIPad ? 18 : 13,
+                                    height: SideMenuPanel.isIPad ? 17 : 12
+                                )
+                        }
                     }
                 }
                 .buttonStyle(.plain)
