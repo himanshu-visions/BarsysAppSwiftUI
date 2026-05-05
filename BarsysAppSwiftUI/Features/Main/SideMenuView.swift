@@ -1464,11 +1464,25 @@ struct DeviceConnectedPopup: View {
     /// against the dark backdrop (light mode stays unchanged).
     @Environment(\.colorScheme) private var colorScheme
 
+    /// `true` on every iPad regardless of iOS version. Drives the
+    /// proportional iPad bumps (card 295×337 → 380×435, fonts 18 → 24
+    /// / 14 → 18, image 101×100 → 130×129, button 184×40 → 238×52,
+    /// paddings 24/30 → 32/40, etc.) so the popup reads at a
+    /// comfortable scale on the wider iPad canvas. iPhone (any
+    /// version) returns `false` so the storyboard-exact 295×337 / 18pt
+    /// / 14pt sizes stay bit-identical there.
+    private static var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
     /// Storyboard popup card frame — constraints `dxF-oY-6Dw` (leading=49)
     /// / `eqc-th-bzO` (trailing=49) on the 393pt reference canvas yield
     /// a 295pt width. Height is fixed at 337pt.
-    private let cardWidth: CGFloat = 295
-    private let cardHeight: CGFloat = 337
+    /// iPad bumps to 380×435 (≈29%) so the bumped 24pt title and
+    /// 130×129 device image have proportional breathing room. iPhone
+    /// keeps 295×337 bit-identically.
+    private var cardWidth: CGFloat { Self.isIPad ? 380 : 295 }
+    private var cardHeight: CGFloat { Self.isIPad ? 435 : 337 }
 
     private var connectedDevice: BarsysDevice? {
         ble.connected.first
@@ -1584,11 +1598,16 @@ struct DeviceConnectedPopup: View {
                     // "Connected" — system 18pt LIGHT, veryDarkGrayColor,
                     // centered. Storyboard `aim-QZ-wXu`.
                     Text("Connected")
-                        .font(.system(size: 18, weight: .light))
+                        // iPad bumps 18 → 24pt (≈33%) to read against
+                        // the bumped 380pt canvas. iPhone keeps 18pt.
+                        .font(.system(size: Self.isIPad ? 24 : 18,
+                                      weight: .light))
                         .foregroundStyle(Color("veryDarkGrayColor"))
                         .multilineTextAlignment(.center)
                         .accessibilityAddTraits(.isHeader)
-                        .padding(.top, 30)
+                        // Top inset 30 → 40 on iPad — proportional to
+                        // the bumped card height. iPhone keeps 30pt.
+                        .padding(.top, Self.isIPad ? 40 : 30)
 
                     if let device = connectedDevice {
                         // Device image — 101×100 FIXED (`Xoh-hx-cns`
@@ -1596,17 +1615,25 @@ struct DeviceConnectedPopup: View {
                         Image(deviceImageName(device.kind))
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 101, height: 100)
-                            .padding(.top, 24)
+                            // iPad bumps 101×100 → 130×129 (≈29%) to
+                            // match the bumped canvas. iPhone keeps
+                            // 101×100 bit-identically.
+                            .frame(width: Self.isIPad ? 130 : 101,
+                                   height: Self.isIPad ? 129 : 100)
+                            // Top gap 24 → 32 on iPad. iPhone keeps 24.
+                            .padding(.top, Self.isIPad ? 32 : 24)
                             .accessibilityLabel("Connected device image")
 
                         // Device type — system 18pt REGULAR,
                         // veryDarkGrayColor, top=image.bottom+24.
                         Text(device.kind.displayName)
-                            .font(.system(size: 18, weight: .regular))
+                            // iPad bumps 18 → 24pt (≈33%). iPhone unchanged.
+                            .font(.system(size: Self.isIPad ? 24 : 18,
+                                          weight: .regular))
                             .foregroundStyle(Color("veryDarkGrayColor"))
                             .multilineTextAlignment(.center)
-                            .padding(.top, 24)
+                            // Top gap 24 → 32 on iPad. iPhone keeps 24.
+                            .padding(.top, Self.isIPad ? 32 : 24)
 
                         // Device name — system 14pt LIGHT,
                         // veryDarkGrayColor, top=type.bottom+7.
@@ -1614,12 +1641,16 @@ struct DeviceConnectedPopup: View {
                         // to fit the assigned text; SwiftUI does the
                         // same via `fixedSize(vertical:)`.
                         Text(device.name)
-                            .font(.system(size: 14, weight: .light))
+                            // iPad bumps 14 → 18pt (≈29%). iPhone unchanged.
+                            .font(.system(size: Self.isIPad ? 18 : 14,
+                                          weight: .light))
                             .foregroundStyle(Color("veryDarkGrayColor"))
                             .lineLimit(2)
                             .multilineTextAlignment(.center)
-                            .padding(.top, 7)
-                            .padding(.horizontal, 24)
+                            // Top gap 7 → 9 on iPad. iPhone keeps 7.
+                            .padding(.top, Self.isIPad ? 9 : 7)
+                            // Horizontal inset 24 → 32 on iPad. iPhone unchanged.
+                            .padding(.horizontal, Self.isIPad ? 32 : 24)
 
                         Spacer(minLength: 0)
 
@@ -1633,7 +1664,8 @@ struct DeviceConnectedPopup: View {
                             isPresented = false
                         } label: {
                             Text("Disconnect")
-                                .font(.system(size: 16))
+                                // iPad bumps 16 → 21pt (≈31%). iPhone unchanged.
+                                .font(.system(size: Self.isIPad ? 21 : 16))
                                 // Preserve EXACT pure black in light
                                 // mode (bit-identical to the previous
                                 // hard-coded `Color.black`); switch
@@ -1647,7 +1679,11 @@ struct DeviceConnectedPopup: View {
                                         ? UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1.0)
                                         : UIColor.black // EXACT historical
                                 }))
-                                .frame(width: 184, height: 40)
+                                // iPad bumps button 184×40 → 238×52
+                                // (≈29%) to match the bumped 21pt
+                                // label. iPhone keeps 184×40.
+                                .frame(width: Self.isIPad ? 238 : 184,
+                                       height: Self.isIPad ? 52 : 40)
                                 .background(
                                     // TRANSPARENT fill — the glass card
                                     // behind shows through, matching
@@ -1667,16 +1703,20 @@ struct DeviceConnectedPopup: View {
                         .buttonStyle(BounceButtonStyle()) // UIKit addBounceEffect()
                         .accessibilityLabel("Disconnect device")
                         .accessibilityHint("Disconnects \(device.name)")
-                        .padding(.bottom, 30)
+                        // Bottom inset 30 → 40 on iPad. iPhone unchanged.
+                        .padding(.bottom, Self.isIPad ? 40 : 30)
                     } else {
                         Spacer()
                         Text("No device connected")
-                            .font(.system(size: 14, weight: .light))
+                            // iPad bumps 14 → 18pt (≈29%). iPhone unchanged.
+                            .font(.system(size: Self.isIPad ? 18 : 14,
+                                          weight: .light))
                             .foregroundStyle(Color("veryDarkGrayColor"))
                         Spacer()
                     }
                 }
-                .padding(.horizontal, 24)
+                // Outer horizontal inset 24 → 32 on iPad. iPhone unchanged.
+                .padding(.horizontal, Self.isIPad ? 32 : 24)
                 .frame(width: cardWidth, height: cardHeight)
 
                 // Cross button (`wcP-Xk-wlX`) — 50×50 top-right of card,
@@ -1696,9 +1736,16 @@ struct DeviceConnectedPopup: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 14, height: 14)
+                        // iPad bumps cross 14 → 18 (≈29%) to match
+                        // the bumped canvas. iPhone keeps 14×14.
+                        .frame(width: Self.isIPad ? 18 : 14,
+                               height: Self.isIPad ? 18 : 14)
                         .foregroundStyle(Color("appBlackColor"))
-                        .frame(width: 50, height: 50)
+                        // Hit target 50 → 60 on iPad — matches the
+                        // DeviceListPopup cross-button bump. iPhone
+                        // keeps 50×50 bit-identically.
+                        .frame(width: Self.isIPad ? 60 : 50,
+                               height: Self.isIPad ? 60 : 50)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
