@@ -954,8 +954,35 @@ final class AuthService: ObservableObject {
     /// name / email / phone in My Profile). 1:1 with UIKit
     /// `MyProfileViewModel` L148, L164 calling `brazeUpdateProfile()`
     /// after a successful PATCH.
+    ///
+    /// Reads from `UserDefaultsClass` (NOT `self.profile`) because the
+    /// MyProfile PATCH path writes the new name / email / phone into
+    /// UserDefaults via `persistResponse(_:)` but does NOT bounce them
+    /// back through `applySignedInProfile`, so `self.profile` would
+    /// still hold the pre-edit values. UIKit's `brazeUpdateProfile()`
+    /// reads from `UserDefaultsClass.getName()` / `getEmail()` /
+    /// `getPhone()` for exactly the same reason — this keeps the two
+    /// implementations behaviourally identical.
     func syncBrazeProfile() {
-        syncBrazeUser(profile: profile)
+        let userId = UserDefaultsClass.getUserId() ?? ""
+        guard !userId.isEmpty else { return }
+        // `BrazeService.updateProfile` reads only `firstName` / `email`
+        // / `phone` from the passed `UserProfile` — the other fields
+        // (`lastName`, `countryCode`, `dateOfBirth`, `avatarURL`) are
+        // irrelevant to the Braze sync, so we hand `BrazeService` a
+        // minimal `UserProfile` populated from the freshest UserDefaults
+        // values. `lastName` is intentionally `""` to mirror UIKit
+        // `brazeUpdateProfile()` L159 (`set(lastName: "")` for PII
+        // minimisation) — `BrazeService` writes it back as `""` anyway.
+        let freshProfile = UserProfile(
+            id: userId,
+            firstName: UserDefaultsClass.getName() ?? "",
+            lastName: "",
+            email: UserDefaultsClass.getEmail() ?? "",
+            phone: UserDefaultsClass.getPhone() ?? "",
+            countryCode: ""
+        )
+        syncBrazeUser(profile: freshProfile)
     }
 
     /// Single funnel for `loginUser(userId:)` + `updateProfile(...)` —

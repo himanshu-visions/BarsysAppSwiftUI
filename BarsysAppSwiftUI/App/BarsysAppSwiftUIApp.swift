@@ -241,6 +241,34 @@ struct RootView: View {
         .loadingOverlay(env.loading)
         .appAlert(env.alerts)
         .toastOverlay(env.toast)
+        // Universal Links — 1:1 port of UIKit
+        // `SceneDelegate.scene(_:continue userActivity:)` (L126-138) +
+        // `AppDelegate.application(_:continue:restorationHandler:)`
+        // (L293-303). Required for `Braze.Configuration.forwardUniversalLinks
+        // = true` (BrazeService.swift L132) to actually deliver the
+        // tapped URL to the app — Braze parses the deep link from the
+        // IAM / push action and hands it to the OS, which fires this
+        // callback. Without this modifier any Braze IAM with a
+        // "https://..." action becomes a no-op in the SwiftUI app.
+        // We just persist the URL to `UserDefaultsClass.pendingDeepLink`
+        // and broadcast `.didReceiveDeepLink` (matching UIKit's
+        // `AppNavigationState.shared.pendingDeepLink` + NotificationCenter
+        // pattern); the screen-specific routing layer can subscribe and
+        // navigate when ready. No existing functionality is changed —
+        // this only ADDS an entry point that did not exist before.
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            guard let url = activity.webpageURL else { return }
+            handleIncomingDeepLink(url)
+        }
+        // URL schemes — 1:1 port of UIKit
+        // `SceneDelegate.scene(_:openURLContexts:)` (L116-124). Fires
+        // when iOS launches the app via `barsysaiapp://...` (custom
+        // scheme registered in CFBundleURLSchemes) — used by some
+        // Braze push payload formats and by the legacy `barsyaisapp`
+        // URL scheme.
+        .onOpenURL { url in
+            handleIncomingDeepLink(url)
+        }
         .task {
             // Wire SessionExpirationHandler before bootstrap fires any network
             // calls — otherwise an early 401 (e.g. recipe/mixlist preload
@@ -300,6 +328,38 @@ struct RootView: View {
                     router.logout()
                 }
             }
+        )
+    }
+
+    /// Validate + broadcast an incoming deep link URL.
+    ///
+    /// 1:1 port of UIKit `SceneDelegate.handleDynamicLinks` /
+    /// `handleDeepLinkDelegation` / `isValidDeepLinkScheme`
+    /// (SceneDelegate.swift L144-179):
+    ///   • accept only `https`, `http`, `barsysaiapp` schemes
+    ///   • post `.didReceiveDeepLink` so any subscribed routing
+    ///     layer can pull the URL and navigate.
+    ///
+    /// Stays minimal so we don't change navigation behaviour —
+    /// this only ENABLES delivery of Braze IAM / push deep links
+    /// to the app. The actual URL→screen routing already exists
+    /// elsewhere in the app and listens for `.didReceiveDeepLink`.
+    private func handleIncomingDeepLink(_ url: URL) {
+        let validSchemes: Set<String> = ["https", "http", "barsysaiapp", "barsyaisapp"]
+        guard let scheme = url.scheme?.lowercased(),
+              validSchemes.contains(scheme) else {
+            return
+        }
+        // Mirrors UIKit `AppNavigationState.shared.pendingDeepLink = url`
+        // (SceneDelegate.swift L164). Storing on UserDefaults keeps
+        // the URL available across the next view appearance even if
+        // no listener is mounted right now (e.g. cold-launch via a
+        // Universal Link before HomeView has been pushed).
+        UserDefaults.standard.set(url.absoluteString, forKey: "pendingDeepLinkURL")
+        NotificationCenter.default.post(
+            name: Notification.Name("didReceiveDeepLink"),
+            object: nil,
+            userInfo: ["url": url]
         )
     }
 }

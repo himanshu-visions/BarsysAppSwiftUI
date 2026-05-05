@@ -500,7 +500,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Barsys uses Bluetooth to discover and connect to your Barsys device.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Barsys needs camera access to scan QR codes and ingredient barcodes.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow access to your photo library to upload pictures and find matching recipes.";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "We use tracking to personalize your cocktail recommendations and improve your experience.";
 				INFOPLIST_KEY_UIAppFonts = "SF-Pro-Display-Black.otf SF-Pro-Display-Semibold.otf SFPRODISPLAYBOLD.OTF SFPRODISPLAYMEDIUM.OTF SFPRODISPLAYREGULAR.OTF SFProDisplay-Italic.OTF";
+				INFOPLIST_KEY_UIBackgroundModes = "bluetooth-central bluetooth-peripheral remote-notification fetch";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_BackgroundColor = primaryBackgroundColor;
@@ -536,7 +539,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Barsys uses Bluetooth to discover and connect to your Barsys device.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Barsys needs camera access to scan QR codes and ingredient barcodes.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow access to your photo library to upload pictures and find matching recipes.";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "We use tracking to personalize your cocktail recommendations and improve your experience.";
 				INFOPLIST_KEY_UIAppFonts = "SF-Pro-Display-Black.otf SF-Pro-Display-Semibold.otf SFPRODISPLAYBOLD.OTF SFPRODISPLAYMEDIUM.OTF SFPRODISPLAYREGULAR.OTF SFProDisplay-Italic.OTF";
+				INFOPLIST_KEY_UIBackgroundModes = "bluetooth-central bluetooth-peripheral remote-notification fetch";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_BackgroundColor = primaryBackgroundColor;

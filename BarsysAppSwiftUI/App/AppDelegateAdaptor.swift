@@ -105,10 +105,14 @@ final class AppDelegateAdaptor: NSObject, UIApplicationDelegate, UNUserNotificat
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        // 1:1 with UIKit AppDelegate.swift L266-272 — show banner /
-        // list / sound / badge for foreground notifications, matching
-        // the user's Settings preferences.
-        completionHandler([.banner, .list, .sound, .badge])
+        // 1:1 with UIKit AppDelegate.swift L266-272: `[.banner, .list,
+        // .sound]`. UIKit deliberately does NOT include `.badge` in
+        // the foreground presentation options — the badge count is
+        // owned by the server-side Braze payload + app-icon counter,
+        // not the per-notification banner. Including `.badge` here
+        // would cause double-counting (system increments + Braze
+        // payload), so we match UIKit's three-option set exactly.
+        completionHandler([.banner, .list, .sound])
     }
 
     /// 1:1 port of UIKit AppDelegate.swift L274-280 — forwards the
