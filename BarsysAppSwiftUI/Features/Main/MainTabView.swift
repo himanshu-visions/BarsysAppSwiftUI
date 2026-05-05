@@ -1613,7 +1613,12 @@ struct MainTabView: View {
             let maxContentWidth = allContentWidths.max() ?? contentInButton.width
             let slotWidth = tabBar.bounds.width / CGFloat(items.count)
             let safetyCap = max(slotWidth - 6, 0)
-            let uniformWidth = min(maxContentWidth + paddingX * 2, safetyCap)
+            // iPad-only: widen the selection pill by 50pt so it reads
+            // as a deliberate emphasis on the larger canvas. iPhone
+            // unchanged. Still capped by `safetyCap` so it can never
+            // bleed into adjacent tab slots.
+            let iPadWidthBump: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 40 : 0
+            let uniformWidth = min(maxContentWidth + paddingX * 2 + iPadWidthBump, safetyCap)
 
             // Vertical metrics still hug the SELECTED tab's content
             // bounds — top / bottom space is `paddingY` regardless of
@@ -1655,10 +1660,15 @@ struct MainTabView: View {
             // paddingX margins on each side (the assumed visible
             // icon+title is centered in the slot).
             let assumedContentWidth = itemWidth * 0.70
+            // iPad-only: same +50pt bump as the primary path so the
+            // fallback stays consistent if it's ever hit.
+            let iPadWidthBump: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 50 : 0
+            let unboundedWidth = assumedContentWidth + paddingX * 2 + iPadWidthBump
+            // Cap at slot width minus a small safety margin so the pill
+            // never bleeds into adjacent slots regardless of bump.
+            let width = min(unboundedWidth, max(itemWidth - 6, 0))
             let xPosition = CGFloat(index) * itemWidth
-                + (itemWidth - assumedContentWidth) / 2
-                - paddingX
-            let width = assumedContentWidth + paddingX * 2
+                + (itemWidth - width) / 2
             var f = CGRect(x: xPosition, y: yPosition, width: width, height: height)
             if index == AppTab.homeOrControlCenter.rawValue {
                 f = CGRect(x: xPosition - 5,
