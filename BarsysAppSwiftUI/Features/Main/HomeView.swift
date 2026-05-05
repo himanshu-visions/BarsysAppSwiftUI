@@ -170,6 +170,13 @@ struct HomeView: View {
                     .padding(.top, 4)
 
                 // ─── 4. Main card (ksd-U8-pOU → lXl-Ba-h8J → kv0-qO-0NK + xaz-fM-zZf) ───
+                //
+                // 16pt bottom inset on every device — matches UIKit
+                // storyboard (no card-to-speakeasy gap there). iPad
+                // breathing room is delivered by a 40pt TOP padding
+                // on the Speakeasy card inside `safeAreaInset(.bottom)`
+                // below, so iPhone layout stays bit-identical to the
+                // storyboard (no padding hop introduced here).
                 mainCard
                     .padding(.horizontal, 19)
                     .padding(.top, 16)
@@ -376,20 +383,64 @@ struct HomeView: View {
     // colour the parent ScrollView uses), so the shadow has a shape
     // to cast from AND the 5pt ring appears identical to UIKit.
     private var mainCard: some View {
-        Button(action: connectDeviceTapped) {
+        // iPhone: 1:1 hero image — bit-identical UIKit storyboard
+        // parity (`xaz-fM-zZf` has a hard `width:height = 1:1`).
+        //
+        // iPad: cap with a 1.30:1 wider-than-tall ratio so the image
+        // bottom edge stops AT the top of the 40pt spacer mounted
+        // above the Speakeasy card — no overlap, no scrolling. UIKit
+        // achieves the same effect implicitly because the storyboard
+        // image has `verticalHuggingPriority=251` and Auto Layout
+        // compresses the 1:1 constraint when vertical space runs out;
+        // SwiftUI has no automatic compression, so we encode the cap
+        // explicitly here. The 1.30 ratio leaves the entire Home
+        // content visible without scrolling on every iPad portrait
+        // (Mini through Pro 13").
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+
+        return Button(action: connectDeviceTapped) {
             VStack(spacing: 0) {
                 // Header row — 62pt tall, white bg (systemBackgroundColor).
                 headerRow
 
-                // Hero image — 1:1 square, scaleAspectFit.
-                Color.clear
-                    .aspectRatio(1, contentMode: .fit)
-                    .overlay(
+                if isIPad {
+                    // iPad: hard aspect-ratio cap on the hero image so
+                    // its bottom edge stops well above the Speakeasy
+                    // region.
+                    //
+                    // Renders via `GeometryReader` + explicit
+                    // `frame(width:height:)` + `.clipped()` because
+                    // `.overlay(Image.aspectRatio(.fill))` was letting
+                    // the image overflow PAST `.clipped()` on the
+                    // outer `Color.clear` — the user reported the
+                    // image bottom showing behind the Speakeasy card,
+                    // which is the symptom of an unclipped overlay
+                    // overflow. The GeometryReader hands the Image a
+                    // CONCRETE frame that `.clipped()` can bind to,
+                    // guaranteeing no overflow on any iPad size.
+                    GeometryReader { geo in
                         Image("chooseOptionsBarsysImage")
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                    )
+                            .frame(width: geo.size.width,
+                                   height: geo.size.height)
+                            .clipped()
+                    }
+                    .aspectRatio(1.15, contentMode: .fit)
                     .accessibilityHidden(true)
+                } else {
+                    // iPhone: ORIGINAL storyboard 1:1, scaleAspectFit —
+                    // byte-for-byte identical to the UIKit `xaz-fM-zZf`
+                    // layout (no `.clipped()`, no extra modifiers).
+                    Color.clear
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay(
+                            Image("chooseOptionsBarsysImage")
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        )
+                        .accessibilityHidden(true)
+                }
             }
         }
         .buttonStyle(.plain)
