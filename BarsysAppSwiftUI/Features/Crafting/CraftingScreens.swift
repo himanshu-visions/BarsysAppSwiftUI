@@ -1148,6 +1148,16 @@ struct CraftingView: View {
     /// `.shakerFlat` / `.glassPlaced(is219: true)`.
     @State private var popup: BarsysPopup?
 
+    /// iPad-only sizing flag. The Crafting screen scales its hero
+    /// elements (glass-status text, device image, recipe-name title,
+    /// and the gap above the ingredient list) up on iPad so the
+    /// wider canvas doesn't read as iPhone metrics blown up to fit.
+    /// Every iPad value is gated through this — iPhone pixels stay
+    /// bit-identical to the UIKit storyboard.
+    private var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
     var body: some View {
         // 1:1 port of UIKit `Crafting.storyboard` scene `X0s-iW-KFx`:
         //
@@ -1175,15 +1185,18 @@ struct CraftingView: View {
                         VStack(spacing: 0) {
                             // Glass status label (storyboard gzR-vU-4zg) —
                             // system 16pt, darkGrayTextColor, center-aligned.
+                            // iPad bumps to 22pt + 60pt top inset so the
+                            // status reads at a comfortable scale on the
+                            // wider canvas. iPhone unchanged.
                             Text(viewModel.glassStatusText.isEmpty
                                  ? displayFallback(for: viewModel.state)
                                  : viewModel.glassStatusText)
-                                .font(.system(size: 16))
+                                .font(.system(size: isIPad ? 22 : 16))
                                 .foregroundStyle(Color("darkGrayTextColor"))
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: .infinity)
                                 .padding(.horizontal, 24)
-                                .padding(.top, 47)
+                                .padding(.top, isIPad ? 60 : 47)
 
                             // Device image (IsT-iE-QYL) 120×120, center,
                             // 30pt below status. Uses in-queue variant
@@ -1196,6 +1209,9 @@ struct CraftingView: View {
                             // tinted with `softWhiteText` so the dark
                             // device illustration reads as a clear white
                             // glyph against the dark crafting canvas.
+                            // iPad bumps to 200×200 with a wider top gap
+                            // so the device illustration anchors the
+                            // wider canvas the way 120×120 anchors iPhone.
                             Group {
                                 if colorScheme == .dark {
                                     Image(deviceImageName())
@@ -1209,24 +1225,30 @@ struct CraftingView: View {
                                         .aspectRatio(contentMode: .fit)
                                 }
                             }
-                            .frame(width: 120, height: 120)
-                            .padding(.top, 30)
+                            .frame(width: isIPad ? 200 : 120,
+                                   height: isIPad ? 200 : 120)
+                            .padding(.top, isIPad ? 40 : 30)
 
                             // Recipe name (vHh-PF-hYT): system 16pt
                             // charcoalGrayColor, centered, y=44 below
-                            // the device image.
+                            // the device image. iPad bumps to 26pt + 50pt
+                            // top inset so the recipe title reads as the
+                            // primary label, not a caption, on the wider
+                            // canvas. iPhone unchanged.
                             Text(recipe.displayName)
-                                .font(.system(size: 16))
+                                .font(.system(size: isIPad ? 26 : 16))
                                 .foregroundStyle(Color("charcoalGrayColor"))
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity)
                                 .padding(.horizontal, 24)
-                                .padding(.top, 44)
+                                .padding(.top, isIPad ? 50 : 44)
 
                             // Ingredient glass pill list (tblCrafting).
                             // Auto-expanding height via a VStack of cells
-                            // (UIKit observes `contentSize` KVO).
+                            // (UIKit observes `contentSize` KVO). iPad
+                            // bumps the gap above the list 42 → 56 so the
+                            // larger recipe title doesn't crowd row 1.
                             if !viewModel.recipeIngredients.isEmpty {
                                 VStack(spacing: 0) {
                                     ForEach(Array(viewModel.recipeIngredients.enumerated()),
@@ -1239,7 +1261,7 @@ struct CraftingView: View {
                                         )
                                     }
                                 }
-                                .padding(.top, 42) // matches jNS-Yd-QVB constraint
+                                .padding(.top, isIPad ? 56 : 42) // jNS-Yd-QVB constraint
                                 .padding(.bottom, 24)
                             }
 
