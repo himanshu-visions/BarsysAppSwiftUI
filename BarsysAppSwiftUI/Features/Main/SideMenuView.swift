@@ -96,8 +96,17 @@ struct SideMenuOverlay: View {
 
     // MARK: - Layout constants
 
-    /// Visible panel width (matches storyboard menuView frame).
-    private let panelWidth: CGFloat = 279
+    /// Visible panel width.
+    ///   • iPhone — 279pt (matches storyboard `menuView` frame, UIKit
+    ///     `SideMenuViewController` bit-identical).
+    ///   • iPad   — 420pt so the wider iPad canvas shows the menu at
+    ///     a proportional scale (the storyboard 279pt looked
+    ///     postage-stamp small on iPad and the larger fonts didn't
+    ///     fit comfortably). iPhone keeps the storyboard 279pt
+    ///     bit-identically.
+    private var panelWidth: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 420 : 279
+    }
 
     /// Gesture normalization distance. UIKit SideMenuSwift uses
     /// `menu.menuWidth = UIScreen.main.bounds.width`, so a full
@@ -456,6 +465,15 @@ private struct SideMenuPanel: View {
     /// Ports `selectedSection` — only one section is expanded at a time.
     @State private var selectedSection: Int? = nil
 
+    /// `true` on every iPad regardless of iOS version. Drives the
+    /// proportional iPad font bumps (17 → 22, 13 → 16, etc.) so the
+    /// 420pt iPad panel reads at a comfortable scale on the wider
+    /// canvas. iPhone (any version) returns `false` so the
+    /// storyboard-exact 17pt / 13pt sizes stay bit-identical there.
+    static var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
     /// Shows DeviceConnectedPopup when tapping "Device" while connected.
     /// Ports UIKit `openDeviceConnectedPopUp()`.
     @State private var showDeviceConnectedPopup = false
@@ -582,12 +600,24 @@ private struct SideMenuPanel: View {
                     // 40×45 hit target (Qpu-iw-ryO frame); 13×12 icon
                     // (crossIcon image intrinsic size). ZStack so the
                     // extra padding stays tappable.
+                    //
+                    // iPad bumps the cross arrow 13×12 → 18×17 (≈40%)
+                    // and the hit target 40×45 → 50×55 to scale with
+                    // the bumped 32pt "My Account" title beside it.
+                    // iPhone keeps the storyboard 13×12 / 40×45
+                    // bit-identically.
                     ZStack {
-                        Color.clear.frame(width: 40, height: 45)
+                        Color.clear.frame(
+                            width: SideMenuPanel.isIPad ? 50 : 40,
+                            height: SideMenuPanel.isIPad ? 55 : 45
+                        )
                         Image("crossIcon")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 13, height: 12)
+                            .frame(
+                                width: SideMenuPanel.isIPad ? 18 : 13,
+                                height: SideMenuPanel.isIPad ? 17 : 12
+                            )
                             .foregroundStyle(Color("appBlackColor"))
                     }
                 }
@@ -615,7 +645,15 @@ private struct SideMenuPanel: View {
             // avatar's small fixed size means the VStack drives the
             // row height — which is exactly what UIKit autolayout
             // produces at runtime.
-            HStack(alignment: .center, spacing: 10) {
+            // iPad-only: avatar↔name gap bumped 10 → 16pt so the
+            // avatar breathes next to the bumped 22pt user name. The
+            // VStack-internal 4pt name↔button gap is also bumped to
+            // 8pt so the bumped 16pt "Edit Profile" button has
+            // proportional vertical breathing room. iPhone keeps the
+            // storyboard literals (10pt HStack spacing, 4pt VStack
+            // spacing) bit-identically.
+            HStack(alignment: .center,
+                   spacing: SideMenuPanel.isIPad ? 16 : 10) {
                 profileAvatar
 
                 // VStack spacing tuned for visual parity with UIKit's
@@ -632,7 +670,8 @@ private struct SideMenuPanel: View {
                 // UIKit visual rhythm (Text descender + 4 + button top
                 // padding ≈ 14-15pt — matches what users see in the
                 // storyboard preview).
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading,
+                       spacing: SideMenuPanel.isIPad ? 8 : 4) {
                     // lblName — boldSystem 17pt, up to 3 lines,
                     // trailing = gND.trailing − 15 (iDc-ap-JHv).
                     //
@@ -641,7 +680,11 @@ private struct SideMenuPanel: View {
                     // of the visible glyph block sits where UIKit's
                     // `lblName.bottom` constraint anchor sits.
                     Text(displayName)
-                        .font(.system(size: 17, weight: .bold))
+                        // iPad bumps 17 → 22pt so the user's name reads
+                        // proportionally on the wider 420pt panel.
+                        // iPhone keeps the storyboard 17pt bit-identically.
+                        .font(.system(size: SideMenuPanel.isIPad ? 22 : 17,
+                                      weight: .bold))
                         .foregroundStyle(Color("appBlackColor"))
                         .lineLimit(3)
                         .lineSpacing(0)
@@ -666,16 +709,25 @@ private struct SideMenuPanel: View {
                         }
                     } label: {
                         Text("Edit Profile")
-                            .font(.system(size: 13))
+                            // iPad bumps 13 → 16pt to scale with the
+                            // larger 22pt name above. iPhone keeps 13pt.
+                            .font(.system(size: SideMenuPanel.isIPad ? 16 : 13))
                             .foregroundStyle(Color("appBlackColor"))
-                            .frame(width: 70, height: 28, alignment: .leading)
+                            .frame(width: SideMenuPanel.isIPad ? 90 : 70,
+                                   height: 28, alignment: .leading)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.leading, 24)                   // avatar.leading = 24
             .padding(.trailing, 15)                  // lblName.trailing = 15 from gND
-            .padding(.top, 31.33)                    // kx7-en-hLr: avatar.top = title.bottom + 31.33
+            // iPad-only: avatar block top inset bumped 31.33 → 44pt
+            // and a 24pt bottom inset added so the avatar+name+
+            // Edit-Profile group has more vertical breathing room
+            // before the menu list begins. iPhone keeps storyboard
+            // 31.33pt top + 0pt bottom bit-identically.
+            .padding(.top, SideMenuPanel.isIPad ? 44 : 31.33)
+            .padding(.bottom, SideMenuPanel.isIPad ? 24 : 0)
 
             // Bottom spacer — mirrors the UIKit constraint
             // `gND-Tg-GnT.bottom = Ans-0g-jJo.bottom` (rjb-tJ-Xnj).
@@ -738,25 +790,41 @@ private struct SideMenuPanel: View {
     //   lblSection (stack) x=38, y=0,  w=266, h=35       (leading 38 indent)
 
     private var menuList: some View {
-        ScrollView(showsIndicators: false) {
+        // iPad bumps the row heights to give the bumped 22pt section
+        // titles + 22pt sub-row titles proportional vertical breathing
+        // room on the wider 420pt panel:
+        //   • Section header     60 → 78pt   (≈30%)
+        //   • Sub-row             35 → 52pt   (≈49%)
+        //   • Bottom safety pad  24 → 60pt   so the list fills the
+        //     full panel height (matches UIKit's `tableFooterView`
+        //     extending to the bottom of the panel on iPad).
+        // iPhone keeps the storyboard 60 / 35 / 24 bit-identically —
+        // every ternary picks the literal storyboard value on iPhone
+        // so the iPhone layout is unchanged.
+        let isIPad = SideMenuPanel.isIPad
+        let sectionHeaderHeight: CGFloat  = isIPad ? 78 : 60
+        let subRowMinHeight: CGFloat      = isIPad ? 52 : 35
+        let listBottomPadding: CGFloat    = isIPad ? 60 : 24
+
+        return ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 0) {
                 ForEach(Array(arrMenu.enumerated()), id: \.element.id) { index, section in
                     VStack(spacing: 0) {
                         sectionHeader(section: section, index: index)
-                            .frame(height: 60) // matches heightForHeaderInSection = 60
+                            .frame(height: sectionHeaderHeight)
                             .frame(maxWidth: .infinity)
 
                         if selectedSection == index && !section.subRows.isEmpty {
                             ForEach(section.subRows) { row in
                                 subRow(row: row)
-                                    .frame(minHeight: 35) // matches xib cell height 35
+                                    .frame(minHeight: subRowMinHeight)
                                     .frame(maxWidth: .infinity)
                             }
                             .transition(.opacity)
                         }
                     }
                 }
-                Spacer(minLength: 24)
+                Spacer(minLength: listBottomPadding)
             }
             .animation(.easeInOut(duration: 0.2), value: selectedSection)
         }
@@ -839,7 +907,11 @@ private struct SideMenuPanel: View {
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 19, height: 18)
+                    // iPad bumps the section icon 19×18 → 24×23 (≈26%)
+                    // to match the bumped 22pt section title beside it.
+                    // iPhone keeps the storyboard 19×18 bit-identically.
+                    .frame(width: SideMenuPanel.isIPad ? 24 : 19,
+                           height: SideMenuPanel.isIPad ? 23 : 18)
                     .foregroundStyle(Color(uiColor: UIColor { trait in
                         trait.userInterfaceStyle == .dark
                             ? (UIColor(named: "appBlackColor") ?? .label)
@@ -850,7 +922,9 @@ private struct SideMenuPanel: View {
                 // Section title — leading 53, 17pt.
                 HStack(spacing: 0) {
                     Text(section.name)
-                        .font(.system(size: 17,
+                        // iPad bumps 17 → 22pt for proportional reading.
+                        // iPhone keeps storyboard 17pt bit-identically.
+                        .font(.system(size: SideMenuPanel.isIPad ? 22 : 17,
                                       weight: selectedSection == index ? .bold : .regular))
                         .foregroundStyle(Color("appBlackColor"))
                         .padding(.leading, 53)
@@ -861,9 +935,19 @@ private struct SideMenuPanel: View {
                     // Rotates 180° on expand (matches UIKit's upArrowSmall image swap).
                     if !section.subRows.isEmpty {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 13, weight: .semibold))
+                            // iPad bumps the chevron 13 → 20pt (≈54%)
+                            // so the expand arrow reads at a
+                            // proportional scale next to the bumped
+                            // 22pt section title. The hit target
+                            // grows 30×30 → 40×40 to accommodate the
+                            // larger glyph and stay tappable. iPhone
+                            // keeps the storyboard 13pt / 30×30
+                            // bit-identically.
+                            .font(.system(size: SideMenuPanel.isIPad ? 20 : 13,
+                                          weight: .semibold))
                             .foregroundStyle(Color("appBlackColor"))
-                            .frame(width: 30, height: 30)
+                            .frame(width: SideMenuPanel.isIPad ? 40 : 30,
+                                   height: SideMenuPanel.isIPad ? 40 : 30)
                             .rotationEffect(.degrees(selectedSection == index ? 180 : 0))
                             .animation(.easeInOut(duration: 0.2), value: selectedSection)
                             .padding(.trailing, 13)
@@ -889,7 +973,10 @@ private struct SideMenuPanel: View {
         } label: {
             HStack(spacing: 0) {
                 Text(row.name)
-                    .font(.system(size: 17))
+                    // iPad bumps sub-row 17 → 22pt to match the
+                    // bumped section title above. iPhone keeps the
+                    // storyboard 17pt bit-identically.
+                    .font(.system(size: SideMenuPanel.isIPad ? 22 : 17))
                     .foregroundStyle(Color("appBlackColor"))
                     .lineLimit(1)
                     .minimumScaleFactor(0.9)
