@@ -951,6 +951,10 @@ private struct SideMenuPanel: View {
                     .padding(.leading, 24)
 
                 // Section title — leading 53, 17pt.
+                // iPad-only: bump leading 53 → 64 so the title aligns
+                // with the user-name / Edit-Profile column above
+                // (24 panel inset + 24 avatar + 16 HStack spacing = 64).
+                // iPhone keeps storyboard 53 bit-identically.
                 HStack(spacing: 0) {
                     Text(section.name)
                         // iPad bumps 17 → 22pt for proportional reading.
@@ -958,7 +962,7 @@ private struct SideMenuPanel: View {
                         .font(.system(size: SideMenuPanel.isIPad ? 22 : 17,
                                       weight: selectedSection == index ? .bold : .regular))
                         .foregroundStyle(Color("appBlackColor"))
-                        .padding(.leading, 53)
+                        .padding(.leading, SideMenuPanel.isIPad ? 64 : 53)
 
                     Spacer(minLength: 0)
 
@@ -1011,7 +1015,10 @@ private struct SideMenuPanel: View {
                     .foregroundStyle(Color("appBlackColor"))
                     .lineLimit(1)
                     .minimumScaleFactor(0.9)
-                    .padding(.leading, 53) // aligned with section title
+                    // iPad mirrors the section-title bump (53 → 64) so
+                    // sub-rows stay flush under their section title and
+                    // aligned with the user-name column above.
+                    .padding(.leading, SideMenuPanel.isIPad ? 64 : 53) // aligned with section title
                     .padding(.trailing, 20)
                 Spacer(minLength: 0)
             }
