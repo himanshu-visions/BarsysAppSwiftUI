@@ -918,7 +918,19 @@ struct NavigationRightGlassButtons: View {
             HapticService.light()
             onFavorites()
         } label: {
+            // Expand the hit-target to the FULL HStack slot (the half
+            // of the pill this button occupies) instead of just the
+            // icon's intrinsic frame. On iPad the icons are 28×32 but
+            // the glass pill is 110×68 — without `frame(maxWidth: .infinity,
+            // maxHeight: .infinity) + contentShape(Rectangle())` the
+            // button only registers taps on the literal icon pixels,
+            // leaving most of the visible pill-half un-tappable. The
+            // `.contentShape(Rectangle())` is the load-bearing piece:
+            // it tells SwiftUI to hit-test against the entire frame,
+            // not the icon's rendered alpha.
             leadingIconContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(leadingAccessibilityLabel)
@@ -989,25 +1001,37 @@ struct NavigationRightGlassButtons: View {
             // produces an identically-shaped icon at the tinted
             // colour. Light-mode branch returns the bare PNG so no
             // pixels shift.
-            if colorScheme == .dark {
-                Image("profileIcon")
-                    .renderingMode(.template)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(
-                        width: Self.profileIconSize.width,
-                        height: Self.profileIconSize.height
-                    )
-                    .foregroundStyle(Color("appBlackColor"))
-            } else {
-                Image("profileIcon")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(
-                        width: Self.profileIconSize.width,
-                        height: Self.profileIconSize.height
-                    )
+            //
+            // Same hit-target expansion as `leadingButton` — wrap the
+            // icon in `frame(maxWidth: .infinity, maxHeight: .infinity)
+            // + contentShape(Rectangle())` so the entire pill-half
+            // registers taps. On iPad the 32×32 icon was the ONLY
+            // tappable area inside the 110×68 pill, which is why
+            // tapping the side-menu button visually did nothing on
+            // iPad even though the icon was rendered correctly.
+            Group {
+                if colorScheme == .dark {
+                    Image("profileIcon")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(
+                            width: Self.profileIconSize.width,
+                            height: Self.profileIconSize.height
+                        )
+                        .foregroundStyle(Color("appBlackColor"))
+                } else {
+                    Image("profileIcon")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(
+                            width: Self.profileIconSize.width,
+                            height: Self.profileIconSize.height
+                        )
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Side menu")

@@ -117,6 +117,17 @@ struct SideMenuOverlay: View {
         UIDevice.current.userInterfaceIdiom == .pad
     }
 
+    /// Top inset in points reserved on iPad above the right-edge
+    /// swipe-to-open strip. Must be tall enough to clear the
+    /// status bar + navigation bar (where the toolbar's profile /
+    /// side-menu button is rendered) so the gesture recognizer
+    /// can't claim toolbar-button taps.
+    ///
+    /// 120pt = ~24pt status bar + ~50pt nav bar + ~46pt safety
+    /// margin (covers iPad split-view, dynamic-island devices, and
+    /// the bumped iPad 68pt-tall pill from `NavigationRightGlassButtons`).
+    static let iPadGestureTopInset: CGFloat = 120
+
     // MARK: - Critically-damped spring (matches UIKit SideMenuSwift)
     //
     // UIKit uses `usingSpringWithDamping: 1.0, initialSpringVelocity: V`
@@ -242,33 +253,72 @@ struct SideMenuOverlay: View {
             // iPhone (any version) and iPad pre-iOS-26 we keep the
             // original full-screen representable — behaviour there
             // is untouched and known-good.
+            // iPad: mount the right-edge swipe gesture in a strip
+            // that starts BELOW the navigation bar, so the
+            // representable cannot compete with the top-right
+            // toolbar profile / side-menu button for the same touch.
+            //
+            // Layout (iPad):
+            //   ┌─────────────────────────────────────────────┐
+            //   │ NAV BAR (toolbar button safe zone, ~120pt)  │ ← gesture NOT mounted here
+            //   ├─────────────────────────────────────────────┤
+            //   │ Spacer (full width, allowsHitTesting false) │
+            //   │                                       ┌────┤ ← 60pt right-edge strip
+            //   │                                       │ G  │   for swipe-to-open
+            //   │                                       │ E  │   (hosts UIScreenEdgePan
+            //   │                                       │ S  │    GestureRecognizer)
+            //   │                                       │ T  │
+            //   │                                       └────┤
+            //   └─────────────────────────────────────────────┘
+            //
+            // Top inset (`Self.iPadGestureTopInset = 120`) covers
+            // status bar + nav bar height + safety margin, so the
+            // toolbar button at y≈30-50 is OUTSIDE the strip and
+            // never races the recognizer for tap events. The
+            // `PassthroughView.hitTest` top-inset guard stays as
+            // belt-and-braces defense — both checks must pass for
+            // a touch to reach the recognizer.
+            //
+            // iPhone (any version) keeps the full-screen edge-pan
+            // representable bit-for-bit so the known-good swipe
+            // behaviour there is unchanged.
             Group {
                 if Self.isIPad {
-                    HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        // Top safe-zone for the navigation bar +
+                        // toolbar buttons. `allowsHitTesting(false)`
+                        // so taps in the nav-bar region pass through
+                        // to the toolbar items below.
                         Color.clear
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(height: Self.iPadGestureTopInset)
+                            .frame(maxWidth: .infinity)
                             .allowsHitTesting(false)
-                        ScreenEdgePanGesture(
-                            mode: .openFromRightEdge,
-                            onProgress: { progress in
-                                if !pendingOpen && !router.showSideMenu {
-                                    pendingOpen = true
-                                    HapticService.light()
-                                }
-                                liveDragOffset = panelWidth * (1 - progress)
-                            },
-                            onEnded: { committed, velocity in
-                                guard pendingOpen else { return }
-                                if committed {
-                                    completeOpen(velocity: velocity)
-                                } else {
-                                    cancelOpen(velocity: velocity)
-                                }
-                            },
-                            totalWidth: gestureWidth
-                        )
-                        .frame(width: 60)
-                        .frame(maxHeight: .infinity)
+                        HStack(spacing: 0) {
+                            Color.clear
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .allowsHitTesting(false)
+                            ScreenEdgePanGesture(
+                                mode: .openFromRightEdge,
+                                onProgress: { progress in
+                                    if !pendingOpen && !router.showSideMenu {
+                                        pendingOpen = true
+                                        HapticService.light()
+                                    }
+                                    liveDragOffset = panelWidth * (1 - progress)
+                                },
+                                onEnded: { committed, velocity in
+                                    guard pendingOpen else { return }
+                                    if committed {
+                                        completeOpen(velocity: velocity)
+                                    } else {
+                                        cancelOpen(velocity: velocity)
+                                    }
+                                },
+                                totalWidth: gestureWidth
+                            )
+                            .frame(width: 60)
+                            .frame(maxHeight: .infinity)
+                        }
                     }
                     .ignoresSafeArea()
                 } else {

@@ -258,7 +258,40 @@ struct ScreenEdgePanGesture: UIViewRepresentable {
         /// be captured in `.openFromRightEdge` mode.
         var edgeHitWidth: CGFloat = 40
 
+        /// Vertical strip at the TOP of the view that always passes
+        /// through to whatever sits below — protects the navigation
+        /// bar / toolbar trailing buttons (profile / side-menu) from
+        /// being captured by the edge-pan recognizer.
+        ///
+        /// On iPad the toolbar's profile button sits at the right
+        /// edge (trailing inset 8pt + 110pt pill = ~118pt wide) which
+        /// overlaps the rightmost 40pt edge-hit zone. Without this
+        /// top-inset guard `UIScreenEdgePanGestureRecognizer` claims
+        /// the touch before the SwiftUI `Button` can fire its action,
+        /// so the side-menu icon visually does nothing on tap.
+        ///
+        /// 110pt covers a typical iPad nav-bar height (50pt nav bar +
+        /// up to ~60pt status bar / dynamic-island safe-area inset)
+        /// with a few extra points of margin. iPhone keeps the same
+        /// guard — it doesn't hurt there because the iPhone toolbar
+        /// is also outside the swipe zone — but the previously known-
+        /// good iPhone behaviour stays untouched (the guard lets
+        /// touches FALL THROUGH, never blocks them).
+        var topInsetSafeFromHitTest: CGFloat = 110
+
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            // Top-of-screen guard — any touch in the top
+            // `topInsetSafeFromHitTest` points is passed through to the
+            // SwiftUI content below (system toolbar, custom top bar,
+            // back button, profile + favorites pill). This is the FIX
+            // for "side menu button is not tappable on iPad" — the
+            // edge-pan recognizer no longer competes with the toolbar
+            // Button for the right-edge tap that lands on the profile
+            // icon.
+            if point.y < topInsetSafeFromHitTest {
+                return nil
+            }
+
             switch mode {
             case .openFromRightEdge:
                 if point.x >= bounds.width - edgeHitWidth {
