@@ -742,18 +742,27 @@ struct FavoritesView: View {
                 // `.renderingMode`, no `.foregroundStyle`) so light-
                 // mode pixels stay bit-identical to the existing
                 // UIKit-parity design.
+                //
+                // iPad bumps the icon 24 → 32pt so it matches the
+                // size `NavigationRightGlassButtons` renders the same
+                // profile glyph at on every other tab-level screen
+                // (HomeView, MyBar, Mixlists, Recipes, MyProfile,
+                // ControlCenter, BarBot, Crafting, Preferences). On
+                // iPhone the storyboard 24×24 is preserved bit-for-bit
+                // — the iPad bump is the ONLY size delta.
+                let iconSize: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24
                 if colorScheme == .dark {
                     Image("profileIcon")
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
+                        .frame(width: iconSize, height: iconSize)
                         .foregroundStyle(Theme.Color.softWhiteText)
                 } else {
                     Image("profileIcon")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
+                        .frame(width: iconSize, height: iconSize)
                 }
             }
             .accessibilityLabel("Side menu")
