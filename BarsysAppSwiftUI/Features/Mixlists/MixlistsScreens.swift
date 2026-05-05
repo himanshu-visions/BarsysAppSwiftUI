@@ -957,6 +957,31 @@ struct MixlistDetailView: View {
                 .foregroundStyle(Theme.Color.textSecondary)
                 .padding(.horizontal, 24)
                 .padding(.top, 24)
+        } else if UIDevice.current.userInterfaceIdiom == .pad {
+            // iPad: 2-column LazyVGrid of vertical recipe cards —
+            // mirrors the Explore Recipes / Favorites / Ready-to-Pour
+            // iPad grid pattern. Preserves favourite heart, Craft
+            // button, and tap-to-open navigation. iPhone keeps the
+            // existing horizontal `MixlistDetailRecipeRow` list below.
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 16),
+                    GridItem(.flexible(), spacing: 16)
+                ],
+                spacing: 16
+            ) {
+                ForEach(recipes) { recipe in
+                    MixlistDetailRecipeGridCell(
+                        recipe: recipe,
+                        isFavourite: recipe.isFavourite ?? false,
+                        onOpen: { router.push(.recipeDetail(recipe.id)) },
+                        onCraft: { craft(recipe) },
+                        onFavorite: { toggleFav(recipe) }
+                    )
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
         } else {
             // UIKit `SK8-0N-Xcn` pins the list at leading/trailing=24pt
             // (constraints `svh-iN-pfx` / `Mih-CO-Uhk`). The previous
@@ -1791,6 +1816,164 @@ struct MixlistDetailRecipeRow: View {
         // / Craft buttons receive their taps directly.
         .modifier(MixlistOuterTapModifier(active: !isIPad, onTap: onOpen))
         .padding(.bottom, 12) // 12pt bottom spacer (xib `r8k-xs-Rck`)
+    }
+}
+
+// MARK: - MixlistDetailRecipeGridCell (iPad 2-column grid card)
+//
+// Vertical card layout used by the iPad LazyVGrid in MixlistDetail's
+// Recipes tab:
+//   • Image on top (square, full cell width) with `myDrink` placeholder
+//   • Favourite heart at top-right of the image
+//   • Recipe name (reserved 56pt band) + ingredients summary
+//     (reserved 60pt band) below
+//   • Craft button at the bottom — preserves the same handler as the
+//     iPhone horizontal row, styled as a white pill with the
+//     `craftButtonBorderColor` stroke (matches `MixlistDetailRecipeRow`'s
+//     Craft button so the iPad grid reads as a "tile-form" of the
+//     iPhone row, NOT a brand-coloured CTA).
+//
+// iPhone keeps the existing horizontal `MixlistDetailRecipeRow` — this
+// card only renders inside the iPad-only LazyVGrid branch in
+// `recipesList`.
+struct MixlistDetailRecipeGridCell: View {
+    let recipe: Recipe
+    let isFavourite: Bool
+    let onOpen: () -> Void
+    let onCraft: () -> Void
+    let onFavorite: () -> Void
+
+    private var optimizedImageURL: URL? {
+        guard let raw = recipe.image?.url, !raw.isEmpty else { return nil }
+        return raw.getImageUrl()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Image — square, full cell width.
+            GeometryReader { geo in
+                let side = geo.size.width
+                ZStack(alignment: .topTrailing) {
+                    AsyncImage(url: optimizedImageURL) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        case .empty, .failure:
+                            // Always render the `myDrink` placeholder
+                            // during loading + failure so the user
+                            // never sees a flat grey square.
+                            Image("myDrink")
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .padding(20)
+                        @unknown default:
+                            Image("myDrink")
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .padding(20)
+                        }
+                    }
+                    .frame(width: side, height: side)
+                    .background(Color("lightBorderGrayColor"))
+                    .clipped()
+
+                    // Favourite — top-right overlay, 60×60 hit area.
+                    Button {
+                        HapticService.light()
+                        onFavorite()
+                    } label: {
+                        Image(isFavourite
+                              ? "favIconRecipeSelected" : "favIconRecipe")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 36, height: 36)
+                            .frame(width: 60, height: 60)
+                            .glassButtonIfAvailable(size: 60)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .accessibilityLabel(isFavourite
+                                        ? "Remove from favourites"
+                                        : "Add to favourites")
+                    .padding(.top, 6)
+                    .padding(.trailing, 6)
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .contentShape(Rectangle())
+            .onTapGesture { onOpen() }
+
+            // Title — reserved 56pt band so 1-line / 2-line titles
+            // both occupy the same vertical space across the grid.
+            Text(recipe.displayName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Color("charcoalGrayColor"))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+
+            // Ingredients description — reserved 60pt band (3 lines ×
+            // ~18pt). Empty ingredients still consume the same space
+            // via `Color.clear` so the Craft button stays at the same
+            // Y across every cell on the same row.
+            Group {
+                if let info = recipe.ingredientNames, !info.isEmpty {
+                    Text(info)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else if !recipe.subtitle.isEmpty {
+                    Text(recipe.subtitle)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color("mediumLightGrayColor"))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+
+            // Craft button — same white pill + `craftButtonBorderColor`
+            // border style as `MixlistDetailRecipeRow`. This keeps the
+            // iPhone and iPad Craft buttons visually consistent.
+            Button {
+                HapticService.light()
+                onCraft()
+            } label: {
+                Text(Constants.craftTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8).fill(Theme.Color.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(BounceButtonStyle())
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
+        }
+        // Match the white-card surface of `MixlistDetailRecipeRow` so
+        // the grid cells look like the same card system, just tiled.
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.Color.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.4), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
     }
 }
 
