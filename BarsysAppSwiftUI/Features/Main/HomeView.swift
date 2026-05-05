@@ -965,23 +965,33 @@ struct NavigationRightGlassButtons: View {
     private static let trailingSafeAreaInset: CGFloat = 8
 
     private var leadingButton: some View {
-        Button {
+        // iPad ONLY: expand the hit-target to the FULL HStack slot
+        // (the half of the pill this button occupies) instead of
+        // just the icon's intrinsic frame. The 28×32 icon inside a
+        // 110×68 pill leaves most of the visible pill-half
+        // un-tappable without a `contentShape(Rectangle())` over
+        // the full slot.
+        //
+        // iPhone takes the bare-icon branch — NO `.frame`,
+        // NO `.contentShape` — so the Button's tap target equals
+        // the icon's intrinsic 21×24 frame, exactly the
+        // storyboard-driven UIKit behaviour. The HStack inside the
+        // 71×48 pill on iPhone has just enough room for the two
+        // intrinsic-sized icons; the `.frame(maxWidth: .infinity)`
+        // would have asked SwiftUI to redistribute that tight
+        // budget and could have produced sub-pixel visual shifts.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        return Button {
             HapticService.light()
             onFavorites()
         } label: {
-            // Expand the hit-target to the FULL HStack slot (the half
-            // of the pill this button occupies) instead of just the
-            // icon's intrinsic frame. On iPad the icons are 28×32 but
-            // the glass pill is 110×68 — without `frame(maxWidth: .infinity,
-            // maxHeight: .infinity) + contentShape(Rectangle())` the
-            // button only registers taps on the literal icon pixels,
-            // leaving most of the visible pill-half un-tappable. The
-            // `.contentShape(Rectangle())` is the load-bearing piece:
-            // it tells SwiftUI to hit-test against the entire frame,
-            // not the icon's rendered alpha.
-            leadingIconContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
+            if isIPad {
+                leadingIconContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            } else {
+                leadingIconContent
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(leadingAccessibilityLabel)
@@ -1042,7 +1052,14 @@ struct NavigationRightGlassButtons: View {
     }
 
     private var profileButton: some View {
-        Button {
+        // iPad ONLY: expand the hit-target to the FULL pill-half
+        // (same rationale as `leadingButton`). iPhone takes the
+        // bare-icon branch — no `.frame(maxWidth:)`, no
+        // `.contentShape` — so the Button's tap target equals the
+        // icon's intrinsic 24×24 frame, exactly the storyboard /
+        // UIKit behaviour. iPhone visual layout is byte-identical.
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        return Button {
             HapticService.light()
             onProfile()
         } label: {
@@ -1052,37 +1069,38 @@ struct NavigationRightGlassButtons: View {
             // produces an identically-shaped icon at the tinted
             // colour. Light-mode branch returns the bare PNG so no
             // pixels shift.
-            //
-            // Same hit-target expansion as `leadingButton` — wrap the
-            // icon in `frame(maxWidth: .infinity, maxHeight: .infinity)
-            // + contentShape(Rectangle())` so the entire pill-half
-            // registers taps. On iPad the 32×32 icon was the ONLY
-            // tappable area inside the 110×68 pill, which is why
-            // tapping the side-menu button visually did nothing on
-            // iPad even though the icon was rendered correctly.
-            Group {
+            let iconView: AnyView = {
                 if colorScheme == .dark {
-                    Image("profileIcon")
-                        .renderingMode(.template)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(
-                            width: Self.profileIconSize.width,
-                            height: Self.profileIconSize.height
-                        )
-                        .foregroundStyle(Color("appBlackColor"))
+                    return AnyView(
+                        Image("profileIcon")
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(
+                                width: Self.profileIconSize.width,
+                                height: Self.profileIconSize.height
+                            )
+                            .foregroundStyle(Color("appBlackColor"))
+                    )
                 } else {
-                    Image("profileIcon")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(
-                            width: Self.profileIconSize.width,
-                            height: Self.profileIconSize.height
-                        )
+                    return AnyView(
+                        Image("profileIcon")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(
+                                width: Self.profileIconSize.width,
+                                height: Self.profileIconSize.height
+                            )
+                    )
                 }
+            }()
+            if isIPad {
+                iconView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            } else {
+                iconView
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Side menu")

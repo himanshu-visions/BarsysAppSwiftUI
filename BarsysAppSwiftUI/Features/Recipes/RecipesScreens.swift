@@ -3508,6 +3508,51 @@ private struct IngredientPicker: View {
 // SwiftUI presentation is a full navigation-stack screen so we use
 // `@Environment(\.dismiss)` instead of manual child-VC unwinding.
 
+/// View modifier that presents a Camera / Photos / Cancel chooser
+/// using the right SwiftUI presentation per idiom — `confirmationDialog`
+/// (bottom action sheet) on iPhone, `alert` (centered modal) on iPad.
+///
+/// `confirmationDialog` on iPad renders as a tiny popover anchored
+/// near the trigger button, which the user reported as "very small"
+/// and visually hard to tap. The centered `alert` variant stacks the
+/// three actions vertically with full button hit areas and is
+/// guaranteed to render above every other view at full readable size.
+/// iPhone keeps the original `.confirmationDialog` bit-for-bit.
+fileprivate struct ImagePickerChoiceModifier: ViewModifier {
+    let title: String
+    @Binding var isPresented: Bool
+    let cameraAvailable: Bool
+    let cameraLabel: String
+    let photosLabel: String
+    let cancelLabel: String
+    let onCamera: () -> Void
+    let onPhotos: () -> Void
+
+    func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            content
+                .alert(title, isPresented: $isPresented) {
+                    if cameraAvailable {
+                        Button(cameraLabel) { onCamera() }
+                    }
+                    Button(photosLabel) { onPhotos() }
+                    Button(cancelLabel, role: .cancel) { }
+                }
+        } else {
+            content
+                .confirmationDialog(title,
+                                    isPresented: $isPresented,
+                                    titleVisibility: .visible) {
+                    if cameraAvailable {
+                        Button(cameraLabel) { onCamera() }
+                    }
+                    Button(photosLabel) { onPhotos() }
+                    Button(cancelLabel, role: .cancel) { }
+                }
+        }
+    }
+}
+
 /// Identifiable wrapper around `UIImagePickerController.SourceType` so
 /// it can drive `.sheet(item:)`. Mirrors `MyBarView.PickerPresentation`
 /// (MyBarScreens.swift L179-182). The `id` changes on every new
@@ -3847,28 +3892,29 @@ struct EditRecipeView: View {
         .keyboardDoneToolbar()
         // 1:1 with UIKit `showActionSheetForImagePicker`
         // (ImagePickerViewController.swift L45-89): Camera / Photos /
-        // Cancel alert. SwiftUI `confirmationDialog` renders the same
-        // iOS action sheet. Title matches `Constants.pleaseSelectAnOption`.
-        .confirmationDialog(
-            "Please Select an Option",
-            isPresented: $showAddImageActionSheet,
-            titleVisibility: .visible
-        ) {
-            // Single atomic state mutation — replaces the old two-step
-            // `addImagePickerSource = …; showPhotoPicker = true` that
-            // raced on first tap and opened Photos when Camera was
-            // requested. See `recipeImagePicker` declaration for the
-            // SwiftUI race-condition rationale.
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button("Camera") {
-                    recipeImagePicker = EditRecipePickerPresentation(source: .camera)
-                }
-            }
-            Button("Photos") {
-                recipeImagePicker = EditRecipePickerPresentation(source: .photoLibrary)
-            }
-            Button("Cancel", role: .cancel) { }
-        }
+        // Cancel.
+        //
+        // iPhone — `.confirmationDialog` (UIKit-style action sheet
+        //   anchored to the bottom of the screen, exactly the
+        //   historical behaviour). UNCHANGED.
+        // iPad   — `.alert` (centered modal that appears ABOVE every
+        //   other view). `.confirmationDialog` on iPad renders as a
+        //   tiny popover anchored near the trigger button — too small
+        //   to be useful — so we swap it for a centered alert that
+        //   stacks the three actions vertically with full button hit
+        //   areas on iPad.
+        .modifier(
+            ImagePickerChoiceModifier(
+                title: "Please Select an Option",
+                isPresented: $showAddImageActionSheet,
+                cameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera),
+                cameraLabel: "Camera",
+                photosLabel: "Photos",
+                cancelLabel: "Cancel",
+                onCamera: { recipeImagePicker = EditRecipePickerPresentation(source: .camera) },
+                onPhotos: { recipeImagePicker = EditRecipePickerPresentation(source: .photoLibrary) }
+            )
+        )
         // 1:1 with UIKit post-action-sheet flow: picking Camera or
         // Photos presents a `UIImagePickerController` with the
         // corresponding `sourceType`. `.fullScreenCover(item:)` is
@@ -3887,22 +3933,24 @@ struct EditRecipeView: View {
         // 1:1 port of UIKit `showActionSheetForImagePicker(isImageCroppingDisabled: true)`
         // (ImagePickerViewController.swift L45-89). UIKit shows exactly
         // three actions: Camera / Photos / Cancel — no manual-entry path.
-        .confirmationDialog(
-            Constants.pleaseSelectAnOption,
-            isPresented: $showAddIngredientActionSheet,
-            titleVisibility: .visible
-        ) {
-            // Atomic mutation — see `recipeImagePicker` doc above.
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button("Camera") {
-                    ingredientImagePicker = EditRecipePickerPresentation(source: .camera)
-                }
-            }
-            Button("Photos") {
-                ingredientImagePicker = EditRecipePickerPresentation(source: .photoLibrary)
-            }
-            Button(ConstantButtonsTitle.cancelButtonTitle, role: .cancel) { }
-        }
+        //
+        // Same iPhone-vs-iPad presentation logic as the recipe-image
+        // dialog above (`ImagePickerChoiceModifier`):
+        //   • iPhone — bottom action sheet (UNCHANGED)
+        //   • iPad   — centered alert (visible at full size, above
+        //     every other view)
+        .modifier(
+            ImagePickerChoiceModifier(
+                title: Constants.pleaseSelectAnOption,
+                isPresented: $showAddIngredientActionSheet,
+                cameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera),
+                cameraLabel: "Camera",
+                photosLabel: "Photos",
+                cancelLabel: ConstantButtonsTitle.cancelButtonTitle,
+                onCamera: { ingredientImagePicker = EditRecipePickerPresentation(source: .camera) },
+                onPhotos: { ingredientImagePicker = EditRecipePickerPresentation(source: .photoLibrary) }
+            )
+        )
         // Image picker for the AI ingredient detection flow. UIKit pipes
         // the chosen image through `uploadIngredientImage(...)` —
         // SwiftUI does the same via `uploadAndProcessIngredient(image:)`.

@@ -2228,26 +2228,35 @@ struct ChatInputBar: View {
                         // Attachment (`2w6-Oq-jj2`) — 30×22, leading=12.
                         // Storyboard-exact frame on every device — UI
                         // is bit-identical to the original layout.
-                        // `contentShape(Rectangle())` makes the entire
-                        // 30×22 rectangle tappable (vs only the icon's
-                        // rendered alpha pixels) so the button reliably
-                        // registers taps on iPad's HiDPI display
-                        // without changing the visible footprint of
-                        // the button or shifting the text view next to
-                        // it. iPhone behaviour is preserved — the
-                        // contentShape is a no-op functionally there
-                        // (the bare image was already filling the
-                        // 30×22 frame).
+                        //
+                        // iPad ONLY: `.contentShape(Rectangle())`
+                        // makes the entire 30×22 rectangle tappable
+                        // (vs only the icon's rendered alpha pixels)
+                        // so the button reliably registers taps on
+                        // iPad's HiDPI display. iPhone takes the
+                        // bare-image branch — no `.contentShape`,
+                        // identical to the original storyboard
+                        // behaviour. The visible footprint stays
+                        // 30×22 on every device.
+                        let isIPadAttach = UIDevice.current.userInterfaceIdiom == .pad
                         Button {
                             HapticService.light()
                             showAttachmentOptions = true
                         } label: {
-                            Image("barBotPlus")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 30, height: 22)
-                                .foregroundStyle(Color("charcoalGrayColor"))
-                                .contentShape(Rectangle())
+                            if isIPadAttach {
+                                Image("barBotPlus")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 30, height: 22)
+                                    .foregroundStyle(Color("charcoalGrayColor"))
+                                    .contentShape(Rectangle())
+                            } else {
+                                Image("barBotPlus")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 30, height: 22)
+                                    .foregroundStyle(Color("charcoalGrayColor"))
+                            }
                         }
                         .buttonStyle(BounceButtonStyle())
                         .padding(.leading, 12)
