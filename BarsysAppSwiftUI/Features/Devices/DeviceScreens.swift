@@ -274,7 +274,21 @@ struct DeviceListPopup: View {
     /// 12s connection watchdog (checkIsConnectionBuiltAfterConnecting)
     @State private var connectionTimer: Timer?
 
-    private let popupSize: CGFloat = 295
+    /// `true` on every iPad regardless of iOS version. Drives the
+    /// proportional iPad bumps (popup canvas 295 → 380, fonts 13 → 17 /
+    /// 18 → 24 / 16 → 21, padding 24 → 32, etc.) so the popup reads at
+    /// a comfortable scale on the wider iPad canvas. iPhone (any
+    /// version) returns `false` so the storyboard-exact 295×295 / 18pt
+    /// / 13pt sizes stay bit-identical there.
+    private static var isIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
+    /// 295pt on iPhone (storyboard `xJB-3B-j9G` width = 295) and 380pt
+    /// on iPad — gives the bumped 24pt title and 17pt device rows
+    /// proportional breathing room without dwarfing the iPad canvas.
+    /// iPhone keeps bit-identical layout.
+    private var popupSize: CGFloat { Self.isIPad ? 380 : 295 }
 
     /// Filtered discovered devices — mirrors UIKit's `bleDidDiscoverDevice`
     /// which only appends devices matching `selectedDeviceType`.
@@ -395,9 +409,16 @@ struct DeviceListPopup: View {
                             .renderingMode(.template)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 14, height: 14)
+                            // iPad bumps cross 14 → 18 (≈29%) so it
+                            // reads against the wider 380pt canvas.
+                            // iPhone keeps 14×14 bit-identically.
+                            .frame(width: Self.isIPad ? 18 : 14,
+                                   height: Self.isIPad ? 18 : 14)
                             .foregroundStyle(Color("appBlackColor"))
-                            .frame(width: 50, height: 50)
+                            // Hit target 50 → 60 on iPad to match the
+                            // bumped icon. iPhone keeps 50×50.
+                            .frame(width: Self.isIPad ? 60 : 50,
+                                   height: Self.isIPad ? 60 : 50)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -452,11 +473,17 @@ struct DeviceListPopup: View {
         ZStack {
             VStack(spacing: 0) {
                 Text("Searching for Device")
-                    .font(.system(size: 18, weight: .light))
+                    // iPad bumps 18 → 24pt to scale with the wider
+                    // 380pt canvas. iPhone keeps the storyboard 18pt.
+                    .font(.system(size: Self.isIPad ? 24 : 18,
+                                  weight: .light))
                     .foregroundStyle(Color("veryDarkGrayColor"))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .padding(.top, 60)
+                    // Top inset 60 → 80 on iPad so the title sits in
+                    // the same proportional position on the bumped
+                    // 380pt canvas. iPhone keeps 60pt.
+                    .padding(.top, Self.isIPad ? 80 : 60)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 0)
             }
@@ -478,12 +505,17 @@ struct DeviceListPopup: View {
         VStack(spacing: 0) {
             Spacer()
 
-            VStack(spacing: 7) {
+            // Title→subtitle gap 7 → 10 on iPad so the bumped 21pt
+            // title and 16pt subtitle aren't visually crammed.
+            VStack(spacing: Self.isIPad ? 10 : 7) {
                 Text("No device detected")
-                    .font(.system(size: 16))
+                    // iPad bumps 16 → 21pt (≈31%). iPhone unchanged.
+                    .font(.system(size: Self.isIPad ? 21 : 16))
                     .foregroundStyle(Color("veryDarkGrayColor"))
                 Text("Please reset your Barsys device by\nrestarting it.")
-                    .font(.system(size: 12, weight: .light))
+                    // iPad bumps 12 → 16pt (≈33%). iPhone unchanged.
+                    .font(.system(size: Self.isIPad ? 16 : 12,
+                                  weight: .light))
                     .foregroundStyle(Color("mediumGrayColor"))
                     .multilineTextAlignment(.center)
             }
@@ -493,22 +525,32 @@ struct DeviceListPopup: View {
                 tryAgain()
             } label: {
                 Text("Try again")
-                    .font(.system(size: 13))
+                    // iPad bumps 13 → 17pt (≈31%). iPhone unchanged.
+                    .font(.system(size: Self.isIPad ? 17 : 13))
                     .foregroundStyle(Color("veryDarkGrayColor"))
                     .frame(maxWidth: .infinity)
-                    .frame(height: 45)
+                    // Button height 45 → 55 on iPad to match the
+                    // bumped 17pt label. iPhone keeps 45.
+                    .frame(height: Self.isIPad ? 55 : 45)
                     .overlay(
                         RoundedRectangle(cornerRadius: 5)
                             .stroke(Color("borderColor"), lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)
-            .padding(.top, 39)
+            // Button top spacing 39 → 50 on iPad — proportional to
+            // the canvas bump. iPhone keeps 39.
+            .padding(.top, Self.isIPad ? 50 : 39)
 
             Spacer()
         }
-        .padding(.horizontal, 38)
-        .offset(y: 30)
+        // Horizontal inset 38 → 50 on iPad so the bumped "Try again"
+        // button doesn't kiss the popup edge. iPhone keeps 38.
+        .padding(.horizontal, Self.isIPad ? 50 : 38)
+        // Group offset 30 → 40 on iPad — keeps the title vertically
+        // centered with respect to the cross button on the bumped
+        // 380pt canvas. iPhone keeps 30.
+        .offset(y: Self.isIPad ? 40 : 30)
     }
 
     // MARK: - State 3: Devices found (KMW-nm-sBI)
@@ -520,15 +562,21 @@ struct DeviceListPopup: View {
     private var devicesFoundState: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Device detected")
-                .font(.system(size: 18, weight: .light))
+                // iPad bumps 18 → 24pt (≈33%). iPhone unchanged.
+                .font(.system(size: Self.isIPad ? 24 : 18,
+                              weight: .light))
                 .foregroundStyle(Color("veryDarkGrayColor"))
                 .frame(maxWidth: .infinity, alignment: .center)
                 .accessibilityAddTraits(.isHeader)
 
             Text("Please select the device you want to connect")
-                .font(.system(size: 13, weight: .light))
+                // iPad bumps 13 → 17pt (≈31%). iPhone unchanged.
+                .font(.system(size: Self.isIPad ? 17 : 13,
+                              weight: .light))
                 .foregroundStyle(Color("veryDarkGrayColor"))
-                .padding(.top, 38)
+                // Top inset 38 → 50 on iPad — proportional to the
+                // bumped canvas. iPhone keeps 38.
+                .padding(.top, Self.isIPad ? 50 : 38)
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -537,13 +585,22 @@ struct DeviceListPopup: View {
                     }
                 }
             }
-            .frame(minHeight: 84, maxHeight: 350)
-            .padding(.top, 16)
+            // Min/max heights bumped on iPad so the bumped device
+            // rows (17pt name, 21×18 signal icon) get proportional
+            // vertical room. iPhone keeps 84-350.
+            .frame(minHeight: Self.isIPad ? 110 : 84,
+                   maxHeight: Self.isIPad ? 440 : 350)
+            // Top inset 16 → 22 on iPad. iPhone unchanged.
+            .padding(.top, Self.isIPad ? 22 : 16)
             .accessibilityLabel("Detected devices")
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 30)
-        .padding(.bottom, 64)
+        // Horizontal padding 24 → 32 on iPad. iPhone unchanged.
+        .padding(.horizontal, Self.isIPad ? 32 : 24)
+        // Top padding 30 → 40 on iPad. iPhone unchanged.
+        .padding(.top, Self.isIPad ? 40 : 30)
+        // Bottom padding 64 → 80 on iPad — proportional to the
+        // bumped canvas. iPhone keeps 64.
+        .padding(.bottom, Self.isIPad ? 80 : 64)
     }
 
     // MARK: - Device row (ports DeviceListTableCell.xib)
@@ -559,21 +616,31 @@ struct DeviceListPopup: View {
                 Text(device.name
                         .replacingOccurrences(of: "\r\n", with: "")
                         .trimmingCharacters(in: .whitespaces))
-                    .font(.system(size: 13))
+                    // iPad bumps device-name 13 → 17pt (≈31%) for
+                    // proportional reading. iPhone keeps 13pt.
+                    .font(.system(size: Self.isIPad ? 17 : 13))
                     .foregroundStyle(Color("appBlackColor"))
                     .lineLimit(2)
                     .layoutPriority(-1)
 
-                Spacer(minLength: 15)
+                // Min spacing between name and signal: 15 → 20 on iPad.
+                Spacer(minLength: Self.isIPad ? 20 : 15)
 
                 // Signal strength (ports configureSignal + signalView)
-                HStack(spacing: 3) {
+                // iPad bumps the icon→label gap 3 → 4pt to match the
+                // bumped 21×18 icon and 14pt label. iPhone unchanged.
+                HStack(spacing: Self.isIPad ? 4 : 3) {
                     Image(systemName: device.signalIconName)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 16, height: 14)
+                        // iPad bumps the signal icon 16×14 → 21×18
+                        // (≈30%). iPhone unchanged.
+                        .frame(width: Self.isIPad ? 21 : 16,
+                               height: Self.isIPad ? 18 : 14)
                     Text(device.signalLevelText)
-                        .font(.system(size: 11))
+                        // iPad bumps signal label 11 → 14pt.
+                        // iPhone unchanged.
+                        .font(.system(size: Self.isIPad ? 14 : 11))
                 }
                 .foregroundStyle(device.signalColor)
                 .layoutPriority(1)
@@ -601,10 +668,17 @@ struct DeviceListPopup: View {
                             .aspectRatio(contentMode: .fit)
                     }
                 }
-                .frame(width: 10, height: 10)
-                .padding(.leading, 8)
+                // Arrow 10×10 → 13×13 on iPad to match the bumped
+                // 17pt name and 14pt signal label. iPhone unchanged.
+                .frame(width: Self.isIPad ? 13 : 10,
+                       height: Self.isIPad ? 13 : 10)
+                // Leading gap 8 → 11 on iPad. iPhone unchanged.
+                .padding(.leading, Self.isIPad ? 11 : 8)
             }
-            .padding(.vertical, 10)
+            // Row vertical padding 10 → 13 on iPad so the bumped
+            // 17pt device name has proportional vertical room.
+            // iPhone keeps 10pt.
+            .padding(.vertical, Self.isIPad ? 13 : 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -614,17 +688,23 @@ struct DeviceListPopup: View {
     // "Connecting to {name}" 18pt light center, spinner, cross hidden
 
     private var connectingState: some View {
-        VStack(spacing: 12) {
+        // VStack spacing 12 → 16 on iPad — proportional to the
+        // bumped 24pt title. iPhone keeps 12.
+        VStack(spacing: Self.isIPad ? 16 : 12) {
             // 24pt horizontal inset so a long device name (e.g.
             // "Barsys_360_AB12CD34EF") doesn't graze the popup
             // edges — the previous render hugged the leading and
             // trailing of the glass card with no breathing room.
             Text("Connecting to \(selectedDeviceName ?? "")")
-                .font(.system(size: 18, weight: .light))
+                // iPad bumps 18 → 24pt to match the other state
+                // titles. iPhone keeps 18pt.
+                .font(.system(size: Self.isIPad ? 24 : 18,
+                              weight: .light))
                 .foregroundStyle(Color("veryDarkGrayColor"))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
-                .padding(.horizontal, 24)
+                // Horizontal inset 24 → 32 on iPad. iPhone unchanged.
+                .padding(.horizontal, Self.isIPad ? 32 : 24)
             ProgressView()
                 .controlSize(.large)
         }
@@ -646,14 +726,21 @@ struct DeviceListPopup: View {
                 Image("success_device_name_change")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 30, height: 30)
+                    // iPad bumps the success/error glyph 30 → 40
+                    // (≈33%) to match the bumped 21pt body text.
+                    // iPhone keeps 30×30 bit-identically.
+                    .frame(width: Self.isIPad ? 40 : 30,
+                           height: Self.isIPad ? 40 : 30)
 
                 Text(errorMessage)
-                    .font(.system(size: 16))
+                    // iPad bumps 16 → 21pt (≈31%). iPhone unchanged.
+                    .font(.system(size: Self.isIPad ? 21 : 16))
                     .foregroundStyle(.black)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 27)
-                    .padding(.top, 30)
+                    // Horizontal inset 27 → 36 on iPad. iPhone unchanged.
+                    .padding(.horizontal, Self.isIPad ? 36 : 27)
+                    // Top gap 30 → 40 on iPad — proportional spacing.
+                    .padding(.top, Self.isIPad ? 40 : 30)
 
                 // OK button — pill, bg #E0B392 @ 0.9 alpha, shadow
                 Button {
@@ -662,16 +749,24 @@ struct DeviceListPopup: View {
                     dismissPopup()
                 } label: {
                     Text("Okay")
-                        .font(.system(size: 15, weight: .medium))
+                        // iPad bumps 15 → 18pt to match the bumped
+                        // canvas. iPhone keeps 15pt.
+                        .font(.system(size: Self.isIPad ? 18 : 15,
+                                      weight: .medium))
                         .foregroundStyle(.black)
-                        .frame(width: 201, height: 45)
+                        // Pill 201×45 → 250×55 on iPad — proportional
+                        // to the canvas + bumped 18pt label. iPhone
+                        // keeps 201×45 bit-identically.
+                        .frame(width: Self.isIPad ? 250 : 201,
+                               height: Self.isIPad ? 55 : 45)
                         .background(Color(red: 0.878, green: 0.702, blue: 0.573).opacity(0.9))
                         .clipShape(Capsule())
                         .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 6)
                 }
                 .accessibilityLabel("Okay")
                 .accessibilityHint("Confirm and dismiss")
-                .padding(.top, 25)
+                // Top gap 25 → 32 on iPad. iPhone unchanged.
+                .padding(.top, Self.isIPad ? 32 : 25)
 
                 Spacer()
             }
