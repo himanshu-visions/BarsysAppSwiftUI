@@ -902,6 +902,45 @@ struct FavoritesView: View {
                                 myDrinksResponseModel = model
                             }
                         }
+                        // CROSS-SCREEN PROPAGATION FIX
+                        //
+                        // 1:1 with UIKit `RecipePageViewModel+DataLoading`
+                        // L96-110: when the user taps a My Drink in the
+                        // Favourites list and then opens its detail, the
+                        // detail view's `isFavourite` getter reads
+                        // `recipe?.isMyDrinkFavourite ?? false`. UIKit
+                        // works because the detail VC is initialised with
+                        // the SAME recipe instance that lives inside
+                        // `myDrinksResponseModel`, so the in-memory flag
+                        // flip on this view propagates to the detail
+                        // automatically.
+                        //
+                        // SwiftUI uses an id-based route — `RecipeDetailView`
+                        // re-fetches the recipe from `env.storage` on
+                        // appear (`storage.recipe(by: recipeID)`). Without
+                        // mirroring the new `isMyDrinkFavourite` value
+                        // into storage HERE, the detail view re-reads the
+                        // PRE-TOGGLE state and the favourite button
+                        // shows "Add to Favourites" even though the
+                        // server already confirmed the toggle. Mirroring
+                        // the flag (and the synced `isFavourite` field
+                        // RecipeDetailView reads in its onAppear seed) so
+                        // every entry path into the detail picks up the
+                        // correct state on the very first frame.
+                        //
+                        // SAFE: this only updates the recipe ALREADY in
+                        // storage — `upsert` no-ops if the recipe wasn't
+                        // there to begin with (My Drinks rows are added
+                        // to storage by `OryAPIClient.fetchMyRecipes`
+                        // and `EditRecipeView.saveRecipe`). The favs Set
+                        // is intentionally NOT touched — Tab 0 / Tab 1
+                        // separation per UIKit Tab 1 `applyLikeResult`.
+                        if let stored = env.storage.recipe(by: recipe.id) {
+                            var u = stored
+                            u.isMyDrinkFavourite = willBeFav
+                            u.isFavourite = willBeFav
+                            env.storage.upsert(recipe: u)
+                        }
                         // 1:1 with UIKit Tab 1 `applyLikeResult`
                         // (FavouritesRecipesAndDrinksViewModel.swift:373):
                         // ONLY update `isMyDrinkFavourite` here — DO
