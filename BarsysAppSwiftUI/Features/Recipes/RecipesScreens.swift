@@ -5109,50 +5109,46 @@ struct EditRecipeView: View {
     @ViewBuilder
     private var editCancelCapsuleBackground: some View {
         if #available(iOS 26.0, *) {
-            // Force the light-mode wet-glass look in BOTH color schemes.
-            // `.regularMaterial` flipped to a dark pill in dark mode which
-            // swallowed the cancel-border gradient overlay — the button
-            // read as a dark blob with a faint rim instead of the crisp
-            // white-glass capsule UIKit shows. Explicit white tint +
-            // cancelButtonGray wash preserves the light-mode pixels and
-            // gives dark mode the same white-glass "Save" pill the user
-            // sees in light mode (matches the popup secondary-button fix
-            // at Theme.swift:1396).
+            // Pure white-glass capsule in BOTH color schemes — matches
+            // the Recipe Detail "Add to Favourites" button so the Save
+            // pill reads as the same crisp white capsule across the
+            // app in dark mode. The previous variant added a
+            // `cancelButtonGray.opacity(0.12)` wash on top which
+            // darkened the pill in dark mode and made the BLACK
+            // "Save" label look faded against a dim grey blob. With
+            // the wash removed the dark-mode pixels match the
+            // RecipeDetail pill exactly.
             Capsule(style: .continuous)
                 .fill(SwiftUI.Color.white.opacity(0.85))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .fill(Theme.Color.cancelButtonGray.opacity(0.12))
-                )
         } else {
-            // Pre-iOS 26 fallback — `Theme.Color.surface` light value
-            // is sRGB(1, 1, 1), bit-identical to the previous hard-coded
-            // `Color.white`, so light mode renders the EXACT same edit
-            // cancel capsule. Dark mode picks up elevated dark surface
-            // (#2C2C2E) for visual consistency on the dark Edit panel.
+            // Pre-iOS 26 fallback — hardcoded `Color.white` (NOT
+            // `Theme.Color.surface`) because the surface token adapts
+            // to the elevated dark surface (#2C2C2E) in dark mode,
+            // which made the BLACK "Save" label unreadable on a dark
+            // grey blob. Recipe Detail's "Add to Favourites" pill
+            // uses the same hardcoded white for the same reason —
+            // staying consistent here keeps both buttons identical
+            // across the app on every iOS version.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.Color.surface)
+                .fill(SwiftUI.Color.white)
         }
     }
 
     @ViewBuilder
     private var editCancelCapsuleBorder: some View {
         if #available(iOS 26.0, *) {
-            // 1:1 with UIKit `applyCancelCapsuleGradientBorderStyle(borderColors:)`
-            // (UIViewClass+GradientStyles.swift L92-110): 8-stop alternating
-            // white(@0.95) ↔ cancelBorderGray(@0.9) sheen on a diagonal,
-            // 1.5pt line width. Reproduces the etched-glass border effect
-            // UIKit applies to the Save / Cancel capsule on iOS 26+.
+            // Match the Recipe Detail "Add to Favourites" 3-stop
+            // gradient border (white@0.95 → grey@0.85 → white@0.95)
+            // at 1.5pt — keeps the etched-glass rim look while
+            // matching the simpler border the rest of the white-pill
+            // capsules use across the app on iOS 26+.
             Capsule(style: .continuous)
                 .stroke(
                     LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.95),                       location: 0.00),
-                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9),  location: 0.20),
-                            .init(color: .white.opacity(0.95),                       location: 0.40),
-                            .init(color: .white.opacity(0.95),                       location: 0.60),
-                            .init(color: Theme.Color.cancelBorderGray.opacity(0.9),  location: 0.80),
-                            .init(color: .white.opacity(0.95),                       location: 1.00)
+                        colors: [
+                            Color.white.opacity(0.95),
+                            Color(white: 0.85).opacity(0.9),
+                            Color.white.opacity(0.95)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
