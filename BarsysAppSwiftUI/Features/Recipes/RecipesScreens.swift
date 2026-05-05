@@ -4187,9 +4187,31 @@ struct EditRecipeView: View {
             } else {
                 // 1:1 with UIKit `didPressAddImageButton` L219-226:
                 //   showActionSheetForImagePicker() — Camera/Photos/Cancel
+                //
+                // Keyboard handling: dismiss the keyboard FIRST, then
+                // present the chooser after a 250ms deferral so the
+                // resign-first-responder animation completes before
+                // the alert / action sheet lays itself out. Without
+                // this on iPad, tapping "Add Image" while the
+                // recipe-name field had focus produced no visible
+                // popup at all (alert raced with keyboard dismissal
+                // and ended up behind / clipped by the resigning
+                // keyboard frame).
+                //
+                // Side-benefit: when the user taps Cancel on the
+                // popup, the keyboard does NOT auto-restore — the
+                // text-field's first-responder state was already
+                // dropped before the popup appeared, so the popup's
+                // dismissal returns to a no-responder state instead
+                // of re-focusing the field. UIKit's
+                // `view.endEditing(true) → present(_:)` flow
+                // produces the same end state.
                 Button {
                     HapticService.light()
-                    showAddImageActionSheet = true
+                    hideKeyboard()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        showAddImageActionSheet = true
+                    }
                 } label: {
                     Text("Add Image")
                         .font(.system(size: 12))
@@ -4341,7 +4363,22 @@ struct EditRecipeView: View {
             HapticService.light()
             // 1:1 with UIKit `didPressAddIngredientButton` →
             // `showActionSheetForImagePicker(isImageCroppingDisabled: true)`.
-            showAddIngredientActionSheet = true
+            //
+            // Same keyboard-dismissal pattern as the Add Image button
+            // above — `hideKeyboard()` first, then a 250ms deferral
+            // so the chooser (centered alert on iPad / bottom action
+            // sheet on iPhone) presents AFTER the keyboard's resign
+            // animation completes. Without this on iPad the alert
+            // would race the keyboard dismissal and end up clipped
+            // behind it. Tapping Cancel on the popup also leaves the
+            // keyboard down (no auto-restore) — the recipe-name /
+            // ingredient-quantity fields lose first-responder status
+            // before the popup appears, mirroring UIKit's
+            // `view.endEditing(true) → present(_:)` flow.
+            hideKeyboard()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                showAddIngredientActionSheet = true
+            }
         } label: {
             HStack(spacing: 12) {
                 Image("newPlus")

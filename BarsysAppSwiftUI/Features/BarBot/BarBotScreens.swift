@@ -2241,7 +2241,29 @@ struct ChatInputBar: View {
                         let isIPadAttach = UIDevice.current.userInterfaceIdiom == .pad
                         Button {
                             HapticService.light()
-                            showAttachmentOptions = true
+                            // Dismiss the keyboard FIRST so the
+                            // attachment chooser (`.alert` on iPad,
+                            // `.confirmationDialog` on iPhone) doesn't
+                            // race with — or appear behind — the
+                            // keyboard's resign animation.
+                            //
+                            // On iPad this is critical: the centered
+                            // alert needs the keyboard gone before it
+                            // can lay out properly; tapping the "+"
+                            // while the keyboard is up was producing
+                            // no visible popup at all.
+                            //
+                            // On iPhone `hideKeyboard()` is a no-op
+                            // if no responder is active, and a 0.25s
+                            // deferral keeps the bottom action sheet
+                            // appearance consistent with UIKit's
+                            // historical behaviour where
+                            // `view.endEditing(true)` always preceded
+                            // `present(alert, animated: true)`.
+                            hideKeyboard()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                showAttachmentOptions = true
+                            }
                         } label: {
                             if isIPadAttach {
                                 Image("barBotPlus")
@@ -2500,6 +2522,24 @@ struct BarBotCraftView: View {
     // references so nothing else in this file needs to change shape.
     @State private var pendingHistoryOpen = false
 
+    /// Tracks whether the system keyboard is currently visible.
+    ///
+    /// Used by the iPad left-edge `ScreenEdgePanGesture` mount to
+    /// conditionally SKIP the gesture while the user is typing —
+    /// because keyboard avoidance pushes the chat input bar UP into
+    /// the screen middle (where the gesture's active band lives,
+    /// after the 120pt-top / 220pt-bottom geometric containment),
+    /// and the "+" attachment button at the leading edge of the
+    /// raised input bar would otherwise land inside the recognizer's
+    /// leftmost 40pt hit-zone again. With the gesture skipped while
+    /// typing, the "+" button reliably receives every tap.
+    ///
+    /// Updated via `UIResponder.keyboardWillShowNotification` /
+    /// `keyboardWillHideNotification` in `body.onAppear`. iPhone
+    /// path doesn't read this flag (else branch always mounts the
+    /// full-screen gesture) so iPhone behaviour is unchanged.
+    @State private var isKeyboardVisible = false
+
     // BarBot crafting modal — 1:1 with UIKit
     // `BarBotCoordinator.showBarBotCrafting(...)` which presents
     // `BarBotCraftingViewController` as `.overFullScreen` with a
@@ -2702,6 +2742,27 @@ struct BarBotCraftView: View {
         // its tab bar as usual while the history panel sits above the
         // content region between them.
         .onAppear { if viewModel.messages.isEmpty { viewModel.setupNewChat() } }
+        // Keyboard show/hide observers — drive `isKeyboardVisible` so
+        // the iPad left-edge `ScreenEdgePanGesture` un-mounts while
+        // the user is typing. See `isKeyboardVisible` doc comment for
+        // why this is required (chat input bar moves UP into the
+        // gesture's middle band when the keyboard is presented).
+        // iPhone is unaffected — the iPhone gesture branch ignores
+        // `isKeyboardVisible`.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillShowNotification
+            )
+        ) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillHideNotification
+            )
+        ) { _ in
+            isKeyboardVisible = false
+        }
         // BarBot crafting modal — see `craftingRecipe` state var.
         .fullScreenCover(item: $craftingRecipe) { r in
             BarBotCraftingView(recipe: r) {
@@ -2823,7 +2884,28 @@ struct BarBotCraftView: View {
             // swallow taps across the rest of the screen. iPhone any
             // version and iPad pre-iOS-26 keep the original full-
             // screen overlay (known-good behaviour).
-            if !showHistory && viewModel.canProcessNewRequest {
+            // iPad ONLY: also skip the gesture when the keyboard is
+            // visible. Keyboard avoidance pushes the chat input bar UP
+            // into the screen's middle band — exactly where the
+            // gesture's active region lives after the geometric
+            // containment — so the "+" attachment button at the
+            // leading edge of the raised input bar would otherwise
+            // be re-eaten by the recognizer's leftmost 40pt hit zone.
+            // Skipping the gesture while the keyboard is up means
+            // the "+" tap (and any other tap on the raised input
+            // bar) goes straight to the SwiftUI `Button`, just like
+            // on iPhone. The gesture re-mounts the moment the
+            // keyboard hides, so swipe-to-open chat history still
+            // works whenever the user isn't typing.
+            //
+            // iPhone (else branch) ignores this flag — the
+            // full-screen `ScreenEdgePanGesture` is unconditionally
+            // mounted, exactly the historical behaviour.
+            let canMountIPadGesture = !SideMenuOverlay.isIPad
+                || !isKeyboardVisible
+            if !showHistory
+                && viewModel.canProcessNewRequest
+                && canMountIPadGesture {
                 if SideMenuOverlay.isIPad {
                     // iPad: mount the left-edge swipe gesture in a
                     // STRICTLY contained vertical band — the gesture's
