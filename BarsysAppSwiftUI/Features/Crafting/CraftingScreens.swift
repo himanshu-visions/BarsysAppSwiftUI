@@ -1231,12 +1231,12 @@ struct CraftingView: View {
 
                             // Recipe name (vHh-PF-hYT): system 16pt
                             // charcoalGrayColor, centered, y=44 below
-                            // the device image. iPad bumps to 26pt + 50pt
-                            // top inset so the recipe title reads as the
-                            // primary label, not a caption, on the wider
-                            // canvas. iPhone unchanged.
+                            // the device image. iPad bumps to 34pt
+                            // + 50pt top inset so the recipe title
+                            // reads as the dominant heading on the
+                            // wider canvas. iPhone unchanged.
                             Text(recipe.displayName)
-                                .font(.system(size: isIPad ? 26 : 16))
+                                .font(.system(size: isIPad ? 34 : 16, weight: isIPad ? .semibold : .regular))
                                 .foregroundStyle(Color("charcoalGrayColor"))
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
