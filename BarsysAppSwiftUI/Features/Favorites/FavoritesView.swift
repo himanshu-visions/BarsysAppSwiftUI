@@ -1268,14 +1268,18 @@ struct BarsysRecipeRow: View {
                     switch phase {
                     case .success(let img):
                         img.resizable().aspectRatio(contentMode: .fill)
-                    case .empty:
-                        Color("lightBorderGrayColor")
-                    case .failure:
+                    case .empty, .failure:
+                        // Always render the `myDrink` placeholder during
+                        // loading + failure so the user never sees a flat
+                        // grey square. Matches SDWebImage `placeholderImage:`
+                        // behaviour from UIKit.
                         Image("myDrink")
                             .resizable().aspectRatio(contentMode: .fit)
                             .padding(16)
                     @unknown default:
-                        Color("lightBorderGrayColor")
+                        Image("myDrink")
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .padding(16)
                     }
                 }
                 .frame(width: cellHeight, height: cellHeight)
@@ -1568,14 +1572,17 @@ struct BarsysRecipeGridCell: View {
                         switch phase {
                         case .success(let img):
                             img.resizable().aspectRatio(contentMode: .fill)
-                        case .empty:
-                            Color("lightBorderGrayColor")
-                        case .failure:
+                        case .empty, .failure:
+                            // Always render the `myDrink` placeholder
+                            // during loading + failure so the user never
+                            // sees a flat grey square.
                             Image("myDrink")
                                 .resizable().aspectRatio(contentMode: .fit)
                                 .padding(20)
                         @unknown default:
-                            Color("lightBorderGrayColor")
+                            Image("myDrink")
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .padding(20)
                         }
                     }
                     .frame(width: side, height: side)
