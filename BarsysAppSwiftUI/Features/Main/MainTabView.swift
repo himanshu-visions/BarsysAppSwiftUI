@@ -2032,6 +2032,47 @@ struct EditRecipeCoverContent<Content: View>: View {
         // where `@Environment(\.dismiss)` inside this nav-stack root
         // did not propagate to the enclosing fullScreenCover.
         .environment(\.editCoverClose, onClose)
+        // 1:1 with UIKit `EditViewController` glass-loader stack —
+        // `UIApplication.shared.topViewController()?.showGlassLoader(...)`
+        // (EditViewController.swift L262, L393) presents the loader
+        // on the TOPMOST view controller, which on iOS == the
+        // EditRecipeView when the user is selecting a Photos /
+        // Camera image for the AI ingredient detection flow.
+        //
+        // The SwiftUI port mounts a single `loadingOverlay` at the
+        // RootView (`BarsysAppSwiftUIApp.body`), but
+        // `.fullScreenCover` presents this `EditRecipeCoverContent`
+        // ABOVE that root, so the root-level loader is hidden behind
+        // the cover and the user never sees the "Adding ingredients"
+        // glass loader after picking a photo on the iPad ingredient
+        // image picker (or the iPhone equivalent — same root cause).
+        //
+        // Mounting `.loadingOverlay(env.loading)` here on the cover
+        // itself makes the loader render ON TOP of the EditRecipe
+        // surface — exactly the UIKit `topViewController` semantics —
+        // so `env.loading.show("Adding ingredients...")` from
+        // `uploadAndProcessIngredient(image:)` and
+        // `env.loading.show("Saving Recipe")` from the save-recipe
+        // path now both surface the loader regardless of which
+        // hosting context EditRecipe was opened from
+        // (RecipeDetail's full-screen cover, FavoriteList's row tap,
+        // BarBot history detail, etc.).
+        //
+        // Behaviour parity:
+        //   • iPhone — was previously failing too; now works,
+        //     visually identical to iPad except for typical
+        //     idiom-driven container sizing already present in
+        //     `LoadingOverlayModifier`.
+        //   • iPad — fixed.
+        //
+        // Re-using `env.loading` (the same `LoadingState` injected
+        // at the app root) means a `show` call from any view inside
+        // the cover OR from the cover's parent both drive the same
+        // observable; this loader simply renders the same state on
+        // a different layer in the iOS view hierarchy. No risk of
+        // showing two loaders simultaneously — `LoadingState` has a
+        // single source of truth.
+        .loadingOverlay(env.loading)
     }
 }
 
