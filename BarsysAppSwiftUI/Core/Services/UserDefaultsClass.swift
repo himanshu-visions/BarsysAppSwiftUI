@@ -3,15 +3,26 @@
 //  BarsysAppSwiftUI
 //
 //  Direct 1:1 port of BarsysApp/Controllers/Login/UserDefaultsClass.swift
-//  — same method names, same underlying keys, so when the real Keychain-
-//  backed adapter is wired in (Phase 2) it's a drop-in replacement.
+//  — same method names, same underlying keys, same Keychain backing for
+//  sensitive data so a user who logs in on the UIKit build and then
+//  runs the SwiftUI build (same bundle id) sees the same session token,
+//  user id, email, phone, etc.
 //
-//  The UIKit version stores sensitive data (tokens, PII) in the iOS Keychain
-//  via `KeychainHelper.shared` and non-sensitive data (flags, timestamps)
-//  in `UserDefaults`. The SwiftUI port uses `UserDefaults` for EVERYTHING
-//  during scaffolding; the keys are byte-identical to the UIKit ones so a
-//  user who logs in on the UIKit app and then runs the SwiftUI target with
-//  the same bundle id sees the same data.
+//  Storage policy (matches UIKit):
+//    • SENSITIVE — Keychain via `KeychainHelper.shared`:
+//        userId, sessionId, sessionToken, accessToken,
+//        name, email, phone, dob, countryName,
+//        deviceId, profileImage URL.
+//    • NON-SENSITIVE — UserDefaults:
+//        last-connected-device id / time, preferences unit, cache
+//        timestamps, per-device first-time tutorial flags, analytics
+//        consent flags, has-launched-before flag, has-seen-tutorial flag.
+//
+//  Migration: earlier scaffold builds wrote sensitive values to
+//  `UserDefaults`. On every read of a Keychain-backed key we look in the
+//  Keychain first; if missing AND a value is found in UserDefaults we
+//  copy it across and delete the UserDefaults entry — the migration is
+//  silent, idempotent, and runs at most once per key per device.
 //
 
 import Foundation
@@ -65,36 +76,106 @@ enum UserDefaultsClass {
     }
 
     private static var defaults: UserDefaults { .standard }
+    private static let keychain = KeychainHelper.shared
 
-    // MARK: - Store (sensitive — Keychain-backed in UIKit, UserDefaults here)
+    /// Every Keychain-backed key — used by `clearAll()` and the
+    /// migration sweep. Order is informational only; the helpers
+    /// just need a stable list to iterate.
+    private static let keychainKeys: [String] = [
+        Keys.userId,
+        Keys.sessionId,
+        Keys.email,
+        Keys.phone,
+        Keys.sessionToken,
+        Keys.name,
+        Keys.accessToken,
+        Keys.countryName,
+        Keys.deviceId,
+        Keys.profileImage,
+        Keys.dob
+    ]
 
-    static func storeName(_ value: String?)         { defaults.set(value, forKey: Keys.name) }
-    static func storeEmail(_ value: String?)        { defaults.set(value, forKey: Keys.email) }
-    static func storePhone(_ value: String?)        { defaults.set(value, forKey: Keys.phone) }
-    static func storeDoB(_ value: String?)          { defaults.set(value, forKey: Keys.dob) }
-    static func storeSessionToken(_ value: String?) { defaults.set(value, forKey: Keys.sessionToken) }
-    static func storeAccessToken(_ value: String?)  { defaults.set(value, forKey: Keys.accessToken) }
-    static func storeSessionId(_ value: String?)    { defaults.set(value, forKey: Keys.sessionId) }
-    static func storeUserId(_ value: String?)       { defaults.set(value, forKey: Keys.userId) }
-    static func storeCountryName(_ value: String?)  { defaults.set(value, forKey: Keys.countryName) }
-    static func storeDeviceId(_ value: String?)     { defaults.set(value, forKey: Keys.deviceId) }
-    static func storeProfileImage(_ value: String?) { defaults.set(value, forKey: Keys.profileImage) }
+    // MARK: - Keychain plumbing
+    //
+    // 1:1 with UIKit `UserDefaultsClass.saveToKeychain(_:forKey:)` —
+    //   • non-nil  → save (delete + add, matches UIKit)
+    //   • nil      → delete (matches UIKit)
+    //
+    // Empty strings are passed straight through (matches UIKit which
+    // stores `""` instead of treating empty as nil).
+    private static func writeKeychain(_ value: String?, forKey key: String) {
+        if let value {
+            keychain.save(value, forKey: key)
+        } else {
+            keychain.delete(forKey: key)
+        }
+    }
 
-    // MARK: - Get
+    /// Read a Keychain-backed key, with a one-shot UserDefaults
+    /// migration fallback so users who already logged in on the
+    /// pre-Keychain SwiftUI scaffold aren't silently kicked out.
+    ///
+    /// Order:
+    ///   1. Keychain hit → return.
+    ///   2. Keychain miss + UserDefaults hit → copy to Keychain,
+    ///      delete from UserDefaults, return the value.
+    ///   3. Both miss → return nil.
+    ///
+    /// Idempotent: once step 2 has run, step 1 always wins on every
+    /// subsequent read, so the migration cost is paid at most once
+    /// per key per device.
+    private static func readKeychain(forKey key: String) -> String? {
+        if let kc = keychain.get(forKey: key) {
+            return kc
+        }
+        // Migration fallback — strictly transitional.
+        if let legacy = defaults.string(forKey: key) {
+            keychain.save(legacy, forKey: key)
+            defaults.removeObject(forKey: key)
+            return legacy
+        }
+        return nil
+    }
 
-    static func getName() -> String?          { defaults.string(forKey: Keys.name) }
-    static func getEmail() -> String?         { defaults.string(forKey: Keys.email) }
-    static func getPhone() -> String?         { defaults.string(forKey: Keys.phone) }
-    static func getDoB() -> String?           { defaults.string(forKey: Keys.dob) }
-    static func getSessionToken() -> String?  { defaults.string(forKey: Keys.sessionToken) }
-    static func getAccessToken() -> String?   { defaults.string(forKey: Keys.accessToken) }
-    static func getSessionId() -> String?     { defaults.string(forKey: Keys.sessionId) }
-    static func getUserId() -> String?        { defaults.string(forKey: Keys.userId) }
-    static func getCountryName() -> String?   { defaults.string(forKey: Keys.countryName) }
-    static func getProfileImage() -> String?  { defaults.string(forKey: Keys.profileImage) }
+    // MARK: - Store (sensitive — Keychain-backed, mirrors UIKit
+    //          `BarsysApp/Controllers/Login/UserDefaultsClass.swift`
+    //          `store*` helpers L71-81 + `saveToKeychain` L56-62)
 
+    static func storeName(_ value: String?)         { writeKeychain(value, forKey: Keys.name) }
+    static func storeEmail(_ value: String?)        { writeKeychain(value, forKey: Keys.email) }
+    static func storePhone(_ value: String?)        { writeKeychain(value, forKey: Keys.phone) }
+    static func storeDoB(_ value: String?)          { writeKeychain(value, forKey: Keys.dob) }
+    static func storeSessionToken(_ value: String?) { writeKeychain(value, forKey: Keys.sessionToken) }
+    static func storeAccessToken(_ value: String?)  { writeKeychain(value, forKey: Keys.accessToken) }
+    static func storeSessionId(_ value: String?)    { writeKeychain(value, forKey: Keys.sessionId) }
+    static func storeUserId(_ value: String?)       { writeKeychain(value, forKey: Keys.userId) }
+    static func storeCountryName(_ value: String?)  { writeKeychain(value, forKey: Keys.countryName) }
+    static func storeDeviceId(_ value: String?)     { writeKeychain(value, forKey: Keys.deviceId) }
+    static func storeProfileImage(_ value: String?) { writeKeychain(value, forKey: Keys.profileImage) }
+
+    // MARK: - Get (sensitive — Keychain reads with UserDefaults
+    //          migration fallback; matches UIKit `keychain.get(forKey:)`
+    //          getter pattern L144-189)
+
+    static func getName() -> String?          { readKeychain(forKey: Keys.name) }
+    static func getEmail() -> String?         { readKeychain(forKey: Keys.email) }
+    static func getPhone() -> String?         { readKeychain(forKey: Keys.phone) }
+    static func getDoB() -> String?           { readKeychain(forKey: Keys.dob) }
+    static func getSessionToken() -> String?  { readKeychain(forKey: Keys.sessionToken) }
+    static func getAccessToken() -> String?   { readKeychain(forKey: Keys.accessToken) }
+    static func getSessionId() -> String?     { readKeychain(forKey: Keys.sessionId) }
+    static func getUserId() -> String?        { readKeychain(forKey: Keys.userId) }
+    static func getCountryName() -> String?   { readKeychain(forKey: Keys.countryName) }
+    static func getProfileImage() -> String?  { readKeychain(forKey: Keys.profileImage) }
+
+    /// 1:1 with UIKit `UserDefaultsClass.getDeviceID()` (L151-158) —
+    /// returns the existing Keychain-backed `deviceId` if present,
+    /// otherwise mints a fresh UUID, stores it in the Keychain, and
+    /// returns the new value. The non-optional return matches the
+    /// previous SwiftUI signature so existing call-sites don't have
+    /// to handle nil.
     static func getDeviceID() -> String {
-        if let existing = defaults.string(forKey: Keys.deviceId), !existing.isEmpty {
+        if let existing = readKeychain(forKey: Keys.deviceId), !existing.isEmpty {
             return existing
         }
         let new = UUID().uuidString
@@ -192,15 +273,113 @@ enum UserDefaultsClass {
         defaults.bool(forKey: Keys.barsys360ConnectedNotFirstTime)
     }
 
+    // MARK: - First-time device popup flag (1:1 UIKit
+    //          `saveisFirstTimeShownDevicePopUp`/`getisFirstTimeShownDevicePopUp`)
+
+    static func saveisFirstTimeShownDevicePopUp(_ value: Bool?) {
+        defaults.set(value, forKey: Keys.isFirstTimeShownDevicePopUp)
+    }
+    static func getisFirstTimeShownDevicePopUp() -> Bool {
+        defaults.bool(forKey: Keys.isFirstTimeShownDevicePopUp)
+    }
+
+    // MARK: - Cache + sync timestamps (1:1 UIKit `save*` / `get*`
+    //          for mixlist / favourites / recipe / rating timestamps)
+
+    static func saveUpdatedDataTimeStampForMixlistData(_ timeStamp: Int?) {
+        defaults.set(timeStamp, forKey: Keys.updatedDataTimeStampForMixlistData)
+    }
+    static func getUpdatedDataTimeStampForMixlistData() -> Int? {
+        defaults.integer(forKey: Keys.updatedDataTimeStampForMixlistData)
+    }
+
+    static func saveUpdatedDataTimeStampForFavourites(_ timeStamp: Int?) {
+        defaults.set(timeStamp, forKey: Keys.updatedDataTimeStampForFavourites)
+    }
+    static func getUpdatedDataTimeStampForFavourites() -> Int? {
+        defaults.integer(forKey: Keys.updatedDataTimeStampForFavourites)
+    }
+
+    static func saveCoreDataMixlistCount(_ count: Int) {
+        defaults.set(count, forKey: Keys.coreDataMixlistCount)
+    }
+    static func getCoreDataMixlistCount() -> Int {
+        defaults.integer(forKey: Keys.coreDataMixlistCount)
+    }
+
+    static func saveUpdatedDataTimeStampForCacheRecipes(_ timeStamp: Int?) {
+        defaults.set(timeStamp, forKey: Keys.updatedDataTimeStampForCacheRecipeData)
+    }
+    static func getUpdatedDataTimeStampForCacheRecipeData() -> Int? {
+        defaults.integer(forKey: Keys.updatedDataTimeStampForCacheRecipeData)
+    }
+
+    static func saveLastRatingViewShownTimeInterval(_ timeStamp: Int?) {
+        defaults.set(timeStamp, forKey: Keys.lastRatingViewShownTimeInterval)
+    }
+    static func getLastRatingViewShownTimeInterval() -> Int? {
+        defaults.integer(forKey: Keys.lastRatingViewShownTimeInterval)
+    }
+
+    // MARK: - Analytics consent (1:1 UIKit
+    //          `saveAnalyticsConsentGranted` / `getAnalyticsConsentGranted` /
+    //          `removeAnalyticsConsentGranted` and the prompt-shown twin)
+    //
+    // The keys here (camelCase: `analyticsConsentGranted` /
+    // `analyticsConsentPromptShown`) match UIKit BYTE-FOR-BYTE so a
+    // user who already accepted on UIKit doesn't see the prompt again
+    // after upgrading to SwiftUI. The SwiftUI scaffold previously
+    // stored these under snake_case keys (`analytics_consent_granted`
+    // / `analytics_consent_prompt_shown`) — `AnalyticsConsentManager`
+    // migrates from those legacy keys on first read.
+
+    static func saveAnalyticsConsentGranted(_ granted: Bool?) {
+        defaults.set(granted, forKey: Keys.analyticsConsentGranted)
+    }
+    static func getAnalyticsConsentGranted() -> Bool {
+        defaults.bool(forKey: Keys.analyticsConsentGranted)
+    }
+    static func removeAnalyticsConsentGranted() {
+        defaults.removeObject(forKey: Keys.analyticsConsentGranted)
+        defaults.synchronize()
+    }
+
+    static func saveAnalyticsConsentPromptShown(_ shown: Bool?) {
+        defaults.set(shown, forKey: Keys.analyticsConsentPromptShown)
+    }
+    static func getAnalyticsConsentPromptShown() -> Bool {
+        defaults.bool(forKey: Keys.analyticsConsentPromptShown)
+    }
+    static func removeAnalyticsConsentPromptShown() {
+        defaults.removeObject(forKey: Keys.analyticsConsentPromptShown)
+        defaults.synchronize()
+    }
+
     // MARK: - Clear (logout)
 
     /// Ports `UserDefaultsClass.clearAll()` — wipes every key this class
-    /// writes to, exactly matching the UIKit version.
+    /// writes to, exactly matching the UIKit version
+    /// (BarsysApp/Controllers/Login/UserDefaultsClass.swift L272-298):
+    /// Keychain entries first, then non-sensitive UserDefaults entries,
+    /// then `synchronize()`. The Keychain wipe also clears any legacy
+    /// UserDefaults copies that the migration fallback may not have
+    /// touched yet for keys the user never read post-upgrade.
     static func clearAll() {
-        let keys: [String] = [
-            Keys.email, Keys.phone, Keys.sessionToken, Keys.name,
-            Keys.accessToken, Keys.sessionId, Keys.userId, Keys.countryName,
-            Keys.deviceId, Keys.profileImage, Keys.dob,
+        // Keychain (sensitive) — matches UIKit `keychain.delete(forKey:)`
+        // calls L276-286.
+        keychain.deleteAll(forKeys: keychainKeys)
+
+        // Belt-and-braces: also remove any pre-migration UserDefaults
+        // copies of the sensitive keys. If the migration fallback has
+        // already moved them, this is a no-op; if the user is on the
+        // very first launch of the Keychain build and never read a
+        // sensitive key (so migration didn't run for that key), the
+        // legacy UserDefaults entry would otherwise survive logout —
+        // this loop guarantees full cleanup either way.
+        for key in keychainKeys { defaults.removeObject(forKey: key) }
+
+        // Non-sensitive UserDefaults — matches UIKit `clearAll()` L289-296.
+        let userDefaultsKeys: [String] = [
             Keys.isFirstTimeShownDevicePopUp,
             Keys.updatedDataTimeStampForFavourites,
             Keys.updatedDataTimeStampForMixlistData,
@@ -226,7 +405,7 @@ enum UserDefaultsClass {
             Keys.storageMixlistsCache,
             Keys.storageFavoritesCache
         ]
-        for key in keys { defaults.removeObject(forKey: key) }
+        for key in userDefaultsKeys { defaults.removeObject(forKey: key) }
         defaults.synchronize()
 
         // The catalog cache moved from UserDefaults to JSON files in

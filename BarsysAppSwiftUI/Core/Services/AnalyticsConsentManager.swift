@@ -25,10 +25,33 @@ import UIKit
 
 enum AnalyticsConsentManager {
 
-    // MARK: - UserDefaults keys (must match UIKit `UserDefaultsClass`)
+    // MARK: - Legacy snake_case keys (used by the SwiftUI scaffold
+    //          before the UIKit-parity fix). Read once on the first
+    //          access of either flag; the value is migrated to the
+    //          UIKit-matching camelCase key in `UserDefaultsClass`
+    //          and then this snake_case copy is deleted. After
+    //          migration these are never read again.
+    private static let legacyConsentGrantedKey = "analytics_consent_granted"
+    private static let legacyPromptShownKey    = "analytics_consent_prompt_shown"
 
-    private static let consentGrantedKey = "analytics_consent_granted"
-    private static let promptShownKey = "analytics_consent_prompt_shown"
+    /// One-shot legacy → UIKit-key migration. Idempotent: once the
+    /// snake_case copies are absent (every device after the first
+    /// post-upgrade launch) this is a pure no-op.
+    private static func migrateLegacyConsentKeysIfNeeded() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: legacyConsentGrantedKey) != nil {
+            UserDefaultsClass.saveAnalyticsConsentGranted(
+                defaults.bool(forKey: legacyConsentGrantedKey)
+            )
+            defaults.removeObject(forKey: legacyConsentGrantedKey)
+        }
+        if defaults.object(forKey: legacyPromptShownKey) != nil {
+            UserDefaultsClass.saveAnalyticsConsentPromptShown(
+                defaults.bool(forKey: legacyPromptShownKey)
+            )
+            defaults.removeObject(forKey: legacyPromptShownKey)
+        }
+    }
 
     // MARK: - Public API
 
@@ -36,14 +59,25 @@ enum AnalyticsConsentManager {
     /// when the prompt was never shown OR the user denied — matching
     /// UIKit's two-step gate (you must have BOTH shown the prompt AND
     /// gotten an Allow tap to count as granted).
+    ///
+    /// 1:1 with UIKit `AnalyticsConsentManager.isConsentGranted`
+    /// (BarsysApp/Helpers/TrackEventsClass/AnalyticsConsentManager.swift L19-24)
+    /// — same `hasPromptBeenShown && consentGranted` shape, same
+    /// underlying `UserDefaults` keys (`analyticsConsentPromptShown` /
+    /// `analyticsConsentGranted` in camelCase) so cross-build
+    /// compatibility is preserved.
     static var isConsentGranted: Bool {
-        guard hasPromptBeenShown else { return false }
-        return UserDefaults.standard.bool(forKey: consentGrantedKey)
+        migrateLegacyConsentKeysIfNeeded()
+        guard UserDefaultsClass.getAnalyticsConsentPromptShown() else {
+            return false
+        }
+        return UserDefaultsClass.getAnalyticsConsentGranted()
     }
 
     /// Whether the consent prompt has been shown at least once.
     static var hasPromptBeenShown: Bool {
-        UserDefaults.standard.bool(forKey: promptShownKey)
+        migrateLegacyConsentKeysIfNeeded()
+        return UserDefaultsClass.getAnalyticsConsentPromptShown()
     }
 
     /// Whether ATT (App Tracking Transparency) is authorized. Returns
@@ -68,16 +102,33 @@ enum AnalyticsConsentManager {
 
     /// Update consent (e.g., from a Settings toggle, a custom prompt,
     /// or after the user accepted/declined the system ATT alert).
+    ///
+    /// 1:1 with UIKit `AnalyticsConsentManager.setConsent(_:)`
+    /// (BarsysApp/Helpers/TrackEventsClass/AnalyticsConsentManager.swift L63-66):
+    /// always sets `promptShown = true` so the prompt is treated as
+    /// "answered" regardless of the answer — denial decisions stick
+    /// across launches and the user is not re-prompted.
     static func setConsent(_ granted: Bool) {
-        UserDefaults.standard.set(granted, forKey: consentGrantedKey)
-        UserDefaults.standard.set(true, forKey: promptShownKey)
+        // Migrate legacy keys before writing — guarantees the new
+        // value lands in the UIKit-matching slot even if the user
+        // happens to call this in the same launch they're upgrading.
+        migrateLegacyConsentKeysIfNeeded()
+        UserDefaultsClass.saveAnalyticsConsentGranted(granted)
+        UserDefaultsClass.saveAnalyticsConsentPromptShown(true)
     }
 
     /// Reset both flags — call on logout / account deletion so the
-    /// next user is prompted afresh. Matches UIKit `resetConsent()`.
+    /// next user is prompted afresh. Matches UIKit `resetConsent()`
+    /// (BarsysApp/Helpers/TrackEventsClass/AnalyticsConsentManager.swift L57-60).
     static func resetConsent() {
-        UserDefaults.standard.removeObject(forKey: consentGrantedKey)
-        UserDefaults.standard.removeObject(forKey: promptShownKey)
+        UserDefaultsClass.removeAnalyticsConsentGranted()
+        UserDefaultsClass.removeAnalyticsConsentPromptShown()
+        // Belt-and-braces: also wipe any pre-migration snake_case
+        // copies so a stale legacy bool can't survive the reset and
+        // resurface on next launch via the migration helper.
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: legacyConsentGrantedKey)
+        defaults.removeObject(forKey: legacyPromptShownKey)
     }
 
     /// Trigger the iOS 14+ ATT system prompt. Call after the user

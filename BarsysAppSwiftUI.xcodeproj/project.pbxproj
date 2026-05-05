@@ -38,6 +38,7 @@
 		B449820D412CC96425675749 /* SF-Pro-Display-Black.otf in Resources */ = {isa = PBXBuildFile; fileRef = 00AE3A5BB15AF2FBE25F382A /* SF-Pro-Display-Black.otf */; };
 		B55F2C38FA2A88D8CD9761ED /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28D2AFB82D96A543290BEEEC /* AppEnvironment.swift */; };
 		BA2EBB5E4DA8C7B1E7F3F1B1 /* BrazeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2EBB5E4DA8C7B1E7F3F1B2 /* BrazeService.swift */; };
+		ABCDEF11AABBCCDDEEFF1122 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF22AABBCCDDEEFF1122 /* KeychainHelper.swift */; };
 		BDBB43E313C04B8BA035B2CE /* AuthFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A44A6E7932297B5A7B213C3C /* AuthFlowView.swift */; };
 		C25F07BCF5C096493F68196E /* SFPRODISPLAYREGULAR.OTF in Resources */ = {isa = PBXBuildFile; fileRef = 701415630F85152526ED6830 /* SFPRODISPLAYREGULAR.OTF */; };
 		C4B50937F0DB7D1AE2858866 /* SocketCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36289E47075AC22B19ED3F3C /* SocketCommands.swift */; };
@@ -101,6 +102,7 @@
 		B578286B9A7F4550D4B6AD65 /* PreferencesScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesScreens.swift; sourceTree = "<group>"; };
 		BA1779BB60E125FE19ED8397 /* UserDefaultsClass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsClass.swift; sourceTree = "<group>"; };
 		BA2EBB5E4DA8C7B1E7F3F1B2 /* BrazeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrazeService.swift; sourceTree = "<group>"; };
+		ABCDEF22AABBCCDDEEFF1122 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		BEE68851FD3214674E6599EE /* SF-Pro-Display-Semibold.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SF-Pro-Display-Semibold.otf"; sourceTree = "<group>"; };
 		C24CCEA7919EF8F37B79E299 /* MyBarScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyBarScreens.swift; sourceTree = "<group>"; };
 		CCDD315E11422E6F842CADFF /* TutorialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialView.swift; sourceTree = "<group>"; };
@@ -287,6 +289,7 @@
 			children = (
 				AC0A1B2C3D4E5F6071828391 /* AnalyticsConsentManager.swift */,
 				BA2EBB5E4DA8C7B1E7F3F1B2 /* BrazeService.swift */,
+				ABCDEF22AABBCCDDEEFF1122 /* KeychainHelper.swift */,
 				0150F73E373B9D456171F2A2 /* LocalCache.swift */,
 				257D53D3E6EADE3B597AC1AD /* OryAPIClient.swift */,
 				291A901391A852222CC64F10 /* Services.swift */,
@@ -453,6 +456,7 @@
 				D97FC15AC7D31879AF295EB0 /* Services.swift in Sources */,
 				5E5310E5105E55105E55105A /* SessionExpirationHandler.swift in Sources */,
 				BA2EBB5E4DA8C7B1E7F3F1B1 /* BrazeService.swift in Sources */,
+				ABCDEF11AABBCCDDEEFF1122 /* KeychainHelper.swift in Sources */,
 				AC0A1B2C3D4E5F6071828392 /* AnalyticsConsentManager.swift in Sources */,
 				AA11BB22CC33DD44EE551001 /* SpeakeasySocketManager.swift in Sources */,
 				E256DC185A6D94C9A288086A /* UserDefaultsClass.swift in Sources */,
