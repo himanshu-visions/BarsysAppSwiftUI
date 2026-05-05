@@ -509,7 +509,34 @@ struct ExploreRecipesView: View {
                     .padding(.top, 15)
 
                 // Recipe list
-                if filtered.isEmpty {
+                //
+                // Loading-state ordering: when the catalog is fetching
+                // for the first time (`isLoading && recipes.isEmpty`)
+                // we render a shimmer skeleton mirroring the actual
+                // cell layout — UIKit parity with
+                // `ExploreRecipesViewController.showAnimatedGradientSkeleton()`.
+                // The previous SwiftUI port wrapped a `ProgressView`
+                // inside the `else` of `filtered.isEmpty`, which was
+                // dead code: while loading, `filtered` is also empty,
+                // so the user always saw "No results to display"
+                // instead of any loading indicator. Skeletons take
+                // priority over the empty-state copy now.
+                let cellWidth = UIScreen.main.bounds.width - 48
+                let rowHeight = cellWidth / 2
+
+                if catalog.isLoading && catalog.recipes.isEmpty {
+                    if UIDevice.current.userInterfaceIdiom == .pad {
+                        RecipeGridSkeleton()
+                            .padding(.horizontal, 24)
+                            .padding(.top, 15)
+                            .padding(.bottom, exploreRecipesBottomInset)
+                    } else {
+                        RecipeRowSkeleton(cellHeight: rowHeight)
+                            .padding(.horizontal, 24)
+                            .padding(.top, 15)
+                            .padding(.bottom, exploreRecipesBottomInset)
+                    }
+                } else if filtered.isEmpty {
                     // Loading / empty state preserves the original
                     // centred-in-viewport appearance via Spacer +
                     // content + Spacer inside a viewport-sized
@@ -527,15 +554,6 @@ struct ExploreRecipesView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: UIScreen.main.bounds.height - 200)
                 } else {
-                    if catalog.isLoading && catalog.recipes.isEmpty {
-                        ProgressView("Loading recipes...")
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 40)
-                    }
-                    // Same deterministic geometry as Cocktail Kits so all
-                    // listings feel identical and never re-measure on scroll.
-                    let cellWidth = UIScreen.main.bounds.width - 48
-                    let rowHeight = cellWidth / 2
                     let toggleHandler: (Recipe) -> Void = { recipe in
                         let willBeFav = !env.storage.favorites().contains(recipe.id)
                         catalog.toggleFavourite(recipeId: recipe.id)
@@ -979,6 +997,116 @@ struct RecipeRowCell: View {
             Image("myDrink")
                 .resizable().aspectRatio(contentMode: .fit)
                 .padding(16)
+        }
+    }
+}
+
+// MARK: - Recipe skeleton placeholders
+//
+// 1:1 with UIKit `ExploreRecipesViewController.showAnimatedGradientSkeleton()`
+// (SkeletonView library) — UIKit registered the table cells for
+// skeleton tracking and called `showAnimatedGradientSkeleton()` while
+// the network fetch was in flight, then `hideSkeleton()` on success.
+// SwiftUI port mirrors the same semantics: render placeholder cells
+// that match the real cell frame (so the layout doesn't jump on
+// hand-off). Reuses `SkeletonBlock` + `ShimmerModifier` from
+// `MixlistsScreens.swift` / `BarBotScreens.swift` for visual consistency.
+
+/// Horizontal-row skeleton — mirrors `RecipeRowCell`. Includes a
+/// favourite-circle placeholder at the top-right of the image area to
+/// match the real row's heart-icon hit target.
+struct RecipeRowSkeleton: View {
+    let cellHeight: CGFloat
+    var body: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(0..<6, id: \.self) { _ in
+                ZStack(alignment: .topTrailing) {
+                    HStack(spacing: 0) {
+                        // Left half — title + ingredient lines.
+                        VStack(alignment: .leading, spacing: 12) {
+                            SkeletonBlock().frame(width: 160, height: 16)
+                            SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 10)
+                            SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 10)
+                            SkeletonBlock().frame(width: 110, height: 10)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                        // Right half — square image placeholder.
+                        SkeletonBlock(cornerRadius: 0)
+                            .frame(width: cellHeight, height: cellHeight)
+                    }
+                    .frame(height: cellHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(.regularMaterial.opacity(0.7))
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    // Favourite circle placeholder — top-right corner
+                    // of the image area, matches `RecipeRowCell`'s
+                    // 30/40/60pt hit target across iPhone / iPad.
+                    Circle()
+                        .fill(Color("softDividerColor").opacity(0.6))
+                        .frame(width: 28, height: 28)
+                        .modifier(ShimmerModifier())
+                        .padding(.top, 10)
+                        .padding(.trailing, 10)
+                }
+                .padding(.bottom, 12)
+            }
+        }
+    }
+}
+
+/// iPad 2-column grid skeleton — mirrors `RecipeGridCell` (square
+/// image on top, title + ingredients band, favourite circle).
+struct RecipeGridSkeleton: View {
+    var body: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 16),
+                GridItem(.flexible(), spacing: 16)
+            ],
+            spacing: 16
+        ) {
+            ForEach(0..<6, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 0) {
+                    ZStack(alignment: .topTrailing) {
+                        SkeletonBlock(cornerRadius: 0)
+                            .aspectRatio(1, contentMode: .fit)
+
+                        Circle()
+                            .fill(Color("softDividerColor").opacity(0.6))
+                            .frame(width: 36, height: 36)
+                            .modifier(ShimmerModifier())
+                            .padding(.top, 12)
+                            .padding(.trailing, 12)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 18)
+                        SkeletonBlock().frame(width: 130, height: 18)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
+                    VStack(alignment: .leading, spacing: 8) {
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 12)
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 12)
+                        SkeletonBlock().frame(width: 90, height: 12)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.regularMaterial.opacity(0.7))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
         }
     }
 }

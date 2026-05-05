@@ -126,7 +126,31 @@ struct MixlistListView: View {
                     .padding(.top, 15)
 
                 // Mixlist list
-                if filtered.isEmpty {
+                //
+                // Loading-state ordering: when the catalog is fetching
+                // for the first time (`isLoading && mixlists.isEmpty`)
+                // we render a shimmer skeleton mirroring the actual
+                // cell layout — UIKit parity with
+                // `MixlistViewController.showAnimatedGradientSkeleton()`.
+                // The previous SwiftUI port wrapped a `ProgressView`
+                // inside the `else` of `filtered.isEmpty`, which was
+                // dead code: while loading, `filtered` is also empty,
+                // so the user always saw "No results to display"
+                // instead of any loading indicator. Skeletons take
+                // priority over the empty-state copy now.
+                if catalog.isLoading && catalog.mixlists.isEmpty {
+                    if UIDevice.current.userInterfaceIdiom == .pad {
+                        MixlistGridSkeleton()
+                            .padding(.horizontal, 24)
+                            .padding(.top, 15)
+                            .padding(.bottom, mixlistListBottomInset)
+                    } else {
+                        MixlistRowSkeleton(cellHeight: rowHeight)
+                            .padding(.horizontal, 24)
+                            .padding(.top, 15)
+                            .padding(.bottom, mixlistListBottomInset)
+                    }
+                } else if filtered.isEmpty {
                     Text("No results to display")
                         .font(.system(size: 16))
                         .foregroundStyle(Color("mediumGrayColor"))
@@ -134,11 +158,6 @@ struct MixlistListView: View {
                         .padding(.top, 80)
                         .padding(.bottom, mixlistListBottomInset)
                 } else {
-                    if catalog.isLoading && catalog.mixlists.isEmpty {
-                        ProgressView("Loading cocktail kits...")
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 40)
-                    }
                     if UIDevice.current.userInterfaceIdiom == .pad {
                         // iPad: 2-column LazyVGrid of vertical mixlist
                         // cards. Cocktail Kits doesn't have favourite
@@ -492,6 +511,111 @@ struct MixlistGridCell: View {
                 .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+// MARK: - Mixlist skeleton placeholders
+//
+// 1:1 with UIKit `MixlistViewController.showAnimatedGradientSkeleton()`
+// (SkeletonView library) — UIKit registered the table cells for
+// skeleton tracking and called `showAnimatedGradientSkeleton()` while
+// the network fetch was in flight, then `hideSkeleton()` on success.
+// SwiftUI port mirrors the same semantics: render placeholder cells
+// that match the real cell frame (so the layout doesn't jump on
+// hand-off) with the shared `ShimmerModifier` from `BarBotScreens` for
+// the moving highlight.
+
+/// Shimmer-able rounded block — reused across every skeleton variant
+/// so the placeholder rectangles look consistent across screens.
+struct SkeletonBlock: View {
+    var cornerRadius: CGFloat = 8
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color("softDividerColor").opacity(0.6))
+            .modifier(ShimmerModifier())
+    }
+}
+
+/// Horizontal-row skeleton — mirrors `MixlistRowCell` (and the iPad
+/// `else` path on Cocktail Kits' iPhone branch). 6 placeholder rows so
+/// the user sees a populated viewport rather than a single spinner.
+struct MixlistRowSkeleton: View {
+    let cellHeight: CGFloat
+    var body: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(0..<6, id: \.self) { _ in
+                HStack(spacing: 0) {
+                    // Left half — title bar + ingredient lines.
+                    VStack(alignment: .leading, spacing: 12) {
+                        SkeletonBlock().frame(width: 140, height: 16)
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 10)
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 10)
+                        SkeletonBlock().frame(width: 90, height: 10)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 16)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                    // Right half — square image placeholder, full
+                    // `cellHeight × cellHeight` so the skeleton row is
+                    // bit-identical in dimensions to the real one.
+                    SkeletonBlock(cornerRadius: 0)
+                        .frame(width: cellHeight, height: cellHeight)
+                }
+                .frame(height: cellHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.regularMaterial.opacity(0.7))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.bottom, 12)
+            }
+        }
+    }
+}
+
+/// iPad 2-column grid skeleton — mirrors `MixlistGridCell`. 6
+/// placeholder cards (3 rows × 2 columns) feels like a populated
+/// grid instead of empty space.
+struct MixlistGridSkeleton: View {
+    var body: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 16),
+                GridItem(.flexible(), spacing: 16)
+            ],
+            spacing: 16
+        ) {
+            ForEach(0..<6, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 0) {
+                    // Square image area (matches `MixlistGridCell`'s
+                    // GeometryReader 1:1 aspect).
+                    SkeletonBlock(cornerRadius: 0)
+                        .aspectRatio(1, contentMode: .fit)
+                    // Title (56pt band) + ingredients (60pt band).
+                    VStack(alignment: .leading, spacing: 10) {
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 18)
+                        SkeletonBlock().frame(width: 120, height: 18)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
+                    VStack(alignment: .leading, spacing: 8) {
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 12)
+                        SkeletonBlock().frame(maxWidth: .infinity, maxHeight: 12)
+                        SkeletonBlock().frame(width: 80, height: 12)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.regularMaterial.opacity(0.7))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+        }
     }
 }
 
@@ -974,7 +1098,16 @@ struct MixlistDetailView: View {
                     MixlistDetailRecipeGridCell(
                         recipe: recipe,
                         isFavourite: recipe.isFavourite ?? false,
-                        onOpen: { router.push(.recipeDetail(recipe.id)) },
+                        onOpen: {
+                            // 1:1 with UIKit `MixlistDetailViewController.didSelectRowAt`
+                            // light-tap before pushing the recipe page —
+                            // every other row tap in the app fires
+                            // `HapticService.light()` here so the recipe
+                            // page push feels consistent with Explore /
+                            // Favorites / Ready-to-Pour.
+                            HapticService.light()
+                            router.push(.recipeDetail(recipe.id))
+                        },
                         onCraft: { craft(recipe) },
                         onFavorite: { toggleFav(recipe) }
                     )
@@ -996,7 +1129,16 @@ struct MixlistDetailView: View {
                         recipe: recipe,
                         isFavourite: recipe.isFavourite ?? false,
                         cellHeight: rowHeight,
-                        onOpen: { router.push(.recipeDetail(recipe.id)) },
+                        onOpen: {
+                            // 1:1 with UIKit `MixlistDetailViewController.didSelectRowAt`
+                            // light-tap before pushing the recipe page —
+                            // every other row tap in the app fires
+                            // `HapticService.light()` here so the recipe
+                            // page push feels consistent with Explore /
+                            // Favorites / Ready-to-Pour.
+                            HapticService.light()
+                            router.push(.recipeDetail(recipe.id))
+                        },
                         onCraft: { craft(recipe) },
                         onFavorite: { toggleFav(recipe) }
                     )
