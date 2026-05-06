@@ -259,6 +259,16 @@ struct BarsysSearchBar: View {
     @Binding var query: String
     var placeholder: String = "Search"
     var onSubmit: (() -> Void)? = nil
+    /// When `true` (the default) the field attaches the standard
+    /// Cancel / Done keyboard accessory bar — 1:1 with UIKit's
+    /// `addDoneCancelToolbar(onDone:onCancel:)` applied to
+    /// `txtSearch` on the Mixlists / Cocktail Kits / Explore Recipes
+    /// screens (User.storyboard outlet `txtSearch` →
+    /// MixlistViewController L98, ExploreRecipesViewController L98).
+    /// Cancel clears the query AND dismisses; Done just dismisses.
+    /// Set to `false` for hosts that already provide their own
+    /// keyboard accessory — would otherwise double-stack.
+    var attachKeyboardToolbar: Bool = true
 
     @FocusState private var isFocused: Bool
 
@@ -352,6 +362,45 @@ struct BarsysSearchBar: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color("barbotBorderColor"), lineWidth: 1)
         )
+        // 1:1 with UIKit `addDoneCancelToolbar(onDone:onCancel:)`
+        // attached to `txtSearch` on Mixlists / Cocktail Kits /
+        // Explore Recipes. The previous SwiftUI port left the search
+        // field with no inputAccessoryView, so a tapped search field
+        // had no on-keyboard way back out — the user reported the
+        // "tool bar for done and cancel button is missing".
+        //
+        // Behaviour:
+        //   • Cancel → clears `query` AND dismisses the keyboard
+        //     (UIKit `searchAndCloseButton`'s "tap when filled →
+        //     clear and resign" pattern).
+        //   • Done   → dismisses the keyboard, keeps the typed text
+        //     in place so the filtered list stays scoped.
+        //
+        // The `keyboardDoneCancelToolbar` modifier itself attaches
+        // the toolbar via `.toolbar(ToolbarItemGroup(placement:
+        // .keyboard))` so the bar only renders while a TextField in
+        // this hierarchy holds focus — no leakage into other fields
+        // on the same screen.
+        .if(attachKeyboardToolbar) { content in
+            content.keyboardDoneCancelToolbar(
+                onDone: { /* keyboard already dismissed by modifier */ },
+                onCancel: { query = "" }
+            )
+        }
+    }
+}
+
+// MARK: - Conditional view modifier
+//
+// Tiny helper used by `BarsysSearchBar` to opt-in / opt-out of the
+// keyboard accessory toolbar without forking the body. Inlined here
+// rather than promoted to a public extension because the rest of the
+// codebase prefers explicit `if` ladders inside view bodies.
+fileprivate extension View {
+    @ViewBuilder
+    func `if`<Transform: View>(_ condition: Bool,
+                               transform: (Self) -> Transform) -> some View {
+        if condition { transform(self) } else { self }
     }
 }
 

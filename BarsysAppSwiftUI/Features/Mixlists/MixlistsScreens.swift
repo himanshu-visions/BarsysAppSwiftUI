@@ -151,12 +151,20 @@ struct MixlistListView: View {
                             .padding(.bottom, mixlistListBottomInset)
                     }
                 } else if filtered.isEmpty {
-                    Text("No results to display")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Color("mediumGrayColor"))
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 80)
-                        .padding(.bottom, mixlistListBottomInset)
+                    // Empty-state placeholder. The actual "No results
+                    // to display" label is rendered in a `.overlay`
+                    // on the outer ScrollView so it can centre to the
+                    // ENTIRE viewport (1:1 with the UIKit storyboard's
+                    // `lblNoDataFound` whose `centerX` + `centerY`
+                    // anchors target the screen-sized parent view
+                    // `tHT-Xs-fi8`, NOT the search-bar VStack).
+                    // Mixlist.storyboard ids:
+                    //   GHK-w1-xBP.centerX → tHT-Xs-fi8.centerX
+                    //   GHK-w1-xBP.centerY → tHT-Xs-fi8.centerY
+                    // The previous `padding(.top, 80)` glued the label
+                    // 80pt below the search bar — visibly off-centre
+                    // on every screen size.
+                    Color.clear.frame(height: 1)
                 } else {
                     if UIDevice.current.userInterfaceIdiom == .pad {
                         // iPad: 2-column LazyVGrid of vertical mixlist
@@ -204,6 +212,25 @@ struct MixlistListView: View {
         }
         .refreshable {
             await catalog.refresh()
+        }
+        // 1:1 with UIKit `lblNoDataFound` (Mixlist.storyboard
+        // GHK-w1-xBP) whose `centerX` + `centerY` anchors target the
+        // entire screen-sized parent view (`tHT-Xs-fi8`). Rendering
+        // the label as a ScrollView overlay matches that "centred in
+        // the whole viewport" behaviour on every device size — the
+        // previous `padding(.top, 80)` visually glued the text just
+        // below the search bar instead. `allowsHitTesting(false)`
+        // keeps pull-to-refresh and tap-through unaffected; the
+        // label is hidden while the skeleton is rendering.
+        .overlay(alignment: .center) {
+            if filtered.isEmpty && !(catalog.isLoading && catalog.mixlists.isEmpty) {
+                Text("No results to display")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Color("mediumGrayColor"))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .allowsHitTesting(false)
+            }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)

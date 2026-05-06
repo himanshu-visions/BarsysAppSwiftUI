@@ -537,22 +537,22 @@ struct ExploreRecipesView: View {
                             .padding(.bottom, exploreRecipesBottomInset)
                     }
                 } else if filtered.isEmpty {
-                    // Loading / empty state preserves the original
-                    // centred-in-viewport appearance via Spacer +
-                    // content + Spacer inside a viewport-sized
-                    // minHeight frame. Spacer collapses inside the
-                    // outer ScrollView, so the explicit minHeight
-                    // gives the wrapper a stable height to centre
-                    // the text within — visually identical to the
-                    // previous `.frame(maxHeight: .infinity)` layout.
-                    VStack {
-                        Spacer()
-                        Text("No results to display")
-                            .font(.system(size: 16))
-                            .foregroundStyle(Color("mediumGrayColor"))
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, minHeight: UIScreen.main.bounds.height - 200)
+                    // Empty-state placeholder. The actual "No results
+                    // to display" label is rendered in a `.overlay`
+                    // on the outer ScrollView (below) so it can
+                    // centre to the ENTIRE viewport — 1:1 with the
+                    // UIKit storyboard's `lblNoDataFound` whose
+                    // `centerX` + `centerY` anchors target the
+                    // screen-sized parent view `pTV-oh-f0k`, NOT the
+                    // search-bar VStack. Mixlist.storyboard ids:
+                    //   vkt-BB-aaN.centerX → pTV-oh-f0k.centerX
+                    //   vkt-BB-aaN.centerY → pTV-oh-f0k.centerY
+                    // The previous `minHeight: screen.height - 200`
+                    // hack approximated the centre but the fixed
+                    // `200` magic number drifted by device size /
+                    // safe-area shape. The overlay version is
+                    // viewport-exact on every device.
+                    Color.clear.frame(height: 1)
                 } else {
                     let toggleHandler: (Recipe) -> Void = { recipe in
                         let willBeFav = !env.storage.favorites().contains(recipe.id)
@@ -625,6 +625,26 @@ struct ExploreRecipesView: View {
         }
         .refreshable {
             await catalog.refresh()
+        }
+        // 1:1 with UIKit `lblNoDataFound` (Mixlist.storyboard
+        // vkt-BB-aaN) whose `centerX` + `centerY` anchors target the
+        // entire screen-sized parent view (`pTV-oh-f0k`). Rendering
+        // the label as a ScrollView overlay matches that "centred in
+        // the whole viewport" behaviour on every device size — the
+        // previous `minHeight: screen.height - 200` hack approximated
+        // the centre but was off by safe-area / device-size shifts.
+        // `allowsHitTesting(false)` keeps pull-to-refresh and
+        // tap-through unaffected; the label is suppressed while the
+        // skeleton is rendering on first load.
+        .overlay(alignment: .center) {
+            if filtered.isEmpty && !(catalog.isLoading && catalog.recipes.isEmpty) {
+                Text("No results to display")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Color("mediumGrayColor"))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .allowsHitTesting(false)
+            }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         // Ports ExploreRecipesViewController.viewDidLoad staleness check:
