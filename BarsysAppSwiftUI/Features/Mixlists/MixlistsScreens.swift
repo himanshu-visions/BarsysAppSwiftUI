@@ -756,9 +756,31 @@ struct MixlistDetailView: View {
     /// Light mode is untouched.
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var selectedTab: MixlistDetailTab = .recipes
     @State private var showMoreSheet: Bool = false
+
+    /// Layout selector for the recipes-tab listing.
+    /// iPad always renders the grid (2 columns). iPhone uses the
+    /// single-column row list in portrait and switches to a 3-column
+    /// grid in landscape (verticalSizeClass == .compact).
+    /// Portrait iPhone behaviour is unchanged.
+    private var useGridLayout: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return true }
+        return verticalSizeClass == .compact
+    }
+
+    /// Grid column count when `useGridLayout` is true.
+    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    private var gridColumnCount: Int {
+        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+    }
+
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 16),
+              count: gridColumnCount)
+    }
 
     /// Forces `recipes` to re-evaluate after a heart-toggle that goes
     /// through `env.storage.toggleFavorite(_:)`. `MockStorageService`
@@ -1177,19 +1199,14 @@ struct MixlistDetailView: View {
                 .foregroundStyle(Theme.Color.textSecondary)
                 .padding(.horizontal, 24)
                 .padding(.top, 24)
-        } else if UIDevice.current.userInterfaceIdiom == .pad {
-            // iPad: 2-column LazyVGrid of vertical recipe cards —
-            // mirrors the Explore Recipes / Favorites / Ready-to-Pour
-            // iPad grid pattern. Preserves favourite heart, Craft
-            // button, and tap-to-open navigation. iPhone keeps the
-            // existing horizontal `MixlistDetailRecipeRow` list below.
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 16),
-                    GridItem(.flexible(), spacing: 16)
-                ],
-                spacing: 16
-            ) {
+        } else if useGridLayout {
+            // LazyVGrid of vertical recipe cards — iPad: 2 columns;
+            // iPhone landscape: 3 columns. Mirrors the Explore Recipes
+            // / Favorites / Ready-to-Pour grid pattern. Preserves
+            // favourite heart, Craft button, and tap-to-open
+            // navigation. iPhone portrait keeps the existing
+            // horizontal `MixlistDetailRecipeRow` list below.
+            LazyVGrid(columns: gridColumns, spacing: 16) {
                 ForEach(recipes) { recipe in
                     MixlistDetailRecipeGridCell(
                         recipe: recipe,
