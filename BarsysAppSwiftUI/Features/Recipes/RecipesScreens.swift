@@ -3759,6 +3759,25 @@ struct EditRecipeView: View {
     @State private var showAddIngredientActionSheet = false
     @State private var ingredientImagePicker: EditRecipePickerPresentation?
     @State private var pickedIngredientImage: UIImage?
+
+    /// Vertical size class — drives the iPhone-landscape-only
+    /// scrollable-panel layout. SwiftUI reports `.compact` on iPhones
+    /// in landscape ONLY; every iPhone in portrait and every iPad in
+    /// any orientation reports `.regular`. So the predicate is the
+    /// tightest possible "iPhone landscape" scope without device-/
+    /// iOS-version special-casing.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// `true` only on iPhone in landscape — used to switch the bottom
+    /// panel from intrinsic-height (which works fine in portrait at
+    /// ~852pt screen) to a height-bounded ScrollView (so the
+    /// ~470-620pt panel content can be reached on the ~390pt
+    /// landscape canvas without being clipped behind the keyboard /
+    /// home indicator).
+    private var isIPhoneLandscape: Bool {
+        verticalSizeClass == .compact
+            && UIDevice.current.userInterfaceIdiom != .pad
+    }
     // Loader for `uploadIngredientImage` is now the shared
     // `env.loading` overlay (`LoadingOverlayModifier` in
     // DesignSystem/Components.swift) — that's the canonical SwiftUI
@@ -3830,8 +3849,18 @@ struct EditRecipeView: View {
             // Flex-fill the top region with `maxHeight: .infinity` so
             // the panel below naturally sizes to its content and pushes
             // up as the ingredient list grows — matching UIKit.
+            //
+            // In iPhone LANDSCAPE the top region collapses to a small
+            // 24pt strip (kept tap-dismissible so the user can still
+            // close by tapping outside the panel) so the panel below
+            // can claim the rest of the ~390pt landscape canvas
+            // and engage scrolling on its overflowing content. The
+            // dismiss-by-tap-outside affordance is preserved through
+            // the 24pt strip + the always-present cross button in
+            // the panel's `header`.
             Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity,
+                       maxHeight: isIPhoneLandscape ? 24 : .infinity)
                 .contentShape(Rectangle())
                 .onTapGesture { dismiss() }
 
@@ -3872,63 +3901,45 @@ struct EditRecipeView: View {
             // block together with the ingredients — breaking parity
             // with the UIKit design where only the ingredient table
             // scrolls.
-            VStack(spacing: 0) {
-
-                // -- STICKY TOP BLOCK ----------------------------------------
-                // Title + cross + name + image. Never scrolls.
-                VStack(alignment: .leading, spacing: 24) {
-                    header
-                    nameField
-                    imagePickerBlock
+            // Bottom panel — branches on orientation:
+            //
+            //   • Portrait / iPad: bit-identical to before — VStack
+            //     uses INTRINSIC content height so the panel sizes
+            //     to its contents and pushes up as the ingredients
+            //     list grows (1:1 with UIKit `mainView` storyboard
+            //     constraints `bottom = safeArea.bottom`,
+            //     `top >= safeArea.top + 100`).
+            //
+            //   • iPhone LANDSCAPE: panel content lives inside a
+            //     ScrollView so the user can scroll to reach the
+            //     bottom Save/Craft buttons. Without this, the
+            //     panel's intrinsic ~470-620pt of content
+            //     overflows the ~390pt landscape canvas and the
+            //     bottom buttons sit OFF-SCREEN under the home
+            //     indicator — the user-reported "edit recipe is
+            //     not working in landscape" symptom. The outer
+            //     `Color.clear.frame(maxHeight: .infinity)` tap
+            //     region above naturally compresses to 0pt under
+            //     this mode so the panel claims the full visible
+            //     height.
+            Group {
+                if isIPhoneLandscape {
+                    ScrollView(showsIndicators: false) {
+                        editPanelContent
+                    }
+                    // ScrollView with no explicit height bound here
+                    // would return its content size and overflow the
+                    // screen the same way the original VStack did.
+                    // `maxHeight: .infinity` makes the ScrollView
+                    // greedy so it claims all the space the parent
+                    // VStack hands it (= the full landscape
+                    // viewport minus the 0pt top tap region), giving
+                    // it a viewport SMALLER than its content and
+                    // engaging scroll.
+                    .frame(maxHeight: .infinity)
+                } else {
+                    editPanelContent
                 }
-                .padding(.top, 24)
-                // 15pt gap to the ingredients table — matches UIKit
-                // constraint `UOt-L3-Vxv: tblDrinks.top = rQQ-0k-gay.bottom + 15`.
-                .padding(.bottom, 15)
-
-                // -- SCROLLABLE INGREDIENTS LIST -----------------------------
-                // Only this section scrolls. Height clamped by
-                // `tableHeightForEditList` — 1:1 with UIKit
-                // `EditViewModel.tableHeightForContentSize` L312-320:
-                //   0          → 0    (empty, list collapses)
-                //   1…59pt     → 100  (stretched minimum)
-                //   60…150pt   → height (exact content height)
-                //   > 150pt    → 150  (cap, internal scroll kicks in)
-                // So the panel GROWS with the table up to the 150pt
-                // cap — this is what causes the panel to size to its
-                // contents (same as UIKit `mainView` with its
-                // `tblDrinksHeightConstraints` observer).
-                ingredientsList
-                    .frame(height: tableHeightForEditList)
-                    .padding(.horizontal, 24)
-
-                // -- Add Ingredient pill (fixed position) --------------------
-                // 5pt gap below table — UIKit
-                // `rKW-ci-7cL: A4B-bI-6Jh.top = tblDrinks.bottom + 5`.
-                if !shouldHideAddIngredientRow {
-                    addIngredientPill
-                        .padding(.horizontal, 24)
-                        .padding(.top, 5)
-                }
-
-                // Error message (hidden by default).
-                if let msg = errorMessage {
-                    Text(msg)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color("errorLabelColor"))
-                        .padding(.horizontal, 24)
-                        .padding(.top, 8)
-                }
-
-                // 20pt FIXED gap between `viewAddIngredients` and the
-                // Save/Craft stack — UIKit constraint
-                // `Fmu-lM-w5w: xzw-6X-XYP.top = A4B-bI-6Jh.bottom + 20`.
-                // (Not a flexible Spacer — UIKit uses an exact 20pt
-                // gap, and the panel sizes to content above/below.)
-                Color.clear.frame(height: 20)
-
-                // -- STICKY BOTTOM — Save + Craft buttons --------------------
-                bottomButtons
             }
             .background(panelBackground)
             .clipShape(panelShape)
@@ -4182,6 +4193,78 @@ struct EditRecipeView: View {
         }
     }
 
+    // MARK: - Edit panel content (shared by portrait + landscape)
+    //
+    // The bottom panel's vertical stack — extracted into its own
+    // `@ViewBuilder` so the body can render it directly (portrait /
+    // iPad: intrinsic-height) OR wrap it in a ScrollView (iPhone
+    // landscape: scroll the overflowing content) without duplicating
+    // the markup.
+    @ViewBuilder
+    private var editPanelContent: some View {
+        VStack(spacing: 0) {
+            // -- STICKY TOP BLOCK ----------------------------------------
+            // Title + cross + name + image. Doesn't scroll in
+            // portrait; in iPhone landscape the whole panel becomes
+            // scrollable so this block scrolls with everything else
+            // (better than a sticky-top in landscape, where there's
+            // no spare vertical room to keep ANYTHING pinned).
+            VStack(alignment: .leading, spacing: 24) {
+                header
+                nameField
+                imagePickerBlock
+            }
+            .padding(.top, 24)
+            // 15pt gap to the ingredients table — matches UIKit
+            // constraint `UOt-L3-Vxv: tblDrinks.top = rQQ-0k-gay.bottom + 15`.
+            .padding(.bottom, 15)
+
+            // -- INGREDIENTS LIST ----------------------------------------
+            // Height clamped by `tableHeightForEditList` — 1:1 with
+            // UIKit `EditViewModel.tableHeightForContentSize` L312-320:
+            //   0          → 0    (empty, list collapses)
+            //   1…59pt     → 100  (stretched minimum)
+            //   60…150pt   → height (exact content height)
+            //   > 150pt    → 150  (cap, internal scroll kicks in)
+            // In portrait the panel GROWS with the table up to the
+            // 150pt cap. In landscape the panel itself is wrapped in
+            // an outer ScrollView so this internal cap is purely
+            // about cell-count-vs-list-height layout, not viewport
+            // bounds.
+            ingredientsList
+                .frame(height: tableHeightForEditList)
+                .padding(.horizontal, 24)
+
+            // -- Add Ingredient pill (fixed position) --------------------
+            // 5pt gap below table — UIKit
+            // `rKW-ci-7cL: A4B-bI-6Jh.top = tblDrinks.bottom + 5`.
+            if !shouldHideAddIngredientRow {
+                addIngredientPill
+                    .padding(.horizontal, 24)
+                    .padding(.top, 5)
+            }
+
+            // Error message (hidden by default).
+            if let msg = errorMessage {
+                Text(msg)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color("errorLabelColor"))
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+            }
+
+            // 20pt FIXED gap between `viewAddIngredients` and the
+            // Save/Craft stack — UIKit constraint
+            // `Fmu-lM-w5w: xzw-6X-XYP.top = A4B-bI-6Jh.bottom + 20`.
+            // (Not a flexible Spacer — UIKit uses an exact 20pt
+            // gap, and the panel sizes to content above/below.)
+            Color.clear.frame(height: 20)
+
+            // -- STICKY BOTTOM — Save + Craft buttons --------------------
+            bottomButtons
+        }
+    }
+
     // MARK: - Header
 
     private var header: some View {
@@ -4405,28 +4488,24 @@ struct EditRecipeView: View {
     }
 
     /// Delete overlay button — 1:1 with UIKit storyboard `Mqn-Av-Zo2`
-    /// (BarBot.storyboard) at 30×30, top-right of the image with
+    /// (BarBot.storyboard L443) at 30×30, top-right of the image with
     /// `trailing = -2` and `top = 2` constraints. Triggers the same
     /// `selectedImage = nil; remoteImageURL = nil` clear that
     /// UIKit's `EditViewModel.deleteImage()` performs.
     ///
-    /// Renders `whiteDeleteImage` AS-IS — the asset itself is the
-    /// white X glyph (the name says it: "white" content image, NOT
-    /// a tinted template). UIKit's storyboard never set a background
-    /// or `tintColor`/`renderingMode = template` on this button, so
-    /// the original PNG is what shows on screen. The white glyph has
-    /// enough internal contrast (slight darker stroke / outline
-    /// baked into the asset) to read against both light and dark
-    /// recipe images — exactly what the older app shipped with.
-    ///
-    /// The previous port template-tinted the asset with
-    /// `charcoalGrayColor`, which collapsed the asset's natural
-    /// internal contrast into a single dark grey colour. On dark
-    /// thumbnails (most cocktail photos), the dark-grey glyph
-    /// blended into the photo and was effectively invisible — the
-    /// "sometimes button not visible" report. Reverting to the
-    /// natural-asset render restores the always-visible white-on-
-    /// image affordance the older app used.
+    /// Uses the EXACT same `whiteDeleteImage` asset that the older
+    /// UIKit app used — the .imageset is byte-identical between the
+    /// two projects (verified by `diff`). The PNG is a pure-white
+    /// "X" glyph (RGBA `255,255,255,*`) on a fully transparent
+    /// background — there's no dark stroke or shadow baked into the
+    /// asset. Rendered AS-IS, no `renderingMode(.template)`, no
+    /// `foregroundStyle(...)`, no background — exactly how UIKit
+    /// displays it. The previous port template-tinted the asset
+    /// with `charcoalGrayColor`, which collapsed the white pixels
+    /// into dark grey and made the button blend into dark cocktail
+    /// photos (the "sometimes button not visible" report).
+    /// Reverting to the natural-asset render restores 1:1 UIKit
+    /// behaviour.
     private var imageDeleteButton: some View {
         Button {
             selectedImage = nil
