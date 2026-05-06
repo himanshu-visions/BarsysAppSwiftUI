@@ -336,6 +336,15 @@ struct ExploreRecipesView: View {
               count: gridColumnCount)
     }
 
+    /// True only when the host is an iPhone in landscape (compact
+    /// vertical size class). iPad always returns false even when
+    /// multitasking shrinks the canvas — its title/search layout
+    /// stays VStack-stacked.
+    private var isPhoneLandscape: Bool {
+        UIDevice.current.userInterfaceIdiom != .pad
+            && verticalSizeClass == .compact
+    }
+
     /// Bumped on every `.onAppear` so the `exploreRecipes` computed
     /// property re-evaluates against the live storage state. Required
     /// because `MockStorageService` is not `ObservableObject` — when
@@ -496,39 +505,60 @@ struct ExploreRecipesView: View {
         // visual is unchanged.
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
-                // Title — "All Recipes" 24pt, appBlackColor, leading 24, top 58.
-                // iPad bumps to 32pt so the screen title matches the
-                // Ready to Pour title size on the wider canvas.
-                // iPhone unchanged.
-                //
-                // Top-padding bump on iPad: the inline iOS 26 nav-bar
-                // Liquid-Glass blur overlaps the first few pixels of the
-                // ScrollView content on the wider canvas, which made the
-                // larger 32pt iPad title look clipped / "not coming"
-                // (QA report). 16pt was enough on iPhone but iPad needs
-                // the extra clearance — bumping iPad to 24pt restores
-                // the same visible breathing room iPhone has at 16pt.
-                // iPhone path stays at 16pt — bit-identical to before.
-                Text("All Recipes")
-                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // iPhone-landscape branch renders the title and the
+                // search bar side-by-side on the same horizontal line
+                // — title takes its intrinsic width on the left, the
+                // search field takes the remaining space on the right.
+                // Portrait + iPad keep the original stacked VStack
+                // layout bit-identical (title on its own row above
+                // the full-width search field).
+                if isPhoneLandscape {
+                    HStack(spacing: 16) {
+                        Text("All Recipes")
+                            .font(.system(size: 24))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .fixedSize(horizontal: true, vertical: false)
+                        // Search bar — shared `BarsysSearchBar`. Takes
+                        // the remaining horizontal space.
+                        BarsysSearchBar(query: $query)
+                    }
                     .padding(.horizontal, 24)
-                    .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 16)
+                    .padding(.top, 16)
+                } else {
+                    // Title — "All Recipes" 24pt, appBlackColor, leading 24, top 58.
+                    // iPad bumps to 32pt so the screen title matches the
+                    // Ready to Pour title size on the wider canvas.
+                    // iPhone unchanged.
+                    //
+                    // Top-padding bump on iPad: the inline iOS 26 nav-bar
+                    // Liquid-Glass blur overlaps the first few pixels of the
+                    // ScrollView content on the wider canvas, which made the
+                    // larger 32pt iPad title look clipped / "not coming"
+                    // (QA report). 16pt was enough on iPhone but iPad needs
+                    // the extra clearance — bumping iPad to 24pt restores
+                    // the same visible breathing room iPhone has at 16pt.
+                    // iPhone path stays at 16pt — bit-identical to before.
+                    Text("All Recipes")
+                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
+                        .foregroundStyle(Color("appBlackColor"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 16)
 
-                // Search bar — 1:1 port of UIKit `viewSearch` + `txtSearch` +
-                // `searchAndCloseButton` from Mixlist.storyboard scene
-                // `Zsc-V0-6RG`. The previous inline implementation drifted
-                // from UIKit on several axes (system SF Symbols instead of
-                // the `exploreSearch` / `crossIcon` assets, 16pt placeholder
-                // font instead of 14pt, white backgroundColor instead of
-                // clear, a duplicate "×" button glued to the trailing edge).
-                // Factored into the shared `BarsysSearchBar` — same widget
-                // used by ExploreRecipes / Cocktail Kits / Favorites so
-                // every UIKit search bar is pixel-identical to UIKit.
-                BarsysSearchBar(query: $query)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 15)
+                    // Search bar — 1:1 port of UIKit `viewSearch` + `txtSearch` +
+                    // `searchAndCloseButton` from Mixlist.storyboard scene
+                    // `Zsc-V0-6RG`. The previous inline implementation drifted
+                    // from UIKit on several axes (system SF Symbols instead of
+                    // the `exploreSearch` / `crossIcon` assets, 16pt placeholder
+                    // font instead of 14pt, white backgroundColor instead of
+                    // clear, a duplicate "×" button glued to the trailing edge).
+                    // Factored into the shared `BarsysSearchBar` — same widget
+                    // used by ExploreRecipes / Cocktail Kits / Favorites so
+                    // every UIKit search bar is pixel-identical to UIKit.
+                    BarsysSearchBar(query: $query)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 15)
+                }
 
                 // Recipe list
                 //

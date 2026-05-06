@@ -52,6 +52,15 @@ struct MixlistListView: View {
               count: gridColumnCount)
     }
 
+    /// True only when the host is an iPhone in landscape (compact
+    /// vertical size class). iPad always returns false even when
+    /// multitasking shrinks the canvas — its title/search layout
+    /// stays VStack-stacked.
+    private var isPhoneLandscape: Bool {
+        UIDevice.current.userInterfaceIdiom != .pad
+            && verticalSizeClass == .compact
+    }
+
     /// Bottom breathing room above the tab bar on Cocktail Kits / Mixlists.
     /// iOS 26+ glass tab bar → 20pt (bit-identical to before);
     /// pre-iOS 26 opaque tab bar → 37pt so the last kit row doesn't
@@ -125,27 +134,46 @@ struct MixlistListView: View {
             let rowHeight = cellWidth / 2
 
             VStack(spacing: 0) {
-                // Title — "Cocktail Kits" 24pt, appBlackColor.
-                // iPad bumps to 32pt so the screen title matches the
-                // Ready to Pour title size on the wider canvas.
-                // iPhone unchanged.
-                Text("Cocktail Kits")
-                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // iPhone-landscape branch renders the title and the
+                // search bar side-by-side on the same horizontal line —
+                // the wider canvas leaves the title's natural width
+                // (~155pt) and gives the rest to the search field.
+                // Portrait + iPad keep the original stacked VStack
+                // layout bit-identical (title on its own row above
+                // the full-width search field).
+                if isPhoneLandscape {
+                    HStack(spacing: 16) {
+                        Text("Cocktail Kits")
+                            .font(.system(size: 24))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .fixedSize(horizontal: true, vertical: false)
+                        BarsysSearchBar(query: $query)
+                    }
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
+                } else {
+                    // Title — "Cocktail Kits" 24pt, appBlackColor.
+                    // iPad bumps to 32pt so the screen title matches the
+                    // Ready to Pour title size on the wider canvas.
+                    // iPhone unchanged.
+                    Text("Cocktail Kits")
+                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
+                        .foregroundStyle(Color("appBlackColor"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 16)
 
-                // Search bar — uses shared `BarsysSearchBar` for 1:1 UIKit
-                // parity with `viewSearch` + `txtSearch` + `searchAndCloseButton`
-                // (Mixlist.storyboard scene `Q4y-Gs-Lbh`). Replaces the
-                // previous inline implementation which used SF Symbols
-                // instead of the `exploreSearch` / `crossIcon` assets, a
-                // 16pt placeholder font instead of 14pt, and a white
-                // background instead of the UIKit transparent container.
-                BarsysSearchBar(query: $query)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 15)
+                    // Search bar — uses shared `BarsysSearchBar` for 1:1 UIKit
+                    // parity with `viewSearch` + `txtSearch` + `searchAndCloseButton`
+                    // (Mixlist.storyboard scene `Q4y-Gs-Lbh`). Replaces the
+                    // previous inline implementation which used SF Symbols
+                    // instead of the `exploreSearch` / `crossIcon` assets, a
+                    // 16pt placeholder font instead of 14pt, and a white
+                    // background instead of the UIKit transparent container.
+                    BarsysSearchBar(query: $query)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 15)
+                }
 
                 // Mixlist list
                 //
