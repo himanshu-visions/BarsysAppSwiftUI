@@ -4479,6 +4479,20 @@ struct EditRecipeView: View {
         env.loading.show(Constants.addingIngredientLoaderText)
         Task { @MainActor in
             defer { env.loading.hide() }
+            // Pre-flight connectivity guard mirroring UIKit
+            // `EditViewController` ingredient-detection: bail with the
+            // shared `internetConnectionMessage` alert before issuing
+            // the upload so the user gets the same offline copy as
+            // every other network screen instead of the generic
+            // `recipeSaveError` fallback.
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(
+                    title: Constants.internetConnectionMessage,
+                    message: "",
+                    primary: Constants.okButtonTitle
+                )
+                return
+            }
             do {
                 let detected = try await env.api.uploadIngredientImage(data)
                 let result = processUploadedIngredients(detected)

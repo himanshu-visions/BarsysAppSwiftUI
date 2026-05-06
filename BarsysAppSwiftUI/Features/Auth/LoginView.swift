@@ -189,6 +189,20 @@ final class LoginViewModel: ObservableObject {
             return
         }
 
+        // 1:1 with UIKit `LoginViewController.didPressGetOTP` — bail
+        // with the shared `internetConnectionMessage` alert before
+        // hitting the Ory endpoint so the user sees the same offline
+        // copy as every other network screen instead of the URL
+        // session's `localizedDescription`.
+        guard await ConnectionMonitor.shared.isConnected else {
+            alerts.show(
+                title: Constants.internetConnectionMessage,
+                message: "",
+                primary: Constants.okButtonTitle
+            )
+            return
+        }
+
         do {
             try await api.sendOtp(phone: formattedPhone)
             if !isResend {
@@ -242,6 +256,19 @@ final class LoginViewModel: ObservableObject {
             // before the coordinator advances.
             HapticService.success()
             onSuccess()
+            return
+        }
+
+        // 1:1 with UIKit `LoginViewController+OTP.didPressVerifyOTP` —
+        // surface the shared `internetConnectionMessage` alert before
+        // hitting the verify endpoint when offline, instead of letting
+        // the URL session error message bubble up.
+        guard await ConnectionMonitor.shared.isConnected else {
+            alerts.show(
+                title: Constants.internetConnectionMessage,
+                message: "",
+                primary: Constants.okButtonTitle
+            )
             return
         }
 

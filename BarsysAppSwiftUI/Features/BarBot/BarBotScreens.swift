@@ -2742,6 +2742,25 @@ struct BarBotCraftView: View {
         // its tab bar as usual while the history panel sits above the
         // content region between them.
         .onAppear { if viewModel.messages.isEmpty { viewModel.setupNewChat() } }
+        // 1:1 with UIKit `BarBotViewController.viewWillAppear` —
+        // pre-flight `ConnectionMonitor.shared.isConnected` and pop the
+        // standard `internetConnectionMessage` alert when the screen
+        // is opened offline. The viewmodel's `fetchOptions` /
+        // `fetchSessions` already bail silently and rely on the
+        // `.barsysConnectionRestored` observer to retry, so the home
+        // cards still auto-populate the moment connectivity comes
+        // back; this `.task` only adds the missing user-facing alert
+        // so the user knows WHY the chat options grid is blank.
+        // `AlertQueue.show` dedupes by title/message, so re-runs of
+        // this `.task` (tab re-selection) won't stack popups.
+        .task {
+            guard await !ConnectionMonitor.shared.isConnected else { return }
+            env.alerts.show(
+                title: Constants.internetConnectionMessage,
+                message: "",
+                primary: Constants.okButtonTitle
+            )
+        }
         // Keyboard show/hide observers — drive `isKeyboardVisible` so
         // the iPad left-edge `ScreenEdgePanGesture` un-mounts while
         // the user is typing. See `isKeyboardVisible` doc comment for

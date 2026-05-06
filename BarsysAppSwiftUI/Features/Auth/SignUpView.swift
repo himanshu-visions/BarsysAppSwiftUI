@@ -287,6 +287,19 @@ final class SignUpViewModel: ObservableObject {
             return
         }
         defer { isWorking = false }
+        // 1:1 with UIKit `SignUpViewController.didPressGetOTP` —
+        // surface the shared `internetConnectionMessage` alert before
+        // hitting the registration endpoint when offline. Without this
+        // the user would see the URL session error message which
+        // diverges from the rest of the app's offline copy.
+        guard await ConnectionMonitor.shared.isConnected else {
+            alerts.show(
+                title: Constants.internetConnectionMessage,
+                message: "",
+                primary: Constants.okButtonTitle
+            )
+            return
+        }
         do {
             // If the live OryAPIClient is wired, use the dedicated registration
             // endpoint with full traits (matches sendRegisterationOtpWithOry).
@@ -348,6 +361,17 @@ final class SignUpViewModel: ObservableObject {
         }
         isWorking = true
         defer { isWorking = false }
+        // 1:1 with UIKit `SignUpViewController+OTP.didPressVerifyOTP` —
+        // surface the shared `internetConnectionMessage` alert before
+        // hitting the verify-registration endpoint when offline.
+        guard await ConnectionMonitor.shared.isConnected else {
+            alerts.show(
+                title: Constants.internetConnectionMessage,
+                message: "",
+                primary: Constants.okButtonTitle
+            )
+            return
+        }
         do {
             if let ory = api as? OryAPIClient {
                 // IMPORTANT: Ory self-service registration returns the

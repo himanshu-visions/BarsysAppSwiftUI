@@ -2834,6 +2834,19 @@ struct StationsMenuView: View {
                   let data = image.jpegData(compressionQuality: 0.7) else { return }
             pickedImage = nil
             Task { @MainActor in
+                // Pre-flight connectivity guard mirroring the UIKit
+                // station-setup flow — when offline the upload would
+                // throw with a confusing `localizedDescription` and the
+                // user wouldn't know to reconnect, so surface the
+                // standardised `internetConnectionMessage` instead.
+                guard await ConnectionMonitor.shared.isConnected else {
+                    env.alerts.show(
+                        title: Constants.internetConnectionMessage,
+                        message: "",
+                        primary: Constants.okButtonTitle
+                    )
+                    return
+                }
                 env.loading.show("Detecting ingredient…")
                 defer { env.loading.hide() }
                 do {

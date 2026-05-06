@@ -1417,14 +1417,29 @@ struct MixlistDetailView: View {
                                     source: .recipeCrafting)
             return
         }
-        // For Barsys 360 we perform the station-match + perishable
-        // validation. Coaster / Shaker go straight to crafting.
-        if ble.isBarsys360Connected() {
-            Task { @MainActor in
-                await craft360WithValidation(recipe)
+        // Step 2 of the UIKit recipe: pre-flight `ConnectionMonitor`
+        // check. The Barsys 360 station-validation path issues a GET
+        // for stations before pushing the crafting screen, and the
+        // Coaster / Shaker path also relies on socket telemetry that
+        // implicitly needs network. UIKit pops the
+        // `internetConnectionMessage` alert and bails when offline so
+        // the user isn't sent into a screen that can't load.
+        Task { @MainActor in
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(
+                    title: Constants.internetConnectionMessage,
+                    message: "",
+                    primary: Constants.okButtonTitle
+                )
+                return
             }
-        } else {
-            router.push(.crafting(recipe.id))
+            // For Barsys 360 we perform the station-match + perishable
+            // validation. Coaster / Shaker go straight to crafting.
+            if ble.isBarsys360Connected() {
+                await craft360WithValidation(recipe)
+            } else {
+                router.push(.crafting(recipe.id))
+            }
         }
     }
 
@@ -1597,6 +1612,19 @@ struct MixlistDetailView: View {
         }
 
         Task { @MainActor in
+            // Pre-flight `ConnectionMonitor` check — UIKit
+            // `RecipeCraftingClass+StationSetup.setupStationsAction`
+            // bails out with the standard `internetConnectionMessage`
+            // alert before issuing the GET stations call so the user
+            // never sees a stuck "Setting up…" spinner when offline.
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(
+                    title: Constants.internetConnectionMessage,
+                    message: "",
+                    primary: Constants.okButtonTitle
+                )
+                return
+            }
             // `LoadingState` API mirrors UIKit's `SpinnerHelper.show/hide` —
             // `.show(_ message:)` to present, `.hide()` to dismiss.
             env.loading.show("Setting up…")

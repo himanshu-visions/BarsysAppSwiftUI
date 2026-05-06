@@ -852,9 +852,11 @@ struct MyBarView: View {
 
     /// 1:1 with UIKit `didSelectImagesFromPhotos` (MyBarViewController
     /// L348-394):
-    ///   1. Check connectivity — UIKit runs a Task that hits
-    ///      ConnectionMonitor; we mirror by surfacing a generic alert
-    ///      when the upload throws.
+    ///   1. Check connectivity via `ConnectionMonitor.shared.isConnected`
+    ///      — bail with `Constants.internetConnectionMessage` alert
+    ///      when offline so the user isn't shown a generic
+    ///      "ingredient update error" for what is really a network
+    ///      problem.
     ///   2. `showGlassLoader(message: "Adding Ingredients")`.
     ///   3. `UploadIngredientsImage().uploadImageAndGetIngredientsResponseForMyBar`.
     ///   4. `viewModel.processImageScanResults` — filter base/mixer,
@@ -870,6 +872,21 @@ struct MyBarView: View {
         }
         env.loading.show(Constants.addingIngredientLoaderText)
         Task { @MainActor in
+            // Step 1 of the UIKit recipe: pre-flight connectivity
+            // check. Bail with the standardised offline alert so the
+            // user gets the same message UIKit shows on every other
+            // network screen instead of a misleading
+            // `ingredientUpdateError` message that suggests a server
+            // / data problem.
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.loading.hide()
+                env.alerts.show(
+                    title: Constants.internetConnectionMessage,
+                    message: "",
+                    primary: Constants.okButtonTitle
+                )
+                return
+            }
             do {
                 let detected = try await env.api.uploadIngredientImageForMyBar(data)
                 env.loading.hide()
