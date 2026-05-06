@@ -2907,11 +2907,25 @@ struct BarBotCraftView: View {
         .modifier(
             AttachmentChoiceModifier(
                 isPresented: $showAttachmentSheet,
+                // 1:1 with UIKit
+                // `ImagePickerViewController.checkAuthorizationAndShowCamera`
+                // / `checkAuthorizationAndShowPhotos` — gate the picker
+                // presentation on AVFoundation / Photos authorization.
+                // Without this gate, presenting `UIImagePickerController`
+                // when the user has denied camera access surfaces a
+                // black preview surface (the underlying capture session
+                // can't activate). On deny, `requestCameraAccess`
+                // surfaces a Cancel / Go-to-settings popup via the
+                // shared `env.alerts` overlay.
                 onCamera: {
-                    imagePickerPresentation = BarBotPickerPresentation(source: .camera)
+                    env.alerts.requestCameraAccess {
+                        imagePickerPresentation = BarBotPickerPresentation(source: .camera)
+                    }
                 },
                 onPhotoLibrary: {
-                    imagePickerPresentation = BarBotPickerPresentation(source: .photoLibrary)
+                    env.alerts.requestPhotoLibraryAccess {
+                        imagePickerPresentation = BarBotPickerPresentation(source: .photoLibrary)
+                    }
                 }
             )
         )

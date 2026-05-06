@@ -282,7 +282,14 @@ struct MyBarView: View {
         // UIImagePickerController — 1:1 with UIKit `presentPhotoLibrary` /
         // `presentCamera` branches of `checkAuthorizationAndShowPhotos` /
         // `checkAuthorizationAndShowCamera` in ImagePickerViewController.
-        .sheet(item: $pickerPresentation) { presentation in
+        //
+        // `.fullScreenCover` (not `.sheet`) because SwiftUI's sheet uses
+        // `pageSheet` style on iOS 13+, which inset-crops the camera
+        // preview and HIDES the bottom capture button — same fix as
+        // BarBot/EditRecipe pickers. UIKit's
+        // `mediaPicker.modalPresentationStyle = .overFullScreen`
+        // matches `.fullScreenCover` exactly.
+        .fullScreenCover(item: $pickerPresentation) { presentation in
             BarBotImagePicker(image: $pickedImage, source: presentation.source)
                 .ignoresSafeArea()
         }
@@ -838,6 +845,13 @@ struct MyBarView: View {
 
     /// Opens the system picker with the requested source. Falls back to
     /// photo library when camera isn't available (simulator, restricted).
+    ///
+    /// 1:1 with UIKit
+    /// `ImagePickerViewController.checkAuthorizationAndShowCamera` /
+    /// `checkAuthorizationAndShowPhotos` — gates the actual picker
+    /// presentation on AVFoundation / Photos authorization. Without
+    /// this gate, presenting `UIImagePickerController` when the user
+    /// has denied camera access surfaces a black preview.
     private func openPicker(source: UIImagePickerController.SourceType) {
         let resolved: UIImagePickerController.SourceType
         if source == .camera, !UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -847,7 +861,14 @@ struct MyBarView: View {
         }
         // Single atomic state mutation — replaces the old two-step
         // `pickerSource = …; showPicker = true` that raced on first tap.
-        pickerPresentation = PickerPresentation(source: resolved)
+        let present: () -> Void = {
+            pickerPresentation = PickerPresentation(source: resolved)
+        }
+        switch resolved {
+        case .camera:       env.alerts.requestCameraAccess(onGranted: present)
+        case .photoLibrary: env.alerts.requestPhotoLibraryAccess(onGranted: present)
+        default:            present()
+        }
     }
 
     /// 1:1 with UIKit `didSelectImagesFromPhotos` (MyBarViewController

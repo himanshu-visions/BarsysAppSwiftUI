@@ -3930,8 +3930,24 @@ struct EditRecipeView: View {
                 cameraLabel: "Camera",
                 photosLabel: "Photos",
                 cancelLabel: "Cancel",
-                onCamera: { recipeImagePicker = EditRecipePickerPresentation(source: .camera) },
-                onPhotos: { recipeImagePicker = EditRecipePickerPresentation(source: .photoLibrary) }
+                // 1:1 with UIKit
+                // `ImagePickerViewController.checkAuthorizationAndShowCamera`
+                // / `checkAuthorizationAndShowPhotos` — gate the picker
+                // presentation on AVFoundation / Photos authorization.
+                // Without this gate, presenting `UIImagePickerController`
+                // when the user has denied camera access surfaces a
+                // black preview. On deny, the helper shows a Cancel /
+                // Go-to-settings popup via `env.alerts`.
+                onCamera: {
+                    env.alerts.requestCameraAccess {
+                        recipeImagePicker = EditRecipePickerPresentation(source: .camera)
+                    }
+                },
+                onPhotos: {
+                    env.alerts.requestPhotoLibraryAccess {
+                        recipeImagePicker = EditRecipePickerPresentation(source: .photoLibrary)
+                    }
+                }
             )
         )
         // 1:1 with UIKit post-action-sheet flow: picking Camera or
@@ -3966,8 +3982,18 @@ struct EditRecipeView: View {
                 cameraLabel: "Camera",
                 photosLabel: "Photos",
                 cancelLabel: ConstantButtonsTitle.cancelButtonTitle,
-                onCamera: { ingredientImagePicker = EditRecipePickerPresentation(source: .camera) },
-                onPhotos: { ingredientImagePicker = EditRecipePickerPresentation(source: .photoLibrary) }
+                // Same authorization gate as the recipe-image picker
+                // above — see comment there for full rationale.
+                onCamera: {
+                    env.alerts.requestCameraAccess {
+                        ingredientImagePicker = EditRecipePickerPresentation(source: .camera)
+                    }
+                },
+                onPhotos: {
+                    env.alerts.requestPhotoLibraryAccess {
+                        ingredientImagePicker = EditRecipePickerPresentation(source: .photoLibrary)
+                    }
+                }
             )
         )
         // Image picker for the AI ingredient detection flow. UIKit pipes

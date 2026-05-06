@@ -16,6 +16,9 @@ import Foundation
 import CoreBluetooth
 import Combine
 import SwiftUI
+import AVFoundation
+import Photos
+import UIKit
 
 // MARK: - Errors
 
@@ -2748,4 +2751,118 @@ final class AlertQueue: ObservableObject {
     }
 
     func dismiss() { current = nil }
+}
+
+// MARK: - Media permissions (camera / photo-library) —
+// 1:1 port of UIKit `ImagePickerViewController.swift`'s pre-flight
+// permission flow (L91-213). UIKit always called
+// `checkAuthorizationAndShowCamera` / `checkAuthorizationAndShowPhotos`
+// BEFORE presenting `UIImagePickerController` — without that gate,
+// iOS hands back a `UIImagePickerController` whose preview is a
+// black surface (camera) or whose picker has no items (photos)
+// because the underlying APIs silently fail when access is denied.
+//
+// The SwiftUI port previously presented `BarBotImagePicker` directly
+// from the action-sheet callbacks, skipping the gate — surfacing as
+// the "camera shows a black screen" / "nothing happens when I tap
+// camera" reports across BarBot, Add Ingredient, Edit Recipe,
+// MyProfile and MyBar. These helpers restore the gate so every
+// camera / photos picker call site goes through the same flow.
+
+enum MediaPermissions {
+    static func requestCamera(_ completion: @escaping (Bool) -> Void) {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            completion(true)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async { completion(granted) }
+            }
+        case .denied, .restricted:
+            completion(false)
+        @unknown default:
+            completion(false)
+        }
+    }
+
+    static func requestPhotoLibrary(_ completion: @escaping (Bool) -> Void) {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        switch status {
+        case .authorized, .limited:
+            completion(true)
+        case .notDetermined:
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
+                DispatchQueue.main.async {
+                    completion(newStatus == .authorized || newStatus == .limited)
+                }
+            }
+        case .denied, .restricted:
+            completion(false)
+        @unknown default:
+            completion(false)
+        }
+    }
+
+    /// Deep-link into the Settings app's row for this bundle id —
+    /// 1:1 port of UIKit `openSettingsForApp()`.
+    static func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+}
+
+// Wraps `MediaPermissions.requestX` so the call site reads as a
+// single line:
+//
+//     env.alerts.requestCameraAccess {
+//         imagePickerPresentation = .init(source: .camera)
+//     }
+//
+// On grant → `onGranted` fires.
+// On deny → a two-button popup is shown via the existing
+//   `AlertQueue.show(...)` overlay, with one button that deep-links
+//   to Settings. Button order matches UIKit
+//   `ImagePickerViewController.checkAuthorizationAndShowCamera` /
+//   `checkAuthorizationAndShowPhotos` exactly:
+//
+//   • Camera denied  → primary "Cancel" (left, tinted, no-op),
+//                      secondary "Go to settings" (right, opens Settings)
+//   • Photos denied  → primary "Go to settings" (left, tinted, opens Settings),
+//                      secondary "Cancel" (right, no-op)
+//
+//   The button-position swap between camera and photos mirrors UIKit
+//   verbatim (see ImagePickerViewController.swift L95 vs L176).
+extension AlertQueue {
+    func requestCameraAccess(onGranted: @escaping () -> Void) {
+        MediaPermissions.requestCamera { [weak self] granted in
+            guard let self else { return }
+            if granted {
+                onGranted()
+            } else {
+                self.show(
+                    title: Constants.appNeedsCameraAccess,
+                    primaryTitle: ConstantButtonsTitle.cancelButtonTitle,
+                    secondaryTitle: ConstantButtonsTitle.goToSettingsTitle,
+                    onSecondary: { MediaPermissions.openAppSettings() }
+                )
+            }
+        }
+    }
+
+    func requestPhotoLibraryAccess(onGranted: @escaping () -> Void) {
+        MediaPermissions.requestPhotoLibrary { [weak self] granted in
+            guard let self else { return }
+            if granted {
+                onGranted()
+            } else {
+                self.show(
+                    title: Constants.appNeedsGalleryAccess,
+                    primaryTitle: ConstantButtonsTitle.goToSettingsTitle,
+                    secondaryTitle: ConstantButtonsTitle.cancelButtonTitle,
+                    onPrimary: { MediaPermissions.openAppSettings() }
+                )
+            }
+        }
+    }
 }

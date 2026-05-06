@@ -706,8 +706,13 @@ struct MyProfileView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var showImageSourceSheet = false
-    @State private var showImagePicker = false
-    @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
+    /// Drives `.fullScreenCover(item:)` for the Camera / Photos
+    /// picker. Same shape as `BarBotPickerPresentation`
+    /// (BarBotScreens.swift) — replaces the previous two-step
+    /// `imagePickerSource = .camera; showImagePicker = true` pattern
+    /// that captured a stale `.photoLibrary` default on the first
+    /// camera tap (manifested as a black-screen camera).
+    @State private var imagePickerPresentation: BarBotPickerPresentation?
     @State private var showDatePicker = false
 
     @FocusState private var focusedField: EditableField?
@@ -851,15 +856,37 @@ struct MyProfileView: View {
         // in the design.
         // Tinted with `appBlackColor` so the title and button labels
         // render in the brand black instead of system blue.
+        // 1:1 with UIKit
+        // `ImagePickerViewController.checkAuthorizationAndShowCamera`
+        // / `checkAuthorizationAndShowPhotos` — gate the picker
+        // presentation on AVFoundation / Photos authorization. Without
+        // this gate, presenting `UIImagePickerController` when the
+        // user has denied camera access surfaces a black preview.
         .alert("Please select an option",
                isPresented: $showImageSourceSheet) {
-            Button("Camera") { imagePickerSource = .camera;       showImagePicker = true }
-            Button("Photos") { imagePickerSource = .photoLibrary; showImagePicker = true }
+            Button("Camera") {
+                env.alerts.requestCameraAccess {
+                    imagePickerPresentation = BarBotPickerPresentation(source: .camera)
+                }
+            }
+            Button("Photos") {
+                env.alerts.requestPhotoLibraryAccess {
+                    imagePickerPresentation = BarBotPickerPresentation(source: .photoLibrary)
+                }
+            }
             Button("Cancel", role: .cancel) { }
         }
         .tint(Color("appBlackColor"))
-        .sheet(isPresented: $showImagePicker) {
-            BarBotImagePicker(image: $viewModel.selectedImage, source: imagePickerSource)
+        // `.fullScreenCover(item:)` (not `.sheet`) for two reasons —
+        // matches BarBot/EditRecipe pickers:
+        //   1. SwiftUI's `.sheet` uses `pageSheet` style on iOS 13+,
+        //      which inset-crops the camera preview and HIDES the
+        //      bottom capture button.
+        //   2. `(item:)` rebuilds the body with the fresh
+        //      `presentation.source` on every present, so Camera
+        //      works on the very first tap.
+        .fullScreenCover(item: $imagePickerPresentation) { presentation in
+            BarBotImagePicker(image: $viewModel.selectedImage, source: presentation.source)
                 .ignoresSafeArea()
         }
         .sheet(isPresented: $showDatePicker) {

@@ -2616,7 +2616,13 @@ struct StationsMenuView: View {
     //      If one    → directly `addIngredient(name:)`.
     //   5. ViewModel calls `StationsServiceApi.updateStation(...)` PUT
     //      and refreshes via `loadStations(...)`.
-    @State private var showImagePicker = false
+    /// Drives `.fullScreenCover(item:)` for the camera picker. Same
+    /// shape as `BarBotPickerPresentation` (BarBotScreens.swift) —
+    /// replaces the previous two-step
+    /// `imagePickerSource = .camera; showImagePicker = true` pattern
+    /// that captured a stale source default and used `.sheet` (which
+    /// inset-crops the camera preview to a black surface).
+    @State private var imagePickerPresentation: BarBotPickerPresentation?
     /// Detected ingredients from the most recent photo upload, WITH
     /// their server-assigned categories. The popup picker hands back
     /// only the NAME string — we keep the full objects around so the
@@ -2630,7 +2636,6 @@ struct StationsMenuView: View {
     /// which made every recipe fail the Ready-to-Pour allow-list
     /// filter and the screen rendered empty.
     @State private var detectedIngredients: [IngredientFromImage] = []
-    @State private var imagePickerSource: UIImagePickerController.SourceType = .camera
     @State private var pickedImage: UIImage?
     @State private var popup: BarsysPopup?
 
@@ -2810,10 +2815,17 @@ struct StationsMenuView: View {
                 )
             }
         }
-        // Image-detection sheet — ports `showActionSheetForImagePicker`.
-        .sheet(isPresented: $showImagePicker) {
+        // Image-detection picker — ports `showActionSheetForImagePicker`.
+        // `.fullScreenCover(item:)` (not `.sheet`) because SwiftUI's
+        // sheet uses `pageSheet` style on iOS 13+, which inset-crops
+        // the camera preview and HIDES the bottom capture button —
+        // surfacing as a black-screen camera. UIKit presented
+        // `UIImagePickerController` with `.fullScreen`; this mirrors
+        // that. `(item:)` rebuilds the body with the fresh source on
+        // every present so the camera works on the very first tap.
+        .fullScreenCover(item: $imagePickerPresentation) { presentation in
             BarBotImagePicker(image: $pickedImage,
-                              source: imagePickerSource)
+                              source: presentation.source)
                 .ignoresSafeArea()
         }
         // 1:1 port of UIKit
@@ -3083,8 +3095,15 @@ struct StationsMenuView: View {
                             // SwiftUI: open the photo picker; the result is
                             // routed through `pickedImage` → detection
                             // pipeline → `BarsysPopup.multipleIngredients`.
-                            imagePickerSource = .camera
-                            showImagePicker = true
+                            //
+                            // Gated on AVFoundation authorization (1:1 with
+                            // UIKit `checkAuthorizationAndShowCamera`) so a
+                            // user who has denied camera access gets a
+                            // Cancel / Go-to-settings popup instead of a
+                            // black `UIImagePickerController` preview.
+                            env.alerts.requestCameraAccess {
+                                imagePickerPresentation = BarBotPickerPresentation(source: .camera)
+                            }
                         }
                     }
                 }
