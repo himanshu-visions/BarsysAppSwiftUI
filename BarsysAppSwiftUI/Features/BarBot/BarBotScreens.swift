@@ -257,7 +257,18 @@ enum BarBotAction {
     case autoSendPrompt(String)
     case pairDevice
     case stationCleaning
-    case stationsMenu
+    /// `redirect:setup_barsys360` — the action card surfaced when the
+    /// user explicitly asks to configure their Barsys 360. UIKit
+    /// `MainBarBotCell+Actions.swift` L266-274: only validation is
+    /// `isBarsys360Connected()` — if false, openPairYourDeviceWhenNotConnected.
+    case setupBarsys360
+    /// `redirect:setup_stations` — the broader "set up stations" card.
+    /// UIKit `MainBarBotCell+Actions.swift` L275-332 has a richer
+    /// device validation cascade: if Coaster / Shaker is connected
+    /// (but no 360) → show the "Please connect with Barsys 360" alert;
+    /// if NO device at all → openPairYourDeviceWhenNotConnected;
+    /// otherwise (Barsys 360 connected) → push StationsMenu.
+    case setupStations
     case switchTab(AppTab)
     case openShop(URL, String)
     case startCraft(BarBotRecipeElement)
@@ -912,8 +923,14 @@ final class BarBotViewModel: ObservableObject {
             switch card.value {
             case "redirect:connect_device":                 return .pairDevice
             case "redirect:clean_device":                   return .stationCleaning
-            case "redirect:setup_barsys360",
-                 "redirect:setup_stations":                 return .stationsMenu
+            // Split into two distinct actions so the dispatcher can
+            // run the right UIKit validation cascade per
+            // `MainBarBotCell+Actions.swift` L266-332. Coalescing both
+            // to a single `.stationsMenu` previously bypassed every
+            // device-connected guard and pushed StationsMenu even
+            // when nothing was connected.
+            case "redirect:setup_barsys360":                return .setupBarsys360
+            case "redirect:setup_stations":                 return .setupStations
             default:                                        return .switchTab(.homeOrControlCenter)
             }
         case "craft":
@@ -3272,14 +3289,73 @@ struct BarBotCraftView: View {
             viewModel.send(ble: ble)
         case .pairDevice:       promptPairDevice()
         case .stationCleaning:  router.push(.stationCleaning, in: .barBot)
-        case .stationsMenu:     router.push(.stationsMenu, in: .barBot)
+        case .setupBarsys360:   handleSetupBarsys360()
+        case .setupStations:    handleSetupStations()
         case .switchTab(let t): router.selectTabAndPopToRoot(t)
         case .openShop(let url, let title): router.push(.web(url, title), in: .barBot)
         case .startCraft(let r): startCraft(r)
-        case .setupMixlistStations: router.push(.stationsMenu, in: .barBot)
+        case .setupMixlistStations: handleSetupStations()
         case .openRecipe:       router.push(.recipeDetail(RecipeID()), in: .barBot)
         case .noop: break
         }
+    }
+
+    /// 1:1 port of UIKit `MainBarBotCell+Actions.swift` L266-274
+    /// (`redirect:setup_barsys360` branch):
+    ///
+    ///   if !BleManager.sharedManager.isBarsys360Connected() {
+    ///       controller?.openPairYourDeviceWhenNotConnected()
+    ///       return
+    ///   }
+    ///   pushViewController(stationsMenuVc)
+    ///
+    /// The Barsys 360 setup flow only makes sense with a 360
+    /// connected — every other device class lacks the station
+    /// hardware. Without this gate, tapping the action card pushed
+    /// `StationsMenu` against an empty BLE state and the inner
+    /// station-config screen showed an empty grid.
+    private func handleSetupBarsys360() {
+        guard ble.isBarsys360Connected() else {
+            promptPairDevice()
+            return
+        }
+        router.push(.stationsMenu, in: .barBot)
+    }
+
+    /// 1:1 port of UIKit `MainBarBotCell+Actions.swift` L275-287
+    /// device-validation cascade for `redirect:setup_stations`:
+    ///
+    ///   1. Coaster OR Shaker connected (but no 360) →
+    ///      showDefaultAlert(message: pleaseConnectWithBarsys360Device)
+    ///      and return — Coaster/Shaker can't host stations.
+    ///   2. NO device connected at all → openPairYourDeviceWhenNotConnected.
+    ///   3. Otherwise (Barsys 360 connected) → push StationsMenu.
+    ///
+    /// The previous SwiftUI port routed straight to `router.push(.stationsMenu)`
+    /// regardless of BLE state, so a disconnected user landed on an
+    /// inert StationsMenu screen. Mirrors UIKit verbatim.
+    private func handleSetupStations() {
+        // Step 1 — Coaster/Shaker connected (but not 360) → wrong
+        // device class for stations. Surface the dedicated
+        // "Please connect with the Barsys360 machine" alert.
+        let coasterOrShakerOnly = (ble.isCoasterConnected() || ble.isBarsysShakerConnected())
+            && !ble.isBarsys360Connected()
+        if coasterOrShakerOnly {
+            env.alerts.show(
+                title: Constants.pleaseConnectWithBarsys360Device,
+                message: "",
+                primary: ConstantButtonsTitle.okButtonTitle
+            )
+            return
+        }
+        // Step 2 — nothing connected → standard pair-device prompt
+        // (mirrors UIKit `openPairYourDeviceWhenNotConnected`).
+        guard ble.isAnyDeviceConnected else {
+            promptPairDevice()
+            return
+        }
+        // Step 3 — Barsys 360 connected → proceed.
+        router.push(.stationsMenu, in: .barBot)
     }
 
     private func startCraft(_ recipe: BarBotRecipeElement) {
