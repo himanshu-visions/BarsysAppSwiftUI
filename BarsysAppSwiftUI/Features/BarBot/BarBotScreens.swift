@@ -1270,6 +1270,33 @@ struct GrowingTextView: UIViewRepresentable {
         tv.textContainer.lineFragmentPadding = 0
         tv.returnKeyType = .default
         tv.keyboardType = .default
+        // Force SwiftUI's `.frame(...)` to win over the UITextView's
+        // intrinsic content size on BOTH axes:
+        //
+        //   • Vertical — when `isScrollEnabled = false` (the initial
+        //     state) UITextView reports its full-content size as its
+        //     intrinsic height, and the SwiftUI hosting layer happily
+        //     expands the `UIViewRepresentable` past the explicit
+        //     `.frame(height:)` we set on it. A long paragraph blew
+        //     the input pill way beyond `maxHeight = 70` and
+        //     squeezed the chat ScrollView above (the original
+        //     "scaling whole view" report).
+        //   • Horizontal — UITextView's intrinsic width fluctuates
+        //     with the longest unwrapped substring, so a user typing
+        //     past the first wrap line saw the Ask Anything pill
+        //     visibly widen / re-flow inside the parent HStack
+        //     (the "width changes when text more than one line"
+        //     report). Lowering the horizontal priority lets the
+        //     SwiftUI HStack hand out its remaining width to the
+        //     pill regardless of what's typed inside.
+        //
+        // Mirrors UIKit BarBot.storyboard `askAnythingTextView`
+        // constraint priorities (1000 for the layout constraint vs
+        // 250 for intrinsic) — the layout constraint always wins.
+        tv.setContentHuggingPriority(.defaultLow, for: .vertical)
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // Done / Cancel toolbar (ports addDoneCancelToolbar).
         let bar = UIToolbar()
         bar.sizeToFit()
@@ -1292,13 +1319,46 @@ struct GrowingTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     fileprivate func recalcHeight(_ tv: UITextView) {
-        let newSize = tv.sizeThatFits(CGSize(width: tv.bounds.width,
+        // Use the LAID-OUT frame width as the measurement target.
+        // `tv.bounds.width` can be zero on the very first
+        // `updateUIView` pass (before SwiftUI finishes assigning the
+        // frame), and zero width makes `sizeThatFits` wrap every
+        // glyph onto its own line → the resulting "fits height" is
+        // effectively infinite, which immediately flips
+        // `isScrollEnabled` to true and trips the input pill into
+        // its scrolling state with no actual content. Falling back
+        // to the frame width — and bailing out of the recompute when
+        // we still don't have one — keeps the calculation stable.
+        let measuredWidth = tv.bounds.width > 0 ? tv.bounds.width : tv.frame.width
+        guard measuredWidth > 0 else { return }
+        let newSize = tv.sizeThatFits(CGSize(width: measuredWidth,
                                              height: .greatestFiniteMagnitude))
         let clamped = min(maxHeight, max(minHeight, newSize.height))
         if abs(clamped - height) > 0.5 {
             DispatchQueue.main.async { height = clamped }
         }
-        tv.isScrollEnabled = newSize.height >= maxHeight
+        // Once the content needs more vertical room than the pill
+        // can give it, flip into internal-scroll mode so the text
+        // wraps inside the fixed `maxHeight` pill — UIKit
+        // `BarBotViewController+TextViewDelegate.updateTextViewHeight`
+        // (L37-42) does the same:
+        //
+        //   if newSize.height >= UIConstants.textViewMaxHeight {
+        //       textView.isScrollEnabled = true
+        //       txtViewHeightConstraint.constant = UIConstants.textViewMaxHeight
+        //   } else {
+        //       textView.isScrollEnabled = false
+        //       ...
+        //   }
+        //
+        // Comparing CLAMPED (not raw newSize) means we make this
+        // decision in the same coordinate space the SwiftUI frame
+        // is going to use — no chance of toggling on/off across the
+        // boundary because of a sub-pixel `sizeThatFits` jitter.
+        let shouldScroll = clamped >= maxHeight
+        if tv.isScrollEnabled != shouldScroll {
+            tv.isScrollEnabled = shouldScroll
+        }
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -2335,6 +2395,25 @@ struct ChatInputBar: View {
                         .accessibilityLabel("Attach image")
 
                         // GrowingTextView occupies the remaining width.
+                        // `.frame(height: textHeight)` is the SwiftUI
+                        // analogue of UIKit `txtViewHeightConstraint` —
+                        // the binding keeps it in lockstep with the
+                        // GrowingTextView's `recalcHeight` so the text
+                        // pill grows from `minHeight=44` up to
+                        // `maxHeight=70`, then locks at 70 with the
+                        // UITextView scrolling content internally
+                        // (1:1 with UIKit
+                        // `BarBotViewController+TextViewDelegate.updateTextViewHeight`).
+                        // The `setContentHuggingPriority(.defaultLow)`
+                        // / `setContentCompressionResistancePriority(.defaultLow)`
+                        // pair in `GrowingTextView.makeUIView` is what
+                        // enforces this from the AutoLayout side —
+                        // without those, the UITextView's intrinsic
+                        // content size wins over the SwiftUI frame and
+                        // a long paragraph visibly grows the pill past
+                        // `maxHeight`, squeezing the chat ScrollView
+                        // above (the user-reported "scaling whole
+                        // view" regression).
                         GrowingTextView(
                             text: $vm.draft,
                             height: $textHeight,
@@ -2342,7 +2421,20 @@ struct ChatInputBar: View {
                             maxHeight: 70,
                             onSend: { vm.send(ble: ble) }
                         )
-                        .frame(height: textHeight)
+                        // `.frame(maxWidth: .infinity)` PINS the text
+                        // view to ALL remaining horizontal space the
+                        // HStack offers it, so the Ask Anything pill
+                        // keeps its initial width regardless of
+                        // typed-text length. Without this, UITextView's
+                        // intrinsic width (= longest unwrapped
+                        // substring) leaked into SwiftUI's layout pass
+                        // and the pill visibly widened mid-typing
+                        // (the user-reported "width changes when text
+                        // is more than one line"). Combined with the
+                        // `.defaultLow` content priorities set in
+                        // `makeUIView`, the SwiftUI frame is now the
+                        // sole source of truth for both axes.
+                        .frame(maxWidth: .infinity, minHeight: textHeight, maxHeight: textHeight)
                         .padding(.trailing, 20)
                     }
 
