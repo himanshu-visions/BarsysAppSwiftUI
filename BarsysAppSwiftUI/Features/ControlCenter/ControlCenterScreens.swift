@@ -536,6 +536,15 @@ struct DevicePairedView: View {
     @EnvironmentObject private var ble: BLEService
     @EnvironmentObject private var catalog: CatalogService
 
+    /// Vertical size class drives the iPhone-landscape-only 4-column
+    /// layout for the main menu grid. SwiftUI reports
+    /// `verticalSizeClass = .compact` on iPhones in landscape only;
+    /// every iPhone in portrait and every iPad in any orientation
+    /// reports `.regular`. So checking `.compact` is the safest
+    /// "iPhone landscape" predicate without device-/iOS-version
+    /// special-casing.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     /// Bottom breathing room above the tab bar. iOS 26+ glass blurs
     /// over content (30pt is enough and was the pre-existing value);
     /// pre-iOS 26's opaque tab bar + hairline needs ~50pt so the
@@ -828,9 +837,37 @@ struct DevicePairedView: View {
         return "Watch the video for a step-by-step guide on how to use your Barsys Shaker"
     }
 
-    // Main grid: 2 columns, spacing 15 → cell width = (containerWidth - 15) / 2
-    private let gridColumns = [GridItem(.flexible(), spacing: 15),
-                                GridItem(.flexible(), spacing: 15)]
+    // Main grid columns. Orientation-aware so iPhone landscape — where
+    // the 2-column layout makes each card stretch awkwardly wide and
+    // pushes "Host an Event" / "Party Mode" off-screen behind the
+    // scroll fold — gets a 4-up row that uses the extra horizontal
+    // canvas. iPhone portrait and iPad (any orientation) keep the
+    // original 2-column grid bit-identically.
+    //
+    // `verticalSizeClass == .compact` is true on iPhone landscape
+    // ONLY. Every iPhone in portrait and every iPad in any
+    // orientation reports `.regular`, so this predicate is the
+    // tightest possible scope for the layout change.
+    private var gridColumns: [GridItem] {
+        if verticalSizeClass == .compact {
+            // iPhone landscape — 4 columns at 15pt spacing so the
+            // four primary action tiles (Ready to Pour / Explore
+            // Recipes / Cocktail Kits / Host an Event etc.) all fit
+            // in a single row with no wrap.
+            return [
+                GridItem(.flexible(), spacing: 15),
+                GridItem(.flexible(), spacing: 15),
+                GridItem(.flexible(), spacing: 15),
+                GridItem(.flexible(), spacing: 15)
+            ]
+        }
+        // iPhone portrait + iPad — original 2-column layout
+        // (cell width = (containerWidth - 15) / 2). Untouched.
+        return [
+            GridItem(.flexible(), spacing: 15),
+            GridItem(.flexible(), spacing: 15)
+        ]
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -1125,9 +1162,18 @@ struct DevicePairedView: View {
 
                 GeometryReader { geo in
                     // Card-width sizing rules:
-                    //   • iPhone (any iOS) → responsive formula
-                    //     `(geo.size.width - 24 - 32) / 2.15` yields
-                    //     ≈157pt on iPhone 14 — bit-identical to before.
+                    //   • iPhone PORTRAIT (verticalSizeClass .regular) →
+                    //     responsive formula `(geo.size.width - 24 - 32) / 2.15`
+                    //     yields ≈157pt on iPhone 14 — bit-identical to before.
+                    //   • iPhone LANDSCAPE (verticalSizeClass .compact) →
+                    //     4-up formula matching the main menu grid above:
+                    //     `(geo.size.width - 24 - 24 - 16·3) / 4` so all
+                    //     four partnership tiles fit in a single row at
+                    //     the same physical card width as the main
+                    //     action-tile grid. Without this the responsive
+                    //     formula gave ≈370pt cards on landscape iPhone
+                    //     (one tile filled the screen edge-to-edge),
+                    //     which looked oversized vs the 4-up main grid.
                     //   • iPad pre-iOS 26 → previously capped at 180pt
                     //     (same scale as a large iPhone card). QA
                     //     reported the cards looked too small on the
@@ -1137,8 +1183,15 @@ struct DevicePairedView: View {
                     //     other Explore tiles instead of stretching to
                     //     ≈450pt across the screen.
                     let isIPad = UIDevice.current.userInterfaceIdiom == .pad
-                    let rawCardW = (geo.size.width - 24 - 32) / 2.15
-                    let cardW: CGFloat = isIPad ? min(280, rawCardW) : rawCardW
+                    let isIPhoneLandscape = !isIPad && verticalSizeClass == .compact
+                    let cardW: CGFloat = {
+                        if isIPhoneLandscape {
+                            // 24pt leading + 24pt trailing + 3 × 16pt spacing = 96pt overhead.
+                            return max(0, (geo.size.width - 96) / 4)
+                        }
+                        let rawCardW = (geo.size.width - 24 - 32) / 2.15
+                        return isIPad ? min(280, rawCardW) : rawCardW
+                    }()
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(Array(partnerships.enumerated()), id: \.offset) { _, p in
@@ -1182,9 +1235,21 @@ struct DevicePairedView: View {
                         .padding(.horizontal, 24)
                     }
                 }
-                // iPhone: image ≈ 165 + 8 spacing + 20 label + buffer = 210.
-                // iPad: image up to 280 + 8 spacing + 24 label + buffer = 320.
-                .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 330 : 210)
+                // Section height — must accommodate the tallest card
+                // variant since the GeometryReader's child is a fixed
+                // `.frame(width: cardW, height: cardW)` square.
+                //   • iPhone portrait: image ≈ 157 + 8 + 20 + buffer = 210
+                //   • iPhone landscape: image ≈ 189 + 8 + 20 + buffer = 240
+                //     (cards are wider in landscape because of the
+                //      4-up formula above; section needs more vertical
+                //      room or the image gets clipped at the bottom)
+                //   • iPad: 330 — image up to 280 + 8 + 24 + buffer.
+                .frame(height: {
+                    let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+                    if isIPad { return CGFloat(330) }
+                    if verticalSizeClass == .compact { return CGFloat(240) }
+                    return CGFloat(210)
+                }())
                 .padding(.top, 12)
 
                 // ══════════════════════════════════════════════════
@@ -1195,12 +1260,23 @@ struct DevicePairedView: View {
                     .padding(.top, 24)
 
                 GeometryReader { geo in
-                    // Same iPad-up sizing rule as Partnerships above —
-                    // 280pt cards on iPad (every iOS), responsive
-                    // formula on iPhone. iPhone bit-identical.
+                    // Same orientation-aware sizing rule as Partnerships
+                    // above — see the Partnerships block for the full
+                    // rationale:
+                    //   • iPhone portrait → responsive 2-up formula (bit-identical to before)
+                    //   • iPhone landscape → 4-up formula so all four
+                    //     Barsys Product tiles fit in a single row at the
+                    //     same card width as the main menu grid.
+                    //   • iPad (any iOS) → 280pt cap.
                     let isIPad = UIDevice.current.userInterfaceIdiom == .pad
-                    let rawCardW = (geo.size.width - 24 - 32) / 2.15
-                    let cardW: CGFloat = isIPad ? min(280, rawCardW) : rawCardW
+                    let isIPhoneLandscape = !isIPad && verticalSizeClass == .compact
+                    let cardW: CGFloat = {
+                        if isIPhoneLandscape {
+                            return max(0, (geo.size.width - 96) / 4)
+                        }
+                        let rawCardW = (geo.size.width - 24 - 32) / 2.15
+                        return isIPad ? min(280, rawCardW) : rawCardW
+                    }()
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(Array(barsysProducts.enumerated()), id: \.offset) { _, p in
@@ -1233,9 +1309,18 @@ struct DevicePairedView: View {
                         .padding(.horizontal, 24)
                     }
                 }
-                // iPhone: 210pt (unchanged). iPad: 330pt to fit the
-                // larger 280pt image + label band.
-                .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 330 : 210)
+                // Section height — same orientation-aware rule as
+                // Partnerships above:
+                //   • iPad: 330pt
+                //   • iPhone landscape: 240pt (wider 4-up cards
+                //     need extra room or they clip at the bottom)
+                //   • iPhone portrait: 210pt (unchanged)
+                .frame(height: {
+                    let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+                    if isIPad { return CGFloat(330) }
+                    if verticalSizeClass == .compact { return CGFloat(240) }
+                    return CGFloat(210)
+                }())
                 .padding(.top, 12)
                 .padding(.bottom, devicePairedBottomInset)
 
