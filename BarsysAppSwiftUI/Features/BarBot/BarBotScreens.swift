@@ -1460,6 +1460,11 @@ struct WelcomeOccasionSection: View {
     @ObservedObject var vm: BarBotViewModel
     let onSelect: (BarBotOption) -> Void
 
+    /// Drives the iPhone-landscape branch (compact vertical size
+    /// class on a non-iPad host). iPad and iPhone-portrait keep the
+    /// existing layout bit-identically.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     /// iPad-only sizing knobs for the "Let's get crafting" 2×2 grid.
     /// iPhone keeps the UIKit-parity 120pt tile / 14pt title / 12pt
     /// description / 18pt header bit-identically — every value below
@@ -1467,8 +1472,26 @@ struct WelcomeOccasionSection: View {
     private var isIPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
+    /// True only when an iPhone is rotated to landscape. iPad stays
+    /// false in every orientation so its layout is untouched.
+    private var isPhoneLandscape: Bool {
+        !isIPad && verticalSizeClass == .compact
+    }
     private var tileHeight: CGFloat       { isIPad ? 210 : 120 }
     private var gridSpacing: CGFloat       { 6 }
+    /// 4 columns on iPhone landscape so all four "Let's get crafting"
+    /// tiles fit on a single row in the ~390pt-tall canvas. iPhone
+    /// portrait + iPad keep the UIKit-parity 2-column grid.
+    private var gridColumnCount: Int { isPhoneLandscape ? 4 : 2 }
+    /// Vertical breathing room between the welcome message and the
+    /// "Let's get crafting" header. iPhone landscape collapses the
+    /// generous UIKit 70pt gap to 16pt so the header + tiles still
+    /// fit on screen without scrolling. Portrait + iPad unchanged.
+    private var welcomeToOptionsGap: CGFloat { isPhoneLandscape ? 16 : 70 }
+    /// Top padding above the welcome label. iPhone landscape trims
+    /// the UIKit 12pt to 4pt so the welcome doesn't push the grid
+    /// off-screen. Portrait + iPad unchanged.
+    private var welcomeTopPadding: CGFloat { isPhoneLandscape ? 4 : 12 }
     private var headerFontSize: CGFloat    { isIPad ? 24 : 18 }
     private var tileTitleFontSize: CGFloat { isIPad ? 20 : 14 }
     private var tilePromptFontSize: CGFloat { isIPad ? 15 : 12 }
@@ -1494,7 +1517,7 @@ struct WelcomeOccasionSection: View {
                 .foregroundStyle(Color("mediumLightGrayColor").opacity(0.51))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 12)
+                .padding(.top, welcomeTopPadding)
                 .accessibilityAddTraits(.isHeader)
 
             // ---- Flex gap between welcome and options block ----
@@ -1516,8 +1539,10 @@ struct WelcomeOccasionSection: View {
             // spacer below the welcome message so the options block
             // sits noticeably lower, matching the visual rhythm of the
             // UIKit xib while still letting the cell remain
-            // content-sized in a SwiftUI `LazyVStack`.
-            Color.clear.frame(height: 70)
+            // content-sized in a SwiftUI `LazyVStack`. iPhone landscape
+            // collapses to ~16pt (`welcomeToOptionsGap`) so the grid
+            // still fits inside the ~390pt compact canvas.
+            Color.clear.frame(height: welcomeToOptionsGap)
 
             // Options block — "Let's get crafting" label + 2×2 grid.
             // UIKit internal spacing `Txz-p7-YgZ`: WNl-Dc-66p.top =
@@ -1540,8 +1565,10 @@ struct WelcomeOccasionSection: View {
     }
 
     private var grid: some View {
-        let cols = [GridItem(.flexible(), spacing: gridSpacing),
-                    GridItem(.flexible(), spacing: gridSpacing)]
+        let cols = Array(
+            repeating: GridItem(.flexible(), spacing: gridSpacing),
+            count: gridColumnCount
+        )
         return LazyVGrid(columns: cols, spacing: gridSpacing) {
             ForEach(vm.options) { opt in
                 Button {
@@ -1626,8 +1653,10 @@ struct WelcomeOccasionSection: View {
     //     doesn't apply to the skeleton — UIKit skeleton uses full 120pt).
     //   - Shimmer re-uses the shared `ShimmerModifier` (1.2s horizontal).
     private var skeletonGrid: some View {
-        let cols = [GridItem(.flexible(), spacing: gridSpacing),
-                    GridItem(.flexible(), spacing: gridSpacing)]
+        let cols = Array(
+            repeating: GridItem(.flexible(), spacing: gridSpacing),
+            count: gridColumnCount
+        )
         return LazyVGrid(columns: cols, spacing: gridSpacing) {
             ForEach(0..<4, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -4210,9 +4239,20 @@ struct BarBotHistorySideMenuOverlay: View {
 struct BarBotHistoryView: View {
     @StateObject private var standaloneVM = BarBotViewModel()
     @Environment(\.dismiss) private var envDismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ObservedObject private var injectedVM: BarBotViewModel
     private let ownsVM: Bool
     private let dismissAction: (() -> Void)?
+
+    /// True only when an iPhone is rotated to landscape. Used to
+    /// trim the title's 45pt top padding (storyboard parity) down
+    /// to a value that doesn't push the New Chat card off-screen
+    /// in the ~390pt-tall compact canvas. iPad and iPhone-portrait
+    /// keep the original 45pt unchanged.
+    private var isPhoneLandscape: Bool {
+        UIDevice.current.userInterfaceIdiom != .pad
+            && verticalSizeClass == .compact
+    }
 
     /// Init used when presented as a sheet/overlay by BarBotCraftView.
     init(vm: BarBotViewModel, dismiss: @escaping () -> Void) {
@@ -4241,13 +4281,16 @@ struct BarBotHistoryView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // Title — x=24 y=45 (from safeArea top), 24pt, appBlackColor.
                 // iPad bumps to 32pt so the screen title matches Ready
-                // to Pour on the wider canvas. iPhone unchanged.
+                // to Pour on the wider canvas. iPhone landscape trims
+                // the top inset to 12pt so the title + New Chat card +
+                // first session row remain visible inside the ~390pt
+                // compact canvas. iPhone portrait + iPad unchanged.
                 Text("History")
                     .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.leading, 24)
                     .padding(.trailing, 24)
-                    .padding(.top, 45)
+                    .padding(.top, isPhoneLandscape ? 12 : 45)
 
                 // New Chat card — y = 93.66 - 73.66 = 20pt gap from title bottom.
                 newChatCard
