@@ -782,6 +782,15 @@ struct MixlistDetailView: View {
               count: gridColumnCount)
     }
 
+    /// True only when the host is an iPhone in landscape (compact
+    /// vertical size class). Drives the banner-height cap so the 1:1
+    /// square hero doesn't eat the entire ~390pt landscape canvas.
+    /// iPad and iPhone-portrait keep the original square banner.
+    private var isPhoneLandscape: Bool {
+        UIDevice.current.userInterfaceIdiom != .pad
+            && verticalSizeClass == .compact
+    }
+
     /// Forces `recipes` to re-evaluate after a heart-toggle that goes
     /// through `env.storage.toggleFavorite(_:)`. `MockStorageService`
     /// is a plain class (not `ObservableObject`), so mutations don't
@@ -1079,9 +1088,26 @@ struct MixlistDetailView: View {
         // parent provides width. The AsyncImage is overlaid on top of
         // that locked frame — it can load at any size without
         // perturbing layout.
-        Color("lightBorderGrayColor")
-            .aspectRatio(1, contentMode: .fit)
+        //
+        // iPhone landscape: a 1:1 square at the padded width
+        // (~804pt on iPhone 15 Pro Max) eats more than the entire
+        // ~390pt-tall canvas, leaving the tabs / recipe list pushed
+        // off-screen. Cap the banner to a 200pt-tall flat banner —
+        // the `aspectFill` AsyncImage overlay still fills the visible
+        // crop without distortion. iPad and iPhone-portrait keep the
+        // UIKit-parity 1:1 square via the original
+        // `.aspectRatio(1, .fit)` modifier.
+        let landscapeBannerHeight: CGFloat = 200
+        let placeholder = Color("lightBorderGrayColor")
             .frame(maxWidth: .infinity)
+        let sizedPlaceholder = Group {
+            if isPhoneLandscape {
+                placeholder.frame(height: landscapeBannerHeight)
+            } else {
+                placeholder.aspectRatio(1, contentMode: .fit)
+            }
+        }
+        return sizedPlaceholder
             .overlay(
                 AsyncImage(url: URL(string: mixlist.imageURL)) { phase in
                     switch phase {
