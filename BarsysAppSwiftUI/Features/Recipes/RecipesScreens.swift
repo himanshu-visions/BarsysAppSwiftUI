@@ -4332,6 +4332,14 @@ struct EditRecipeView: View {
 
     /// 120×120 thumbnail for a locally-picked UIImage — 1:1 with UIKit
     /// `showImgView` post-pick (`didSelectImagesFromPhotos` L382-386).
+    /// Same `lightBorderGrayColor` card background as the remote
+    /// thumbnail and the Favorites My Drinks row so the recipe image
+    /// keeps a consistent treatment across freshly-picked photos
+    /// (this branch) and previously-saved My Drinks images (the
+    /// remote-URL branch above). The `.fill` aspect typically covers
+    /// the whole 120×120 frame; the background is the safety net for
+    /// non-square source assets and the brief moment between pick
+    /// and decode where the UIImage hasn't drawn yet.
     @ViewBuilder
     private func imageThumbnail(localImage: UIImage) -> some View {
         ZStack(alignment: .topTrailing) {
@@ -4339,6 +4347,7 @@ struct EditRecipeView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 120, height: 120)
+                .background(Color("lightBorderGrayColor"))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             imageDeleteButton
         }
@@ -4347,26 +4356,49 @@ struct EditRecipeView: View {
     /// 120×120 thumbnail for a remote URL — 1:1 with UIKit
     /// `showImgView.sd_setImage(with: imgUrl, placeholderImage: .myDrink)`
     /// at `EditViewController` L133-141.
+    ///
+    /// Style matched to the My Drinks row image on Favorites
+    /// (FavoritesView.swift L1341-1361) so the recipe image keeps
+    /// the same visual treatment across the listing and the editor:
+    ///
+    ///   • `CachedAsyncImage` (DesignSystem/Components.swift) — disk-
+    ///     backed drop-in for `AsyncImage`. UIKit `sd_setImage(with:)`
+    ///     served SDWebImage's persistent disk cache when offline, so
+    ///     an existing recipe's thumbnail came back on every cold
+    ///     launch even with no network. The SwiftUI port previously
+    ///     used stock `AsyncImage` (no on-disk cache) and the user
+    ///     reported "drink image is not showing correctly" on offline
+    ///     edit.
+    ///   • Placeholder uses `.fit + padding(16)` exactly like the
+    ///     Favorites row — keeps the placeholder glyph visually
+    ///     centred inside the card instead of letting `.scaleAspectFill`
+    ///     crop its edges.
+    ///   • `.background(Color("lightBorderGrayColor"))` on the image
+    ///     frame — same colour the Favorites row paints behind its
+    ///     thumbnail, so the 120×120 area always has a defined card
+    ///     colour underneath the placeholder corners (the
+    ///     "background color is not coming correctly" report). Sits
+    ///     INSIDE the `.clipShape(RoundedRectangle…)` so the
+    ///     background colour is rounded with the card.
     @ViewBuilder
     private func imageThumbnail(remoteURL: URL) -> some View {
         ZStack(alignment: .topTrailing) {
-            AsyncImage(url: remoteURL) { phase in
+            CachedAsyncImage(url: remoteURL) { phase in
                 switch phase {
                 case .success(let img):
                     img.resizable().aspectRatio(contentMode: .fill)
-                case .empty:
-                    Image("myDrink")
-                        .resizable().aspectRatio(contentMode: .fit)
-                        .padding(16)
-                case .failure:
+                case .empty, .failure:
                     Image("myDrink")
                         .resizable().aspectRatio(contentMode: .fit)
                         .padding(16)
                 @unknown default:
-                    Color("lightBorderGrayColor")
+                    Image("myDrink")
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .padding(16)
                 }
             }
             .frame(width: 120, height: 120)
+            .background(Color("lightBorderGrayColor"))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             imageDeleteButton
         }
