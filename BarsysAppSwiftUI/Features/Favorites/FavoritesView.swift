@@ -116,11 +116,33 @@ struct FavoritesView: View {
     /// icon to near-white ONLY in dark mode (light mode keeps the
     /// raw PNG so pixels stay bit-identical to the existing design).
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var selectedTab: FavouritesTab = .barsysRecipes
     @State private var showMoreMenuFor: RecipeID? = nil
     @State private var didTrackView = false
     @State private var recipeToEdit: Recipe? = nil
+
+    /// Layout selector for the favourite/My-Drinks listing.
+    /// iPad always renders the grid (2 columns). iPhone uses the
+    /// single-column list in portrait and switches to a 3-column
+    /// grid in landscape (verticalSizeClass == .compact).
+    /// Portrait iPhone behaviour is unchanged.
+    private var useGridLayout: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return true }
+        return verticalSizeClass == .compact
+    }
+
+    /// Grid column count when `useGridLayout` is true.
+    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    private var gridColumnCount: Int {
+        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+    }
+
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 16),
+              count: gridColumnCount)
+    }
 
     /// Forces `rows` to re-evaluate after a mutation that doesn't go
     /// through a `@Published` source. `MockStorageService` is plain
@@ -566,20 +588,16 @@ struct FavoritesView: View {
             let cellWidth = UIScreen.main.bounds.width - 48
             let rowHeight = cellWidth / 2
 
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                // iPad: 2-column LazyVGrid of vertical favourite
-                // cards. Preserves all per-tab functionality:
+            if useGridLayout {
+                // LazyVGrid of vertical favourite cards — iPad: 2
+                // columns; iPhone landscape: 3 columns. Preserves all
+                // per-tab functionality:
                 //   • Heart toggle on every card.
                 //   • My Drinks "more" menu (Edit / Delete) anchored
                 //     to the bottom-right of each card.
                 //   • Pagination trigger on the last visible card.
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: 16),
-                        GridItem(.flexible(), spacing: 16)
-                    ],
-                    spacing: 16
-                ) {
+                // iPhone portrait keeps the LazyVStack list below.
+                LazyVGrid(columns: gridColumns, spacing: 16) {
                     ForEach(rows) { recipe in
                         BarsysRecipeGridCell(
                             recipe: recipe,

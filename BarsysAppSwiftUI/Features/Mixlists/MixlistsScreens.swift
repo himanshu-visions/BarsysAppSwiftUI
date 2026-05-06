@@ -25,10 +25,32 @@ struct MixlistListView: View {
     @EnvironmentObject private var catalog: CatalogService
     @EnvironmentObject private var ble: BLEService
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var query = ""
 
     private var isConnected: Bool { ble.isAnyDeviceConnected }
+
+    /// Layout selector for the Cocktail Kits listing.
+    /// iPad always renders the grid (2 columns). iPhone uses the
+    /// single-column list in portrait and switches to a 3-column
+    /// grid in landscape (verticalSizeClass == .compact).
+    /// Portrait iPhone behaviour is unchanged.
+    private var useGridLayout: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return true }
+        return verticalSizeClass == .compact
+    }
+
+    /// Grid column count when `useGridLayout` is true.
+    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    private var gridColumnCount: Int {
+        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+    }
+
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 16),
+              count: gridColumnCount)
+    }
 
     /// Bottom breathing room above the tab bar on Cocktail Kits / Mixlists.
     /// iOS 26+ glass tab bar → 20pt (bit-identical to before);
@@ -139,8 +161,8 @@ struct MixlistListView: View {
                 // instead of any loading indicator. Skeletons take
                 // priority over the empty-state copy now.
                 if catalog.isLoading && catalog.mixlists.isEmpty {
-                    if UIDevice.current.userInterfaceIdiom == .pad {
-                        MixlistGridSkeleton()
+                    if useGridLayout {
+                        MixlistGridSkeleton(columnCount: gridColumnCount)
                             .padding(.horizontal, 24)
                             .padding(.top, 15)
                             .padding(.bottom, mixlistListBottomInset)
@@ -166,18 +188,14 @@ struct MixlistListView: View {
                     // on every screen size.
                     Color.clear.frame(height: 1)
                 } else {
-                    if UIDevice.current.userInterfaceIdiom == .pad {
-                        // iPad: 2-column LazyVGrid of vertical mixlist
-                        // cards. Cocktail Kits doesn't have favourite
-                        // or craft buttons (UIKit hides them on this
-                        // listing) — taps push the mixlist detail.
-                        LazyVGrid(
-                            columns: [
-                                GridItem(.flexible(), spacing: 16),
-                                GridItem(.flexible(), spacing: 16)
-                            ],
-                            spacing: 16
-                        ) {
+                    if useGridLayout {
+                        // LazyVGrid of vertical mixlist cards — iPad: 2
+                        // columns; iPhone landscape: 3 columns. Cocktail
+                        // Kits doesn't have favourite or craft buttons
+                        // (UIKit hides them on this listing) — taps push
+                        // the mixlist detail. iPhone portrait keeps the
+                        // LazyVStack single-column list below.
+                        LazyVGrid(columns: gridColumns, spacing: 16) {
                             ForEach(filtered) { mixlist in
                                 Button {
                                     HapticService.light()
@@ -624,19 +642,20 @@ struct MixlistRowSkeleton: View {
     }
 }
 
-/// iPad 2-column grid skeleton — mirrors `MixlistGridCell`. 6
-/// placeholder cards (3 rows × 2 columns) feels like a populated
-/// grid instead of empty space.
+/// Grid skeleton — mirrors `MixlistGridCell`. iPad caller passes 2
+/// columns (default), iPhone-landscape caller passes 3. Three rows
+/// of placeholders feel like a populated grid instead of empty
+/// space; the placeholder count scales with `columnCount`.
 struct MixlistGridSkeleton: View {
+    var columnCount: Int = 2
+
     var body: some View {
         LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 16),
-                GridItem(.flexible(), spacing: 16)
-            ],
+            columns: Array(repeating: GridItem(.flexible(), spacing: 16),
+                           count: columnCount),
             spacing: 16
         ) {
-            ForEach(0..<6, id: \.self) { _ in
+            ForEach(0..<(columnCount * 3), id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 0) {
                     // Square image area (matches `MixlistGridCell`'s
                     // GeometryReader 1:1 aspect).

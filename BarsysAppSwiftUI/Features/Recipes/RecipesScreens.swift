@@ -310,9 +310,31 @@ struct ExploreRecipesView: View {
     @EnvironmentObject private var catalog: CatalogService
     @EnvironmentObject private var ble: BLEService
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var query = ""
     @State private var isSearching = false
+
+    /// Layout selector for the recipe listing.
+    /// iPad always renders the grid (2 columns). iPhone uses the
+    /// single-column list in portrait and switches to a 3-column
+    /// grid in landscape (verticalSizeClass == .compact).
+    /// Portrait iPhone behaviour is unchanged.
+    private var useGridLayout: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return true }
+        return verticalSizeClass == .compact
+    }
+
+    /// Grid column count when `useGridLayout` is true.
+    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    private var gridColumnCount: Int {
+        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+    }
+
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 16),
+              count: gridColumnCount)
+    }
 
     /// Bumped on every `.onAppear` so the `exploreRecipes` computed
     /// property re-evaluates against the live storage state. Required
@@ -525,8 +547,8 @@ struct ExploreRecipesView: View {
                 let rowHeight = cellWidth / 2
 
                 if catalog.isLoading && catalog.recipes.isEmpty {
-                    if UIDevice.current.userInterfaceIdiom == .pad {
-                        RecipeGridSkeleton()
+                    if useGridLayout {
+                        RecipeGridSkeleton(columnCount: gridColumnCount)
                             .padding(.horizontal, 24)
                             .padding(.top, 15)
                             .padding(.bottom, exploreRecipesBottomInset)
@@ -573,18 +595,12 @@ struct ExploreRecipesView: View {
                                         ? Constants.likeSuccessMessage
                                         : Constants.unlikeSuccessMessage)
                     }
-                    if UIDevice.current.userInterfaceIdiom == .pad {
-                        // iPad: 2-column LazyVGrid of vertical recipe
-                        // cards — preserves favourite heart, tap-to-
-                        // open navigation, and the Loading / pagination
-                        // / empty-state plumbing exactly as on iPhone.
-                        LazyVGrid(
-                            columns: [
-                                GridItem(.flexible(), spacing: 16),
-                                GridItem(.flexible(), spacing: 16)
-                            ],
-                            spacing: 16
-                        ) {
+                    if useGridLayout {
+                        // LazyVGrid of vertical recipe cards.
+                        // iPad: 2 columns. iPhone landscape: 3 columns.
+                        // iPhone portrait keeps the LazyVStack list
+                        // below.
+                        LazyVGrid(columns: gridColumns, spacing: 16) {
                             ForEach(filtered) { recipe in
                                 RecipeGridCell(
                                     recipe: recipe,
@@ -1127,15 +1143,18 @@ struct RecipeRowSkeleton: View {
 /// iPad 2-column grid skeleton — mirrors `RecipeGridCell` (square
 /// image on top, title + ingredients band, favourite circle).
 struct RecipeGridSkeleton: View {
+    /// Column count — iPad caller passes 2 (default), iPhone-landscape
+    /// caller passes 3. Skeleton placeholder count scales with columns
+    /// so the loading shimmer fills the visible row range cleanly.
+    var columnCount: Int = 2
+
     var body: some View {
         LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 16),
-                GridItem(.flexible(), spacing: 16)
-            ],
+            columns: Array(repeating: GridItem(.flexible(), spacing: 16),
+                           count: columnCount),
             spacing: 16
         ) {
-            ForEach(0..<6, id: \.self) { _ in
+            ForEach(0..<(columnCount * 3), id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 0) {
                     ZStack(alignment: .topTrailing) {
                         SkeletonBlock(cornerRadius: 0)

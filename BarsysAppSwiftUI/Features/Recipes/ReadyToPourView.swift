@@ -37,12 +37,34 @@ struct ReadyToPourView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var selectedTab: ReadyToPourTab = .recipes
     @State private var recipes: [Recipe] = []
     @State private var mixlists: [Mixlist] = []
     @State private var selectedMixlist: Mixlist? = nil
     @State private var didLoad = false
+
+    /// Layout selector for the recipes / mixlists listings.
+    /// iPad always renders the grid (2 columns). iPhone uses the
+    /// single-column list in portrait and switches to a 3-column
+    /// grid in landscape (verticalSizeClass == .compact).
+    /// Portrait iPhone behaviour is unchanged.
+    private var useGridLayout: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return true }
+        return verticalSizeClass == .compact
+    }
+
+    /// Grid column count when `useGridLayout` is true.
+    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    private var gridColumnCount: Int {
+        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+    }
+
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 16),
+              count: gridColumnCount)
+    }
 
     /// 1:1 with UIKit `ReadyToPourListViewController+Search.swift`
     /// `getMixlists` (L67-85). When the Mixlists tab is loaded and
@@ -367,21 +389,15 @@ struct ReadyToPourView: View {
         let rowHeight = cellWidth / 2
         let source = overrideRecipes ?? displayRecipes
 
-        // iPad: render the recipes as a 2-column LazyVGrid of vertical
-        // cards (image on top, name + ingredients + craft button
-        // below) — matches the BarBot recipe-card layout the user
-        // asked us to use as a template. iPhone keeps the original
-        // single-column LazyVStack of horizontal rows bit-identical.
-        if UIDevice.current.userInterfaceIdiom == .pad {
+        // 2-column LazyVGrid of vertical recipe cards (image on top,
+        // name + ingredients + craft button below) — iPad always,
+        // iPhone in landscape (compact vertical size class). iPhone
+        // portrait keeps the original single-column LazyVStack of
+        // horizontal rows bit-identical.
+        if useGridLayout {
             return AnyView(
                 ScrollView {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.flexible(), spacing: 16),
-                            GridItem(.flexible(), spacing: 16)
-                        ],
-                        spacing: 16
-                    ) {
+                    LazyVGrid(columns: gridColumns, spacing: 16) {
                         ForEach(source) { recipe in
                             ReadyToPourRecipeGridCell(
                                 recipe: recipe,
@@ -434,18 +450,14 @@ struct ReadyToPourView: View {
         let cellWidth = UIScreen.main.bounds.width - 48
         let rowHeight = cellWidth / 2
 
-        // iPad: 2-column grid of vertical mixlist cards. iPhone:
-        // single-column LazyVStack of horizontal rows.
-        if UIDevice.current.userInterfaceIdiom == .pad {
+        // 2-column grid of vertical mixlist cards — iPad always,
+        // iPhone in landscape (compact vertical size class).
+        // iPhone portrait keeps the single-column LazyVStack of
+        // horizontal rows bit-identical.
+        if useGridLayout {
             return AnyView(
                 ScrollView {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.flexible(), spacing: 16),
-                            GridItem(.flexible(), spacing: 16)
-                        ],
-                        spacing: 16
-                    ) {
+                    LazyVGrid(columns: gridColumns, spacing: 16) {
                         ForEach(mixlists) { mixlist in
                             Button {
                                 HapticService.light()
