@@ -1919,11 +1919,23 @@ final class BarsysImageCache: @unchecked Sendable {
     }
 
     /// Persists raw image bytes to both layers. Called after a
-    /// successful network fetch — never blocks the caller's queue.
+    /// successful network fetch.
+    ///
+    /// Disk write is dispatched **synchronously** onto a background
+    /// queue. Callers run inside an `async` task on a URLSession
+    /// continuation thread so this never blocks the main UI; the
+    /// trade-off is that we guarantee the file landed on disk before
+    /// `store` returns. The previous `diskQueue.async` version could
+    /// drop the write entirely if the user backgrounded the app
+    /// between the fetch completing and the write executing — exactly
+    /// the "image cached the first time but missing on next run"
+    /// pattern the user reported. Mirrors SDWebImage's default
+    /// `SDImageCache.storeImage(...)` which also serialises the disk
+    /// write before signalling completion.
     func store(_ data: Data, image: UIImage, for url: URL) {
         memCache.setObject(image, forKey: url as NSURL, cost: data.count)
         let path = filePath(for: url)
-        diskQueue.async {
+        diskQueue.sync {
             try? data.write(to: path, options: .atomic)
         }
     }
