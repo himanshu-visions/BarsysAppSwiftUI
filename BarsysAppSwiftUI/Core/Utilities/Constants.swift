@@ -272,6 +272,21 @@ enum Constants {
     static let cameraRequiredAuthorizationForQr = "The app needs access to your camera to scan QRCode."
     static let cameraRequiredAuthorizationForScanIngredients = "The app needs access to your camera to scan ingredients."
     static let openSettingsTitle = "Open Settings"
+    /// 1:1 with UIKit `Constants.appNeedsCameraAccess` — title shown
+    /// in the Cancel / Go-to-Settings popup when the user taps
+    /// Camera in the Add Ingredients / BarBot / Edit Recipe / Profile
+    /// image-picker chooser and camera permission is `.denied` or
+    /// `.restricted` (or the just-prompted `.notDetermined` request
+    /// was rejected). Source: ImagePickerViewController.swift L91-119
+    /// `checkAuthorizationAndShowCamera`.
+    static let appNeedsCameraAccess = "The app needs access to your camera to select images"
+    /// 1:1 with UIKit `Constants.appNeedsgalleryPermission` — title
+    /// shown in the Go-to-Settings / Cancel popup when the user taps
+    /// Photos in the image-picker chooser and photo-library
+    /// permission is `.denied` or `.restricted`. Source:
+    /// ImagePickerViewController.swift L172-203
+    /// `checkAuthorizationAndShowPhotos`.
+    static let appNeedsGalleryAccess = "The app needs access to your gallery to select images."
     static let fillStationsTitle = "Fill Stations"
     static let stationsTitle = "Stations"
     static let profileUpdateMessage = "Profile updated successfully."
@@ -394,6 +409,11 @@ enum ConstantButtonsTitle {
     // 1:1 with UIKit `Constants+UI.swift` L41 — used by the
     // "No mixlists available" alert in ReadyToPour.
     static let exploreButtonTitle = "Explore"
+    /// 1:1 with UIKit `ConstantButtonsTitle.goToSettingsTitle`
+    /// (Constants+UI.swift L24). Used by the camera / gallery
+    /// permission-denied alerts to deep-link the user into the
+    /// Settings app where they can flip the access toggle back on.
+    static let goToSettingsTitle = "Go to settings"
 }
 
 // MARK: - ReadyToPour empty-mixlists alert

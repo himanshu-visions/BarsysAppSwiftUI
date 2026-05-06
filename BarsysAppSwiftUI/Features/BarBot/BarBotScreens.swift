@@ -985,41 +985,61 @@ final class BarBotViewModel: ObservableObject {
 
 // MARK: - Support: Bounce button style (ports addBounceEffect)
 
-/// View modifier that presents the Camera / Photo Library / Cancel
-/// chooser, picking the right SwiftUI presentation style by idiom:
+/// View modifier that presents the Camera / Photos / Cancel chooser
+/// matching UIKit `showActionSheetForImagePicker`
+/// (ImagePickerViewController.swift L45-89):
 ///
-///   • iPhone → `.confirmationDialog` (UIKit-style bottom action
-///     sheet, matches the historical behaviour of every other
-///     `.confirmationDialog` in the app on iPhone).
-///   • iPad   → `.alert` (centered modal stacked vertically with
-///     three full-width buttons, rendered ABOVE every other view).
-///     `.confirmationDialog` on iPad renders as a tiny popover
-///     anchored near the source view — the user reported the
-///     popover as "very small" and visually hard to tap. The
-///     centered alert is guaranteed to be visible at full size on
-///     every iPad portrait/landscape orientation.
+///   • iOS < 26 iPhone  → `.confirmationDialog` (bottom action sheet,
+///     UIKit `.actionSheet` parity).
+///   • iOS 26+ iPhone   → `.alert` (centered modal). UIKit branches
+///     on `if #available(iOS 26.0, *) { style = .alert }` because
+///     the action-sheet style was deprecated on iOS 26 and the new
+///     system style is a centered alert with three pill buttons.
+///   • iPad             → `.alert` (centered modal). UIKit's
+///     `.actionSheet` popover anchored on iPad renders as a tiny
+///     tap target — `.alert` matches the readable size shown in
+///     the older app on every orientation.
 private struct AttachmentChoiceModifier: ViewModifier {
     @Binding var isPresented: Bool
     let onCamera: () -> Void
     let onPhotoLibrary: () -> Void
 
+    // 1:1 with UIKit `showActionSheetForImagePicker`
+    // (ImagePickerViewController.swift L45-89): iPad + iOS 26+ use
+    // `.alert` (centered modal with stacked pill buttons), older
+    // iPhones keep the bottom `.confirmationDialog` action sheet.
+    // Labels also switch to "Photos" (UIKit
+    // `ConstantButtonsTitle.photosTitle`) — the previous "Photo
+    // Library" wording diverged from the older app.
+    private var useCenteredAlert: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return true }
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
+
     func body(content: Content) -> some View {
-        if UIDevice.current.userInterfaceIdiom == .pad {
+        // `.tint(appBlackColor)` recolors the alert / action-sheet
+        // button labels from system blue to brand black, mirroring
+        // MyProfile's image picker popup (MyProfileView.swift L854-860)
+        // and UIKit's default tinting on `UIAlertController` actions.
+        if useCenteredAlert {
             content
                 .alert("Please select an option", isPresented: $isPresented) {
                     Button("Camera") { onCamera() }
-                    Button("Photo Library") { onPhotoLibrary() }
+                    Button("Photos") { onPhotoLibrary() }
                     Button("Cancel", role: .cancel) { }
                 }
+                .tint(Color("appBlackColor"))
         } else {
             content
                 .confirmationDialog("Please select an option",
                                     isPresented: $isPresented,
-                                    titleVisibility: .hidden) {
+                                    titleVisibility: .visible) {
                     Button("Camera") { onCamera() }
-                    Button("Photo Library") { onPhotoLibrary() }
+                    Button("Photos") { onPhotoLibrary() }
                     Button("Cancel", role: .cancel) { }
                 }
+                .tint(Color("appBlackColor"))
         }
     }
 }
@@ -1166,6 +1186,19 @@ struct FlowLayout: Layout {
 
 /// Back-compat alias — other features still reference `ImagePicker(image:)`.
 typealias ImagePicker = BarBotImagePicker
+
+/// Identifiable wrapper around `UIImagePickerController.SourceType` so
+/// it can drive `.fullScreenCover(item:)`. Same shape as
+/// `EditRecipePickerPresentation` in RecipesScreens.swift — the `id`
+/// changes on every new presentation, forcing SwiftUI to rebuild the
+/// cover body with the fresh `source`. Fixes the camera-first-tap
+/// race where the previous two-step `pickerSource = .camera;
+/// showPicker = true` pattern captured the stale `.photoLibrary`
+/// default and surfaced as a black-screen camera.
+struct BarBotPickerPresentation: Identifiable, Equatable {
+    let id = UUID()
+    let source: UIImagePickerController.SourceType
+}
 
 struct BarBotImagePicker: UIViewControllerRepresentable {
     @Binding var image: UIImage?
@@ -2463,8 +2496,14 @@ struct BarBotCraftView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService
 
-    @State private var showImagePicker = false
-    @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
+    /// Drives `.fullScreenCover(item:)` for the Camera / Photos picker.
+    /// Setting this in one shot (instead of the old two-step
+    /// `pickerSource = .camera; show = true`) avoids a SwiftUI race
+    /// where the cover body was rebuilt with a stale source on the
+    /// first tap — manifesting as the camera presenting from the
+    /// `.photoLibrary` default and showing a black screen. Same fix
+    /// pattern as `EditRecipePickerPresentation` in RecipesScreens.swift.
+    @State private var imagePickerPresentation: BarBotPickerPresentation?
     @State private var showAttachmentSheet = false
     @State private var showScrollToBottom = false
 
@@ -2869,17 +2908,28 @@ struct BarBotCraftView: View {
             AttachmentChoiceModifier(
                 isPresented: $showAttachmentSheet,
                 onCamera: {
-                    imagePickerSource = .camera
-                    showImagePicker = true
+                    imagePickerPresentation = BarBotPickerPresentation(source: .camera)
                 },
                 onPhotoLibrary: {
-                    imagePickerSource = .photoLibrary
-                    showImagePicker = true
+                    imagePickerPresentation = BarBotPickerPresentation(source: .photoLibrary)
                 }
             )
         )
-        .sheet(isPresented: $showImagePicker) {
-            BarBotImagePicker(image: $viewModel.selectedImage, source: imagePickerSource)
+        // `.fullScreenCover(item:)` for two reasons (matches the
+        // EditRecipe ingredient picker — RecipesScreens.swift L3929):
+        //   1. SwiftUI's `.sheet` uses `pageSheet` style on iOS 13+,
+        //      which inset-crops the camera preview and HIDES the
+        //      capture button — surfacing as the "camera black
+        //      screen" the user reported. UIKit presented
+        //      `UIImagePickerController` with `.fullScreen`; this
+        //      mirrors that.
+        //   2. `(item:)` rebuilds the body with the fresh
+        //      `presentation.source` on every present, so Camera
+        //      works on the very first tap. The old two-step
+        //      `imagePickerSource = .camera; showImagePicker = true`
+        //      pattern captured the stale `.photoLibrary` default.
+        .fullScreenCover(item: $imagePickerPresentation) { presentation in
+            BarBotImagePicker(image: $viewModel.selectedImage, source: presentation.source)
                 .ignoresSafeArea()
         }
         // Left-edge interactive open — 1:1 port of UIKit

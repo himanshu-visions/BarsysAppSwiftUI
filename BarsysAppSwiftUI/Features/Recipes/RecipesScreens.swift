@@ -3509,15 +3509,21 @@ private struct IngredientPicker: View {
 // `@Environment(\.dismiss)` instead of manual child-VC unwinding.
 
 /// View modifier that presents a Camera / Photos / Cancel chooser
-/// using the right SwiftUI presentation per idiom — `confirmationDialog`
-/// (bottom action sheet) on iPhone, `alert` (centered modal) on iPad.
-///
-/// `confirmationDialog` on iPad renders as a tiny popover anchored
-/// near the trigger button, which the user reported as "very small"
-/// and visually hard to tap. The centered `alert` variant stacks the
-/// three actions vertically with full button hit areas and is
-/// guaranteed to render above every other view at full readable size.
-/// iPhone keeps the original `.confirmationDialog` bit-for-bit.
+/// matching UIKit `showActionSheetForImagePicker`
+/// (ImagePickerViewController.swift L45-89):
+///   • iPad             → `.alert` (centered modal). UIKit uses
+///     `.actionSheet` with a popover anchor, but the popover renders
+///     as a tiny tap target — switching to `.alert` matches the
+///     readable size shown in the older app.
+///   • iOS 26+ iPhone   → `.alert` (centered modal). 1:1 with the
+///     UIKit branch `if #available(iOS 26.0, *) { style = .alert }`
+///     — the action-sheet style was deprecated on iOS 26, so the
+///     UIKit code switches to a centered alert with three pill
+///     buttons (Camera / Photos / Cancel) stacked vertically. The
+///     SwiftUI port has to mirror this or the popup looks wrong on
+///     iOS 26 devices vs the older app.
+///   • iOS < 26 iPhone  → `.confirmationDialog` (bottom action sheet,
+///     UIKit `.actionSheet` parity).
 fileprivate struct ImagePickerChoiceModifier: ViewModifier {
     let title: String
     @Binding var isPresented: Bool
@@ -3528,8 +3534,19 @@ fileprivate struct ImagePickerChoiceModifier: ViewModifier {
     let onCamera: () -> Void
     let onPhotos: () -> Void
 
+    private var useCenteredAlert: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return true }
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
+
     func body(content: Content) -> some View {
-        if UIDevice.current.userInterfaceIdiom == .pad {
+        // `.tint(appBlackColor)` recolors the alert / action-sheet
+        // button labels from system blue to brand black, mirroring
+        // MyProfile's image picker popup (MyProfileView.swift L854-860)
+        // and UIKit's default tinting on `UIAlertController` actions
+        // (`view.tintColor = .appBlackColor`).
+        if useCenteredAlert {
             content
                 .alert(title, isPresented: $isPresented) {
                     if cameraAvailable {
@@ -3538,6 +3555,7 @@ fileprivate struct ImagePickerChoiceModifier: ViewModifier {
                     Button(photosLabel) { onPhotos() }
                     Button(cancelLabel, role: .cancel) { }
                 }
+                .tint(Color("appBlackColor"))
         } else {
             content
                 .confirmationDialog(title,
@@ -3549,6 +3567,7 @@ fileprivate struct ImagePickerChoiceModifier: ViewModifier {
                     Button(photosLabel) { onPhotos() }
                     Button(cancelLabel, role: .cancel) { }
                 }
+                .tint(Color("appBlackColor"))
         }
     }
 }
