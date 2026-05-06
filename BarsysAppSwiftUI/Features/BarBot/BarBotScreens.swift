@@ -3529,9 +3529,34 @@ struct BarBotCraftView: View {
         // waiting popup, which owns the polling Task and fires
         // `onReady(recipe?)` either on decode success or on the user
         // pressing Cancel.
-        waitingRecipeId = recipe.full_recipe_id ?? ""
-        fetchedFullRecipe = nil
-        showWaitingRecipePopup = true
+        //
+        // Pre-flight `ConnectionMonitor.shared.isConnected` gate —
+        // without internet the waiting popup would spin its
+        // `getFullRecipeApi` polling forever (every request throws,
+        // the popup interprets the failure as "still generating" and
+        // re-arms its 5s retry). UIKit doesn't have this guard
+        // explicitly because `getFullRecipeApi` itself triggers an
+        // internet alert on URLSession failure, but the SwiftUI port
+        // surfaces the alert at the call site for parity with every
+        // other network-gated action in the app
+        // (Mixlists craft / Setup-Stations / Auth flows). On deny,
+        // surface the standard `internetConnectionMessage` alert and
+        // return WITHOUT mutating `showWaitingRecipePopup` — the
+        // user sees the alert instead of an indefinite spinner.
+        let fullRecipeId = recipe.full_recipe_id ?? ""
+        Task { @MainActor in
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(
+                    title: Constants.internetConnectionMessage,
+                    message: "",
+                    primary: Constants.okButtonTitle
+                )
+                return
+            }
+            waitingRecipeId = fullRecipeId
+            fetchedFullRecipe = nil
+            showWaitingRecipePopup = true
+        }
     }
 
     /// Called when the `WaitingRecipePopup`'s polling Task returns a
