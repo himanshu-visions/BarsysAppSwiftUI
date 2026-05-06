@@ -1146,6 +1146,11 @@ struct ChooseOptionsStyleNavBar: ViewModifier {
         // gets the same chain PLUS a small top inset for extra
         // breathing room above the page hairline.
         if UIDevice.current.userInterfaceIdiom == .pad {
+            // iPad: bit-identical to before. Liquid-Glass tinting on
+            // iPad reads acceptably (the user explicitly asked us to
+            // leave the iPad nav-bar untouched on every iOS version)
+            // so we keep the existing `baseStyling + safeAreaInset`
+            // chain with NO extra background modifier.
             baseStyling(content)
                 // iPad-only: insert a small `primaryBackgroundColor`
                 // strip above the content so the toolbar reads as a
@@ -1160,7 +1165,46 @@ struct ChooseOptionsStyleNavBar: ViewModifier {
                     Color("primaryBackgroundColor")
                         .frame(height: 12)
                 }
+        } else if #available(iOS 26.0, *) {
+            // iPhone + iOS 26 — the user-supplied screenshot shows
+            // the top nav-bar tinted noticeably lighter than the
+            // page's `primaryBackgroundColor` body. Root cause: iOS
+            // 26 Liquid-Glass renders the bar as a translucent
+            // material, picking up tint from underlying content. The
+            // global `UINavigationBarAppearance` set in
+            // `BarsysAppSwiftUIApp.init` is overridden by SwiftUI's
+            // per-view appearance, and the colour-only
+            // `.toolbarBackground(Color, …)` modifier alone isn't
+            // strong enough to suppress the glass blending.
+            //
+            // Fix — match the pre-26 chain bit-for-bit on iPhone:
+            //   1. `.toolbarBackground(Color, …)` to set the tint,
+            //   2. `.toolbarBackground(.visible, …)` to force opaque
+            //      fill so Liquid Glass cannot blend through,
+            //   3. `NavigationBarShadowKiller` to strip the 1pt
+            //      bottom hairline that step 2 would otherwise
+            //      surface — the killer walks up to the live
+            //      UINavigationBar and zeroes `shadowColor` /
+            //      `shadowImage` on every appearance slot, so the
+            //      bar renders flat with NO divider.
+            //
+            // Net result on iPhone iOS 26: bar background = page
+            // background (both `primaryBackgroundColor`), no
+            // hairline, no Liquid-Glass blending artefact. iPad path
+            // is untouched (handled in the first `if` branch above)
+            // so iPad UI / colours / layout remain bit-identical to
+            // the previous build on every iOS version.
+            baseStyling(content)
+                .toolbarBackground(Color("primaryBackgroundColor"),
+                                   for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .background(NavigationBarShadowKiller().frame(width: 0, height: 0))
         } else {
+            // iPhone + pre-iOS 26: unchanged. The `baseStyling` pre-26
+            // branch already applies an opaque `primaryBackgroundColor`
+            // via `.toolbarBackground(.visible, …)` plus the
+            // `NavigationBarShadowKiller` that strips the legacy
+            // hairline — no extra work needed here.
             baseStyling(content)
         }
     }
