@@ -1261,6 +1261,18 @@ struct RecipeDetailView: View {
     /// to the light-mode orange RGB so the Craft button stays
     /// readable in dark mode. Light mode is untouched.
     @Environment(\.colorScheme) private var colorScheme
+    /// Drives the iPhone-landscape hero-image height cap. iPad and
+    /// iPhone-portrait keep the original 1:1 square hero.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// True only when the host is an iPhone in landscape (compact
+    /// vertical size class). iPad always returns false even when
+    /// multitasking shrinks the canvas — the hero stays a 1:1 square
+    /// on iPad in every orientation.
+    private var isPhoneLandscape: Bool {
+        UIDevice.current.userInterfaceIdiom != .pad
+            && verticalSizeClass == .compact
+    }
 
     @State private var editedIngredients: [Ingredient] = []
     @State private var originalIngredients: [Ingredient] = []
@@ -1845,7 +1857,18 @@ struct RecipeDetailView: View {
         // GeometryReader ignores the image's intrinsic size entirely
         // and produces a consistent square on every device and for
         // every remote asset.
-        GeometryReader { geo in
+        //
+        // iPhone landscape: a 1:1 square at full padded width
+        // (~804pt on iPhone 15 Pro Max) eats more than the entire
+        // ~390pt-tall canvas, leaving the title / Craft button /
+        // ingredients pushed way off-screen. Cap the hero height to
+        // 200pt and let the image render as a wider banner — the
+        // `aspectFill` content mode + rounded clip keeps the artwork
+        // well-framed without distortion. iPad and iPhone-portrait
+        // keep the UIKit-parity 1:1 square via the `.aspectRatio(1,
+        // .fit)` modifier on the GeometryReader.
+        let landscapeHeroHeight: CGFloat = 200
+        let hero = GeometryReader { geo in
             let side = geo.size.width
             AsyncImage(url: url) { phase in
                 switch phase {
@@ -1871,15 +1894,24 @@ struct RecipeDetailView: View {
                         .padding(40)
                 }
             }
-            .frame(width: side, height: side)
+            .frame(width: side,
+                   height: isPhoneLandscape ? landscapeHeroHeight : side)
             .clipped()
             .background(Color("lightBorderGrayColor"))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        // Tell the GeometryReader to be a 1:1 square so it requests
-        // `proposedWidth × proposedWidth` from its parent — matches
-        // the UIKit storyboard constraint `width:height = 1:1`.
-        .aspectRatio(1, contentMode: .fit)
+        if isPhoneLandscape {
+            // Fix the GeometryReader's height so the parent VStack
+            // doesn't try to expand it to a square. Width still
+            // tracks the parent's proposed (padded) width.
+            hero.frame(height: landscapeHeroHeight)
+        } else {
+            // Tell the GeometryReader to be a 1:1 square so it
+            // requests `proposedWidth × proposedWidth` from its parent
+            // — matches the UIKit storyboard constraint
+            // `width:height = 1:1`.
+            hero.aspectRatio(1, contentMode: .fit)
+        }
     }
 
     // MARK: - Ingredients
