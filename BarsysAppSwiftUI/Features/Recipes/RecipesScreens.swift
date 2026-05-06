@@ -776,7 +776,15 @@ struct RecipeGridCell: View {
             GeometryReader { geo in
                 let side = geo.size.width
                 ZStack(alignment: .topTrailing) {
-                    AsyncImage(url: optimizedImageURL) { phase in
+                    // `CachedAsyncImage` (DesignSystem/Components.swift)
+                    // — disk-backed drop-in for `AsyncImage`. UIKit
+                    // `ExploreRecipesViewController+TableView.swift`
+                    // L53 used `sd_setImage(...)` whose SDWebImage
+                    // disk cache served images even when the device
+                    // was offline; the SwiftUI port now mirrors that
+                    // so this iPad recipe card keeps its image after
+                    // the first successful download with no internet.
+                    CachedAsyncImage(url: optimizedImageURL) { phase in
                         switch phase {
                         case .success(let img):
                             img.resizable().aspectRatio(contentMode: .fill)
@@ -1022,8 +1030,19 @@ struct RecipeRowCell: View {
         // SDWebImage's placeholder-before-and-during semantics).
         // Placeholder uses .fit to avoid zooming/stretching a small
         // asset. Loaded image uses .fill to cover the square frame.
+        //
+        // `CachedAsyncImage` (DesignSystem/Components.swift) — drop-in
+        // for `AsyncImage` with persistent disk caching. UIKit
+        // `ExploreRecipesViewController+TableView.swift` L53 used
+        // `sd_setImage(...)` whose SDWebImage disk cache served the
+        // recipe thumbnail even when the device was offline. The
+        // SwiftUI port previously used vanilla `AsyncImage`, which
+        // re-issues a network request on every appearance and falls
+        // back to the placeholder when offline — the user-reported
+        // "images don't load when no internet" regression. Switching
+        // to `CachedAsyncImage` restores 1:1 UIKit behaviour.
         if let url = optimizedImageURL {
-            AsyncImage(url: url) { phase in
+            CachedAsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let img):
                     img.resizable().aspectRatio(contentMode: .fill)

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import CryptoKit
 
 // MARK: - Interactive pop gesture (swipe-from-left-edge to dismiss)
 
@@ -1835,6 +1836,170 @@ struct UIKitTextField: UIViewRepresentable {
                 guard let tf = textField, !tf.isFirstResponder,
                       binding.wrappedValue else { return }
                 binding.wrappedValue = false
+            }
+        }
+    }
+}
+
+// MARK: - CachedAsyncImage (offline-friendly drop-in for AsyncImage)
+//
+// 1:1 with the UIKit `SDWebImage` semantics applied via
+// `cell.drinkThumbImage.sd_setImage(with:placeholderImage:options:)` on
+// the Explore Recipes / Cocktail Kits cells
+// (ExploreRecipesViewController+TableView.swift L53,
+//  MixlistViewController+TableView.swift L41). SDWebImage stores every
+// successful download in its persistent disk cache, then on the next
+// render it serves the bytes off disk *immediately* — no network hop —
+// even when the device is offline.
+//
+// SwiftUI's stock `AsyncImage` has no on-disk cache: every render
+// re-issues a `URLSession` request and falls back to `URLCache.shared`
+// only if the server's `Cache-Control` headers permit it. Most image
+// CDNs don't send permissive cache headers, so the SwiftUI port
+// re-downloaded every cell on every appearance — and rendered the
+// `myDrink` placeholder instead of the cached image whenever the
+// device was offline. That's the "images don't load when no internet"
+// regression vs the older UIKit app.
+//
+// `CachedAsyncImage` is a drop-in replacement that owns a tiny image
+// cache: an `NSCache`-backed memory layer (auto-evicts on memory
+// warnings) + a flat directory of base64-named files inside
+// `Caches/BarsysImageCache`. On first request a cell hits the
+// network, decodes into `UIImage`, and writes the bytes through both
+// caches. Subsequent requests for the same URL skip the network
+// entirely and resolve from memory or disk — exactly matching
+// SDWebImage's "default" disk cache behaviour. No external
+// dependency, no Podfile changes, no Xcode project regeneration.
+//
+// API mirrors `AsyncImage(url:content:)` so call-sites only need to
+// swap the type name. The `phase` argument keeps the four standard
+// states (`.empty` / `.success(Image)` / `.failure(Error)`) so
+// existing placeholder branches keep working unchanged.
+
+/// Disk + memory image cache shared across `CachedAsyncImage`
+/// instances. Storage layout matches SDWebImage's "default" cache
+/// (cache directory + file-per-URL) so the file system footprint is
+/// predictable and self-cleaning when the OS reclaims caches.
+final class BarsysImageCache: @unchecked Sendable {
+    static let shared = BarsysImageCache()
+
+    private let memCache = NSCache<NSURL, UIImage>()
+    private let diskQueue = DispatchQueue(label: "com.barsys.imagecache.disk",
+                                          qos: .utility)
+    private let cacheDir: URL
+
+    private init() {
+        let caches = FileManager.default.urls(for: .cachesDirectory,
+                                              in: .userDomainMask)[0]
+        cacheDir = caches.appendingPathComponent("BarsysImageCache",
+                                                 isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheDir,
+                                                 withIntermediateDirectories: true)
+        // 50 MB ceiling — well above the recipe-image working set on
+        // a typical session, comfortably under the OS memory-warning
+        // threshold so we don't trigger a global purge.
+        memCache.totalCostLimit = 50 * 1024 * 1024
+    }
+
+    /// Returns a cached image (memory first, disk second) or `nil` if
+    /// neither cache layer has the URL. Disk hits are promoted to
+    /// memory so subsequent renders are instant.
+    func image(for url: URL) -> UIImage? {
+        let key = url as NSURL
+        if let cached = memCache.object(forKey: key) {
+            return cached
+        }
+        let path = filePath(for: url)
+        guard let data = try? Data(contentsOf: path),
+              let img = UIImage(data: data) else {
+            return nil
+        }
+        memCache.setObject(img, forKey: key, cost: data.count)
+        return img
+    }
+
+    /// Persists raw image bytes to both layers. Called after a
+    /// successful network fetch — never blocks the caller's queue.
+    func store(_ data: Data, image: UIImage, for url: URL) {
+        memCache.setObject(image, forKey: url as NSURL, cost: data.count)
+        let path = filePath(for: url)
+        diskQueue.async {
+            try? data.write(to: path, options: .atomic)
+        }
+    }
+
+    /// Stable per-URL filename. Hex-encoded SHA256 of the URL's
+    /// `absoluteString` — fixed 64-char filename regardless of input
+    /// length. The previous base64 scheme blew past iOS's 255-byte
+    /// filename limit on long `optimizeImage?fileUrl=...` URLs (a
+    /// 200-char URL base64-encodes to ~270 chars), so
+    /// `data.write(to:)` failed silently and nothing landed on disk
+    /// — the cache appeared to "work" only inside a single session
+    /// (memory cache hit) and was empty on every cold launch.
+    /// SHA256 is collision-resistant for the URL space we deal with
+    /// and is bundled in `CryptoKit` (no extra dependency).
+    private func filePath(for url: URL) -> URL {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return cacheDir.appendingPathComponent(hex)
+    }
+}
+
+/// Drop-in replacement for `AsyncImage(url:content:)` with persistent
+/// disk caching so cached images render even when the device is
+/// offline. See the `BarsysImageCache` doc above for the full
+/// rationale and UIKit-parity reference.
+struct CachedAsyncImage<Content: View>: View {
+    let url: URL?
+    @ViewBuilder var content: (AsyncImagePhase) -> Content
+
+    @State private var phase: AsyncImagePhase = .empty
+
+    var body: some View {
+        content(phase)
+            .task(id: url) {
+                await load(url)
+            }
+    }
+
+    @MainActor
+    private func load(_ url: URL?) async {
+        guard let url else {
+            phase = .empty
+            return
+        }
+        // Fast path — image already cached. Resolve synchronously so
+        // the cell renders the image on the FIRST layout pass instead
+        // of flashing the placeholder for one frame.
+        if let cached = BarsysImageCache.shared.image(for: url) {
+            phase = .success(Image(uiImage: cached))
+            return
+        }
+        phase = .empty
+        do {
+            // `default` cache policy lets `URLCache.shared` shortcut
+            // the network when the server sent permissive headers; the
+            // BarsysImageCache disk write below is what actually
+            // guarantees offline survival regardless of server
+            // headers.
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if Task.isCancelled { return }
+            guard let img = UIImage(data: data) else {
+                phase = .failure(URLError(.cannotDecodeContentData))
+                return
+            }
+            BarsysImageCache.shared.store(data, image: img, for: url)
+            phase = .success(Image(uiImage: img))
+        } catch {
+            if Task.isCancelled { return }
+            // Network hop failed (typical: offline). One last attempt
+            // through the disk cache in case the URL was populated by
+            // another concurrent fetch between the fast-path check
+            // and the network call landing.
+            if let cached = BarsysImageCache.shared.image(for: url) {
+                phase = .success(Image(uiImage: cached))
+            } else {
+                phase = .failure(error)
             }
         }
     }

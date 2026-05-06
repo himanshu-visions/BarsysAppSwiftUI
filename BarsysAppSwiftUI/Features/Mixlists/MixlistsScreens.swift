@@ -433,7 +433,15 @@ struct MixlistRowCell: View {
             // view. Because the parent passes `cellHeight = (cellWidth)/2`,
             // this preserves the UIKit constraint `image.width = innerView.width × 0.5`
             // + 1:1 aspect ratio without using `.aspectRatio()` at runtime.
-            AsyncImage(url: optimizedImageURL) { phase in
+            //
+            // `CachedAsyncImage` (DesignSystem/Components.swift) — drop-in
+            // for `AsyncImage` with persistent disk caching. UIKit
+            // `MixlistViewController+TableView.swift` L41 used
+            // `sd_setImage(...)` which serves SDWebImage's disk cache
+            // when offline; the SwiftUI port now mirrors that so this
+            // row keeps its image after the first successful download
+            // even with no internet.
+            CachedAsyncImage(url: optimizedImageURL) { phase in
                 switch phase {
                 case .success(let img):
                     img.resizable().aspectRatio(contentMode: .fill)
@@ -489,7 +497,12 @@ struct MixlistGridCell: View {
         VStack(alignment: .leading, spacing: 0) {
             GeometryReader { geo in
                 let side = geo.size.width
-                AsyncImage(url: optimizedImageURL) { phase in
+                // `CachedAsyncImage` — disk-backed drop-in for `AsyncImage`
+                // (DesignSystem/Components.swift). Same UIKit-parity
+                // rationale as `MixlistRowCell` above: SDWebImage's
+                // disk cache served images offline, so the SwiftUI
+                // grid card needs the same persistence.
+                CachedAsyncImage(url: optimizedImageURL) { phase in
                     switch phase {
                     case .success(let img):
                         img.resizable().aspectRatio(contentMode: .fill)
