@@ -633,11 +633,28 @@ struct ExploreRecipesView: View {
         // the whole viewport" behaviour on every device size — the
         // previous `minHeight: screen.height - 200` hack approximated
         // the centre but was off by safe-area / device-size shifts.
+        //
+        // Visibility rule is the literal UIKit check:
+        //
+        //   ExploreRecipesViewController.swift L292-293
+        //   self.lblNoDataFound.isHidden = self.filterCacheRecipes.count > 0
+        //
+        // → show whenever `filtered.count == 0`, regardless of the
+        // loading flag. Covers all UIKit cases:
+        //   • search returns nothing
+        //   • API failed / offline → cached storage is empty
+        //   • cold launch before preload finishes
+        // The previous `&& !(catalog.isLoading && catalog.recipes.isEmpty)`
+        // gate hid the label during the cold-launch window, so the user
+        // saw a blank screen instead of the empty-state copy. The
+        // skeleton (rendered separately at the top of the VStack)
+        // still wins visually on first load because it sits in the
+        // content; the label only matters once the catalog flips
+        // back to a non-loading-with-no-data state.
         // `allowsHitTesting(false)` keeps pull-to-refresh and
-        // tap-through unaffected; the label is suppressed while the
-        // skeleton is rendering on first load.
+        // tap-through unaffected.
         .overlay(alignment: .center) {
-            if filtered.isEmpty && !(catalog.isLoading && catalog.recipes.isEmpty) {
+            if filtered.isEmpty {
                 Text("No results to display")
                     .font(.system(size: 16))
                     .foregroundStyle(Color("mediumGrayColor"))
@@ -4976,6 +4993,21 @@ struct EditRecipeView: View {
         // Encode image if user picked one (UIKit: base64 JPEG)
         let imageData = selectedImage?.jpegData(compressionQuality: 0.7)
 
+        // 1:1 with UIKit `EditViewController.didPressAddToFavouriteButton`
+        // L261-263 — the glass loader is shown immediately on the main
+        // queue BEFORE the network call, then dismissed in BOTH the
+        // success and failure branches. The previous SwiftUI port
+        // wrapped the API call in an isolated Task without ever
+        // calling `env.loading.show(...)`, so the user saw a frozen
+        // Save button with no progress feedback for the duration of
+        // the POST/PATCH (the "glass loader did not come" report).
+        // Loader copy "Saving Recipe" matches every UIKit save flow:
+        //   • EditViewController.swift L262
+        //   • MakeMyOwnViewModel.swift L227
+        //   • BarBotCraftingViewController+Actions.swift L114
+        //   • ReadyToPourListViewController+Actions.swift L16
+        env.loading.show(Constants.savingRecipeLoaderText)
+
         Task { @MainActor in
             do {
                 // API call — POST or PATCH (matches UIKit L265-268)
@@ -4994,6 +5026,11 @@ struct EditRecipeView: View {
                     env.storage.upsert(recipe: updated)
                 }
                 isSaving = false
+                // Hide the loader BEFORE the success popup is queued so
+                // the loader doesn't sit underneath the alert (matches
+                // UIKit's `hideGlassLoader()` call inside the success
+                // closure at EditViewController.swift L268).
+                env.loading.hide()
                 env.analytics.track(TrackEventName.editRecipeSuccessful.rawValue)
                 // UIKit: isCustomizingRecipe || .create → recipeAddMessage,
                 //        .update → recipeUpdateMessage (EditViewModel+API L53-55)
@@ -5062,6 +5099,10 @@ struct EditRecipeView: View {
                 }
             } catch {
                 isSaving = false
+                // Hide loader BEFORE surfacing the failure alert —
+                // mirrors UIKit `hideGlassLoader()` at the top of
+                // the failure branch (EditViewController.swift L268).
+                env.loading.hide()
                 env.alerts.show(message: Constants.recipeSaveError)
             }
         }

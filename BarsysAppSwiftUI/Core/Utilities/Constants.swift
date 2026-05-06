@@ -114,6 +114,13 @@ enum Constants {
     static let ingredientCannotBeUsedHere = "This ingredient cannot be used here."
     static let moreThanOneIngredientIdentified = "More than one ingredient identified in the image. Please scan one ingredient at a time."
     static let addingIngredientLoaderText = "Adding ingredients"
+    /// 1:1 with UIKit `showGlassLoader(message: "Saving Recipe")` —
+    /// shown around the POST/PATCH `/my/recipes` call inside the
+    /// Edit Recipe save flow (EditViewController.swift L262), the
+    /// MakeMyOwn save flow (MakeMyOwnViewModel.swift L227), the
+    /// BarBotCraft save flow (BarBotCraftingViewController+Actions.swift L114),
+    /// and ReadyToPour add-to-favourites (ReadyToPourListViewController+Actions.swift L16).
+    static let savingRecipeLoaderText = "Saving Recipe"
 
     // 1:1 ports of UIKit Craft-validation copy
     // (EditViewController.didPressCraftButton + craftActionInEditScreen).

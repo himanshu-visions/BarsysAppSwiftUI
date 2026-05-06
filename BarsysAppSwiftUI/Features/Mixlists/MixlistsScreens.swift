@@ -219,11 +219,20 @@ struct MixlistListView: View {
         // the label as a ScrollView overlay matches that "centred in
         // the whole viewport" behaviour on every device size — the
         // previous `padding(.top, 80)` visually glued the text just
-        // below the search bar instead. `allowsHitTesting(false)`
-        // keeps pull-to-refresh and tap-through unaffected; the
-        // label is hidden while the skeleton is rendering.
+        // below the search bar instead.
+        //
+        // Visibility rule is the literal UIKit check:
+        //
+        //   MixlistViewController.swift L450-451
+        //   self.lblNoDataFound.isHidden = self.filterMixlistData.count > 0
+        //
+        // → show whenever `filtered.count == 0`, regardless of the
+        // loading flag. Covers all UIKit cases (search returns
+        // nothing, API failed / offline, cold launch before preload
+        // finishes). `allowsHitTesting(false)` keeps pull-to-refresh
+        // and tap-through unaffected.
         .overlay(alignment: .center) {
-            if filtered.isEmpty && !(catalog.isLoading && catalog.mixlists.isEmpty) {
+            if filtered.isEmpty {
                 Text("No results to display")
                     .font(.system(size: 16))
                     .foregroundStyle(Color("mediumGrayColor"))
