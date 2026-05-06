@@ -4998,6 +4998,46 @@ struct EditRecipeView: View {
         let sourceRecipe: Recipe? = existingRecipe
             ?? recipeID.flatMap { env.storage.recipe(by: $0) }
 
+        // 1:1 with UIKit `EditViewModel.deleteImage()` (L324-329):
+        //
+        //   func deleteImage() {
+        //       if selectedImageForRecipe != nil {
+        //           selectedImageForRecipe = nil
+        //       }
+        //       recipe?.image?.url = ""
+        //   }
+        //
+        // The KEY mutation is `recipe?.image?.url = ""`. UIKit's
+        // `FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe`
+        // (FavoriteRecipeApiService.swift) then branches on
+        // `recipe.image?.url?.isEmpty == false` to decide between
+        // "keep existing URL" (skip the image upload and re-attach
+        // the old `image.url`) and "send the new payload" (base64
+        // body, OR empty string for delete). With url cleared, both
+        // the customize and update branches fall through to the
+        // ELSE block which, when `image == nil`, sends
+        // `params["image"] = ["alt": "iOS", "url": ""]` — and the
+        // server interprets the empty url as "delete the image
+        // for this recipe".
+        //
+        // The SwiftUI port previously kept the source recipe's
+        // `image.url` intact even when the user tapped the delete
+        // button, so the API client's `saveOrUpdateMyDrink`
+        // (`OryAPIClient.swift` L848-855) hit the
+        // `isUpdate && !existingURL.isEmpty` branch and re-attached
+        // the OLD URL to the PATCH body — the server didn't see a
+        // delete signal and the image kept showing up in My Drinks.
+        //
+        // The fix: detect "user deleted the image" with the same
+        // signal UIKit uses (`selectedImageForRecipe == nil &&
+        // recipe?.image?.url == ""`) and clear `recipeToSave.image?.url`
+        // before handing the recipe to the API client. Both
+        // SwiftUI-side state vars are nil after a delete-button tap
+        // (see `imageDeleteButton` — `selectedImage = nil;
+        // remoteImageURL = nil`), and the source recipe carried a
+        // non-empty url originally, so the deletion is unambiguous.
+        let userDeletedImage = (selectedImage == nil) && (remoteImageURL == nil)
+
         var recipeToSave: Recipe
         if !isCustomizing, let source = sourceRecipe, !source.id.value.isEmpty {
             // EDIT existing My Drink — PATCH /my/recipes/{id}
@@ -5010,16 +5050,31 @@ struct EditRecipeView: View {
             recipeToSave.name = trimmed
             recipeToSave.ingredients = filteredIngredients
             recipeToSave.isMyDrinkFavourite = true
+            // 1:1 with UIKit `recipe?.image?.url = ""` from
+            // `deleteImage()` — clear the URL so the API client
+            // sends `params["image"]["url"] = ""` and the server
+            // drops the image. Without this, the source's
+            // non-empty `image.url` survives the assignment above
+            // and the API client re-attaches it to the PATCH body.
+            if userDeletedImage {
+                recipeToSave.image?.url = ""
+            }
         } else if let source = sourceRecipe {
             // CUSTOMIZE existing Barsys recipe → POST new My Drink with
             // empty id so the server generates a fresh one. Carry over
             // metadata so the new drink keeps glassware / instructions /
             // image etc.
+            //
+            // If the user deleted the image on the customize screen,
+            // strip the source's `image` so the new My Drink doesn't
+            // inherit the Barsys catalog image — same `image.url = ""`
+            // signal as the UIKit deleteImage path.
+            let carriedImage: ImageModel? = userDeletedImage ? ImageModel(url: "", alt: "iOS") : source.image
             recipeToSave = Recipe(
                 id: RecipeID(""),
                 name: trimmed,
                 description: source.description,
-                image: source.image,
+                image: carriedImage,
                 ice: source.ice,
                 ingredients: filteredIngredients,
                 instructions: source.instructions,
