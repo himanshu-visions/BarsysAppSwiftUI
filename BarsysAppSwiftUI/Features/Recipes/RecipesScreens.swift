@@ -4404,23 +4404,43 @@ struct EditRecipeView: View {
         }
     }
 
-    /// Delete overlay button — `whiteDeleteImage` asset at 30×30,
-    /// `charcoalGrayColor` tint, 2pt from the top-right
-    /// (storyboard `Mqn-Av-Zo2`). 1:1 with UIKit
-    /// `EditViewModel.deleteImage()` which clears both
-    /// `selectedImageForRecipe` AND `recipe?.image?.url`.
+    /// Delete overlay button — 1:1 with UIKit storyboard `Mqn-Av-Zo2`
+    /// (BarBot.storyboard) at 30×30, top-right of the image with
+    /// `trailing = -2` and `top = 2` constraints. Triggers the same
+    /// `selectedImage = nil; remoteImageURL = nil` clear that
+    /// UIKit's `EditViewModel.deleteImage()` performs.
+    ///
+    /// Renders `whiteDeleteImage` AS-IS — the asset itself is the
+    /// white X glyph (the name says it: "white" content image, NOT
+    /// a tinted template). UIKit's storyboard never set a background
+    /// or `tintColor`/`renderingMode = template` on this button, so
+    /// the original PNG is what shows on screen. The white glyph has
+    /// enough internal contrast (slight darker stroke / outline
+    /// baked into the asset) to read against both light and dark
+    /// recipe images — exactly what the older app shipped with.
+    ///
+    /// The previous port template-tinted the asset with
+    /// `charcoalGrayColor`, which collapsed the asset's natural
+    /// internal contrast into a single dark grey colour. On dark
+    /// thumbnails (most cocktail photos), the dark-grey glyph
+    /// blended into the photo and was effectively invisible — the
+    /// "sometimes button not visible" report. Reverting to the
+    /// natural-asset render restores the always-visible white-on-
+    /// image affordance the older app used.
     private var imageDeleteButton: some View {
         Button {
             selectedImage = nil
             remoteImageURL = nil
         } label: {
             Image("whiteDeleteImage")
-                .renderingMode(.template)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 30, height: 30)
-                .foregroundStyle(Color("charcoalGrayColor"))
         }
+        .buttonStyle(BounceButtonStyle())
+        // Same offset values as UIKit storyboard `Mqn-Av-Zo2`:
+        //   trailing constraint = -2  →  2pt INSIDE the right edge
+        //   top constraint      =  2  →  2pt INSIDE the top edge
         .offset(x: -2, y: 2)
         .accessibilityLabel("Remove image")
     }
