@@ -808,7 +808,21 @@ final class BarBotViewModel: ObservableObject {
 
     // MARK: - Send (ports sendQuestionToServer)
 
-    func send(ble: BLEService) {
+    /// Sends a chat message to the BarBot AI server.
+    /// - Parameters:
+    ///   - ble: BLE service used to read connected-device metadata
+    ///     piped into the chat request payload (NOT a Bluetooth send).
+    ///   - alerts: Optional `AlertQueue` injected by the call site so
+    ///     this VM method can surface the standard
+    ///     "Please check your internet connection." popup when the
+    ///     pre-flight connectivity check fails. Defaults to nil for
+    ///     backward compatibility — old call sites that don't pass it
+    ///     keep the original "fail → render error message in chat"
+    ///     behaviour. Every BarBot view-layer caller should pass
+    ///     `env.alerts` so the user gets the popup BEFORE the request
+    ///     is queued, not the generic "Sorry, something went wrong"
+    ///     error bubble after the network call throws.
+    func send(ble: BLEService, alerts: AlertQueue? = nil) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || selectedImage != nil else {
             // Whitespace-only input with no image: mirror the UIKit
@@ -818,6 +832,25 @@ final class BarBotViewModel: ObservableObject {
             return
         }
         guard canProcessNewRequest else { return }
+
+        // Pre-flight connectivity gate — 1:1 with the pattern used on
+        // Auth (`LoginView.swift:197`), Mixlists craft
+        // (`MixlistsScreens.swift:1464`), and ControlCenter setup
+        // flows. Use the synchronous `isConnectedNow` snapshot so the
+        // user gets the alert on the SAME runloop as the Send tap (no
+        // 50ms `await isConnected` debounce) — without this gate, the
+        // request was issued, URLSession threw, and the catch branch
+        // surfaced a generic "Sorry, something went wrong. Please try
+        // again." bubble in the chat instead of the standardised
+        // internet-down popup the rest of the app uses.
+        if alerts != nil, !ConnectionMonitor.shared.isConnectedNow {
+            alerts?.show(
+                title: Constants.internetConnectionMessage,
+                message: "",
+                primary: ConstantButtonsTitle.okButtonTitle
+            )
+            return
+        }
 
         let msg = ChatMessage(questionText: text,
                               questionImage: selectedImage,
@@ -869,9 +902,17 @@ final class BarBotViewModel: ObservableObject {
         inFlight[id] = task
     }
 
-    func sendOption(_ option: BarBotOption, ble: BLEService) {
+    /// Shortcut used by the welcome-occasion grid (the first row of
+    /// suggestion chips) and any other UI that wants to send a
+    /// pre-canned prompt as if the user had typed it. Threads `alerts`
+    /// straight through to `send(ble:alerts:)` so the same offline
+    /// pre-flight gate fires when the user taps a chip — without
+    /// this, tapping a quick-question chip while offline drove the
+    /// chat into the "Sorry, something went wrong" error path
+    /// instead of surfacing the standard internet-down popup.
+    func sendOption(_ option: BarBotOption, ble: BLEService, alerts: AlertQueue? = nil) {
         draft = option.prompt ?? option.title ?? ""
-        send(ble: ble)
+        send(ble: ble, alerts: alerts)
     }
 
     /// Ports cancelLastQuestion — tapped via loading-cell cross.
@@ -2275,6 +2316,13 @@ struct ChatInputBar: View {
     @Binding var showAttachmentOptions: Bool
     @State private var textHeight: CGFloat = 44
     @Environment(\.colorScheme) private var colorScheme
+    /// Provides access to the shared `AlertQueue` so the input bar
+    /// can pass `env.alerts` through to `vm.send(ble:alerts:)` for
+    /// the offline pre-flight gate. Wired in from the parent
+    /// `BarBotCraftView` — `@EnvironmentObject` resolves automatically
+    /// from the ancestor chain so callers of `ChatInputBar` don't
+    /// need to thread this argument explicitly.
+    @EnvironmentObject private var env: AppEnvironment
 
     private var canSend: Bool {
         (!vm.draft.trimmingCharacters(in: .whitespaces).isEmpty || vm.selectedImage != nil)
@@ -2419,7 +2467,17 @@ struct ChatInputBar: View {
                             height: $textHeight,
                             minHeight: 44,
                             maxHeight: 70,
-                            onSend: { vm.send(ble: ble) }
+                            // Pass `env.alerts` so the keyboard's Done
+                            // key (`UITextView.returnKeyType = .default`
+                            // → `Coordinator.done()` → `parent.onSend()`
+                            // → here) goes through the same offline
+                            // pre-flight gate as the visible Send
+                            // button. Without this, hitting Done
+                            // while offline issued the chat request
+                            // and the chat surfaced the generic
+                            // "Sorry, something went wrong" bubble
+                            // instead of the standard internet popup.
+                            onSend: { vm.send(ble: ble, alerts: env.alerts) }
                         )
                         // `.frame(maxWidth: .infinity)` PINS the text
                         // view to ALL remaining horizontal space the
@@ -2488,7 +2546,11 @@ struct ChatInputBar: View {
             Button {
                 HapticService.light()
                 hideKeyboard()
-                vm.send(ble: ble)
+                // Pass `env.alerts` so the Send-button tap routes
+                // through the offline pre-flight gate inside
+                // `vm.send(ble:alerts:)`. Same plumbing as the
+                // keyboard-Done path above.
+                vm.send(ble: ble, alerts: env.alerts)
             } label: {
                 // Light mode keeps the original PNG (no template) so the
                 // send icon stays bit-identical to the existing UIKit-
@@ -2752,9 +2814,17 @@ struct BarBotCraftView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16) {
                             // Welcome / occasion — always present (row 0 parity).
+                            // Pass `env.alerts` so a tap on a chip in
+                            // the first-grid welcome row goes through
+                            // the offline pre-flight gate inside
+                            // `vm.sendOption(_:ble:alerts:)` — without
+                            // this, tapping a chip while offline
+                            // routed straight to the chat error path
+                            // ("Sorry, something went wrong") instead
+                            // of the standard internet popup.
                             WelcomeOccasionSection(vm: viewModel) { opt in
                                 guard viewModel.canProcessNewRequest else { return }
-                                viewModel.sendOption(opt, ble: ble)
+                                viewModel.sendOption(opt, ble: ble, alerts: env.alerts)
                             }
                             .id("welcome")
 
@@ -3378,7 +3448,11 @@ struct BarBotCraftView: View {
         case .autoSendPrompt(let prompt):
             guard viewModel.canProcessNewRequest else { return }
             viewModel.draft = prompt
-            viewModel.send(ble: ble)
+            // Pass `env.alerts` so an action-card "chat" tap goes
+            // through the offline pre-flight gate inside
+            // `vm.send(ble:alerts:)`. Same plumbing as the welcome
+            // chips and the manual Send button.
+            viewModel.send(ble: ble, alerts: env.alerts)
         case .pairDevice:       promptPairDevice()
         case .stationCleaning:  router.push(.stationCleaning, in: .barBot)
         case .setupBarsys360:   handleSetupBarsys360()
