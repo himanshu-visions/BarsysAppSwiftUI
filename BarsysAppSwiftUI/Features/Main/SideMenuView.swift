@@ -210,11 +210,25 @@ struct SideMenuOverlay: View {
                 .opacity(isVisible ? 1 : 0)
                 .allowsHitTesting(isVisible)
                 .zIndex(1)
-                // Interactive close: rightward drag on the open panel.
-                // Uses SwiftUI DragGesture (works fine here because the
-                // panel sits above TabView). Cells still receive taps
-                // because minimumDistance > 0.
-                .highPriorityGesture(
+                // FIX #2 — Interactive close-by-rightward-drag.
+                // `.gesture` (NOT `.highPriorityGesture`) so the
+                // child menu list's `ScrollView` pan recognizer
+                // wins for vertical drags. With `.highPriorityGesture`,
+                // SwiftUI captured EVERY drag past 8pt — including
+                // vertical scrolls inside the menu list — before
+                // the ScrollView could see them, and the
+                // `liveDragOffset = max(0, min(panelWidth, 0))`
+                // closure was a no-op for vertical drags but still
+                // consumed the touch sequence so the ScrollView
+                // never received it. With plain `.gesture`, the
+                // ScrollView's pan claims vertical drags first and
+                // only the leftover horizontal close-drag falls
+                // through to this gesture — exactly matching UIKit
+                // `SideMenuSwift`'s direction-locked pan recogniser
+                // which doesn't compete with table-view scrolling.
+                //
+                // Cells still receive taps because minimumDistance > 0.
+                .gesture(
                     DragGesture(minimumDistance: 8)
                         .onChanged { value in
                             guard router.showSideMenu else { return }
@@ -517,20 +531,6 @@ private struct SideMenuPanel: View {
             //       menuView.backgroundColor = .white
             //       tblMenu.backgroundColor  = .white
             //   }
-            //
-            // `menuView.addGlassEffect(cornerRadius: 8)` inserts a real
-            // `UIVisualEffectView(effect: UIGlassEffect(style: .regular))`
-            // at z-index 0 (UIViewClass+GlassEffects.swift L31-68).
-            //
-            // The UIKit reference screenshot (side menu open over the
-            // Home screen) shows the red device backdrop, cocktail
-            // image, eucalyptus branch, and coaster all clearly
-            // recognisable THROUGH the panel — softly blurred but NOT
-            // heavily whitened. So the port uses pure
-            // `UIGlassEffect(.regular)` on iOS 26 and
-            // `UIBlurEffect(.systemMaterial)` pre-26, with NO
-            // additional white-tint overlay (white overlay would hide
-            // the content the UIKit reference keeps visible).
             //
             // `BarsysGlassPanelBackground` is declared in
             // RecipesScreens.swift.
@@ -853,6 +853,27 @@ private struct SideMenuPanel: View {
         let subRowMinHeight: CGFloat      = isIPad ? 52 : 35
         let listBottomPadding: CGFloat    = isIPad ? 60 : 24
 
+        // FIX #1 — explicit height cap for the ScrollView, computed
+        // from `UIScreen.main.bounds.height` (which is orientation-
+        // aware in iOS 8+: returns the smaller dimension in landscape,
+        // the taller in portrait).
+        //
+        //   • Landscape iPhone (~390pt): cap = ~190pt → SMALLER than
+        //     menu content (~600pt) → ScrollView's viewport is now
+        //     bounded and SMALLER than content → scroll engages.
+        //   • Portrait iPhone (~850pt): cap = ~650pt → BIGGER than
+        //     content → ScrollView returns its content size and
+        //     behaves identically to before, no visual change.
+        //
+        // The 200pt offset roughly accounts for: 8pt panel top
+        // padding + 48pt header top inset + ~100pt avatar/name/Edit-
+        // Profile block + ~44pt bottom safe area / breathing room.
+        // 1:1 with UIKit `SideMenuViewController.swift` setting
+        // `tblMenu.frame.size.height = self.view.bounds.height -
+        //  headerView.bounds.height` so the table view always has a
+        // bounded viewport regardless of orientation.
+        let menuMaxHeight = max(0, UIScreen.main.bounds.height - 200)
+
         return ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 0) {
                 ForEach(Array(arrMenu.enumerated()), id: \.element.id) { index, section in
@@ -875,6 +896,7 @@ private struct SideMenuPanel: View {
             }
             .animation(.easeInOut(duration: 0.2), value: selectedSection)
         }
+        .frame(maxHeight: menuMaxHeight)
         // Logout confirmation popup — surfaced through `env.alerts` so it
         // renders via `BarsysAlertOverlay`, which is the direct SwiftUI
         // port of UIKit `AlertPopUpHorizontalStackController`
