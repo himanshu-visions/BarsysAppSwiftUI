@@ -399,6 +399,7 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         previewLayer?.frame = view.bounds
+        updatePreviewOrientation()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -415,6 +416,57 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
         super.viewWillDisappear(animated)
         if session.isRunning {
             session.stopRunning()
+        }
+    }
+
+    /// Called by the system before a rotation. We re-pin the preview
+    /// layer to the new bounds and re-sync its rotation alongside the
+    /// transition so the camera feed turns with the device instead of
+    /// staying locked in portrait while the layer frame becomes
+    /// landscape (which was rendering the live preview sideways).
+    override func viewWillTransition(
+        to size: CGSize,
+        with coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: { [weak self] _ in
+            guard let self else { return }
+            self.previewLayer?.frame = CGRect(origin: .zero, size: size)
+            self.updatePreviewOrientation()
+        })
+    }
+
+    /// Sync `AVCaptureVideoPreviewLayer`'s rotation with the current
+    /// interface orientation. Without this the camera buffer stays in
+    /// the orientation it had when the session was first configured
+    /// (portrait), so rotating the device leaves the live preview
+    /// sideways inside the now-landscape preview frame.
+    private func updatePreviewOrientation() {
+        guard let connection = previewLayer?.connection else { return }
+        let interfaceOrientation = view.window?.windowScene?.interfaceOrientation
+            ?? .portrait
+
+        if #available(iOS 17.0, *) {
+            let angle: CGFloat
+            switch interfaceOrientation {
+            case .portrait:            angle = 90
+            case .portraitUpsideDown:  angle = 270
+            case .landscapeLeft:       angle = 0
+            case .landscapeRight:      angle = 180
+            default:                   angle = 90
+            }
+            if connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
+            }
+        } else {
+            guard connection.isVideoOrientationSupported else { return }
+            switch interfaceOrientation {
+            case .portrait:            connection.videoOrientation = .portrait
+            case .portraitUpsideDown:  connection.videoOrientation = .portraitUpsideDown
+            case .landscapeLeft:       connection.videoOrientation = .landscapeLeft
+            case .landscapeRight:      connection.videoOrientation = .landscapeRight
+            default:                   connection.videoOrientation = .portrait
+            }
         }
     }
 
@@ -460,6 +512,11 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
         preview.frame = view.bounds
         view.layer.addSublayer(preview)
         self.previewLayer = preview
+        // Sync rotation up front — `configureCamera` can run async
+        // after permission is granted (so it may fire AFTER the first
+        // `viewDidLayoutSubviews`), and we don't want a stale portrait
+        // rotation if the screen is already in landscape on first open.
+        updatePreviewOrientation()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.session.startRunning()
