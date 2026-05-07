@@ -615,34 +615,52 @@ struct HomeView: View {
         // bit-identically.
         let isIPad = UIDevice.current.userInterfaceIdiom == .pad
         return Button(action: speakeasyTapped) {
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Barsys Speakeasy")
-                        .font(.system(size: isIPad ? 26 : 20))
-                        .foregroundStyle(Color("appBlackColor"))
-                    Text("Connect with Barsys at an IRL event.")
-                        .font(.system(size: isIPad ? 14 : 10))
-                        .foregroundStyle(Color("appBlackColor"))
+            Group {
+                if isPhoneLandscape {
+                    // iPhone landscape: stack the title, description,
+                    // and "Check in" vertically and center them inside
+                    // the card so the narrow speakeasy column reads as
+                    // a focused call-to-action that matches the height
+                    // of the Connect Device card beside it.
+                    VStack(spacing: 6) {
+                        Text("Barsys Speakeasy")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .multilineTextAlignment(.center)
+                        Text("Connect with Barsys at an IRL event.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .multilineTextAlignment(.center)
+                        Text("Check in")
+                            .font(.custom("Helvetica-Oblique", size: 14))
+                            .underline()
+                            .foregroundStyle(Color("appBlackColor"))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    HStack(spacing: 0) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Barsys Speakeasy")
+                                .font(.system(size: isIPad ? 26 : 20))
+                                .foregroundStyle(Color("appBlackColor"))
+                            Text("Connect with Barsys at an IRL event.")
+                                .font(.system(size: isIPad ? 14 : 10))
+                                .foregroundStyle(Color("appBlackColor"))
+                        }
+                        .padding(.leading, 12)
+
+                        Spacer()
+
+                        Text("Check in")
+                            .font(.custom("Helvetica-Oblique", size: isIPad ? 18 : 14))
+                            .underline()
+                            .foregroundStyle(Color("appBlackColor"))
+                            .padding(.trailing, 12)
+                    }
+                    .frame(height: isIPad ? 78 : 60)
                 }
-                .padding(.leading, 12)
-
-                Spacer()
-
-                Text("Check in")
-                    .font(.custom("Helvetica-Oblique", size: isIPad ? 18 : 14))
-                    .underline()
-                    .foregroundStyle(Color("appBlackColor"))
-                    .padding(.trailing, 12)
             }
-            // iPhone landscape: render with the storyboard minimum
-            // height (60pt) but allow vertical expansion so the card
-            // can stretch to match the Connect Device card sitting
-            // beside it in the HStack. Portrait / iPad keep the
-            // bit-identical fixed heights (60pt / 78pt).
-            .frame(
-                minHeight: isIPad ? 78 : 60,
-                maxHeight: isPhoneLandscape ? .infinity : (isIPad ? 78 : 60)
-            )
             .frame(maxWidth: .infinity)
             // `Theme.Color.surface` is an adaptive asset — light
             // variant is pure white sRGB(1, 1, 1), bit-identical to
