@@ -870,9 +870,20 @@ struct ReadyToPourView: View {
                 }
             }
         }
+        // 1:1 with UIKit `FavoriteRecipeApiService.swift` — Braze event
+        // carries `recipe_id` + `recipe_name` for both the add and
+        // remove side of the toggle. The same call site in
+        // RecipesScreens.swift L616 already passes these properties;
+        // mirroring them here so favourite-toggle events reach Braze
+        // with consistent shape regardless of which surface (All
+        // Recipes vs. Ready-to-Pour) the user tapped from.
         env.analytics.track(
             (willBeFav ? TrackEventName.favouriteRecipeAdded
-                       : TrackEventName.favouriteRecipeRemoved).rawValue
+                       : TrackEventName.favouriteRecipeRemoved).rawValue,
+            properties: [
+                "recipe_id": recipe.id.value,
+                "recipe_name": recipe.displayName
+            ]
         )
         env.alerts.show(message: willBeFav
                         ? Constants.likeSuccessMessage

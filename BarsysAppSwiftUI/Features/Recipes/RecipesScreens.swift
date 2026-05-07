@@ -718,9 +718,20 @@ struct ExploreRecipesView: View {
         .onAppear {
             // 1:1 with UIKit `ExploreRecipesViewController` L62 —
             //   TrackEventsClass().addBrazeCustomEventWithEventName(
-            //       eventName: TrackEventName.viewRecipesListing.rawValue)
+            //       eventName: TrackEventName.viewRecipesListing.rawValue,
+            //       properties: ["user_id": ..., "date": Date()])
             // Fires every time the All Recipes tab becomes visible.
-            env.analytics.track(TrackEventName.viewRecipesListing.rawValue)
+            // Properties match the screen-view baseline used by
+            // FavoritesView L299 (`user_id` + `date`) so Braze can
+            // attribute the event to a user and segment "All Recipes
+            // viewers" cohorts.
+            env.analytics.track(
+                TrackEventName.viewRecipesListing.rawValue,
+                properties: [
+                    "user_id": UserDefaultsClass.getUserId() ?? "",
+                    "date": Date()
+                ]
+            )
             // Re-project favourites from storage on every appear so a
             // RecipeDetail toggle (popped back via the nav stack)
             // refreshes the heart icons here. Mirrors UIKit's

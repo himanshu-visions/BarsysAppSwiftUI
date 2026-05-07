@@ -325,11 +325,22 @@ struct MixlistListView: View {
         .onAppear {
             // 1:1 with UIKit `MixlistViewController` L73 —
             //   TrackEventsClass().addBrazeCustomEventWithEventName(
-            //       eventName: TrackEventName.viewMixlistsListing.rawValue)
+            //       eventName: TrackEventName.viewMixlistsListing.rawValue,
+            //       properties: ["user_id": ..., "date": Date()])
             // Fires every time the Cocktail Kits / Mixlists tab
             // becomes visible so Braze can track content-discovery
-            // sessions and trigger IAMs accordingly.
-            env.analytics.track(TrackEventName.viewMixlistsListing.rawValue)
+            // sessions and trigger IAMs accordingly. Properties match
+            // the screen-view baseline used by FavoritesView L299
+            // (`user_id` + `date`) so Braze can attribute the event
+            // to a user and segment "viewed Cocktail Kits in last
+            // N days".
+            env.analytics.track(
+                TrackEventName.viewMixlistsListing.rawValue,
+                properties: [
+                    "user_id": UserDefaultsClass.getUserId() ?? "",
+                    "date": Date()
+                ]
+            )
         }
         .toolbar {
             // Leading: back chevron — Cocktail Kits is pushed onto the

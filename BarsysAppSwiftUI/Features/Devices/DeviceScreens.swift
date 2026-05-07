@@ -19,10 +19,24 @@ struct PairDeviceView: View {
     @EnvironmentObject private var ble: BLEService
     @Environment(\.dismiss) private var dismiss
 
+    /// `compact` vertical size class on iPhone signals a short
+    /// viewport (landscape). With 3 device cards stacked in a
+    /// VStack each at 140pt tall, the third card spilled below
+    /// the tab bar and the scroll required two-finger flicks; in
+    /// landscape we lay the cards out side-by-side instead so the
+    /// wide-but-short canvas is used properly. iPad keeps `regular`
+    /// in both orientations so this stays false there.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     @State private var showDeviceListPopup = false
     @State private var selectedKind: DeviceKind?
     @State private var showBluetoothAlert = false
     @State private var bluetoothPopup: BarsysPopup? = nil
+
+    private var isPhoneLandscape: Bool {
+        verticalSizeClass == .compact
+            && UIDevice.current.userInterfaceIdiom != .pad
+    }
 
     private let devices: [(kind: DeviceKind, name: String, image: String)] = [
         (.barsys360, "Barsys 360",    "barsys_360"),
@@ -82,25 +96,57 @@ struct PairDeviceView: View {
                         - titleBlockHeight
                         - pairDeviceBottomInset
                     let rowHeight = max(UIDevice.current.userInterfaceIdiom == .pad ? 210 : 140, availableHeight / 3)
+                    // iPhone landscape: each card fills the full
+                    // remaining height (cards sit side-by-side, no
+                    // vertical division by 3). Floor at 140pt so the
+                    // card never collapses below the storyboard
+                    // minimum on extra-short viewports (e.g. iPhone
+                    // SE landscape).
+                    let landscapeCardHeight = max(140, availableHeight)
 
-                    VStack(spacing: 0) {
-                        ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
-                            Button {
-                                HapticService.light()
-                                deviceTapped(device.kind)
-                            } label: {
-                                deviceCard(device: device)
+                    if isPhoneLandscape {
+                        // Lay the 3 device cards out side-by-side so
+                        // the wide-but-short landscape viewport uses
+                        // its horizontal real estate properly. The
+                        // cards split width evenly via
+                        // `.frame(maxWidth: .infinity)` on each child.
+                        HStack(spacing: 0) {
+                            ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
+                                Button {
+                                    HapticService.light()
+                                    deviceTapped(device.kind)
+                                } label: {
+                                    deviceCard(device: device)
+                                }
+                                .buttonStyle(.plain)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: landscapeCardHeight)
                             }
-                            .buttonStyle(.plain)
-                            .frame(height: rowHeight)
                         }
+                        // Pre-iOS 26 tab-bar breathing room — see comment
+                        // in the portrait branch below for the rationale.
+                        .padding(.bottom, pairDeviceBottomInset)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
+                                Button {
+                                    HapticService.light()
+                                    deviceTapped(device.kind)
+                                } label: {
+                                    deviceCard(device: device)
+                                }
+                                .buttonStyle(.plain)
+                                .frame(height: rowHeight)
+                            }
+                        }
+                        // Pre-iOS 26 the tab bar is opaque + hairline —
+                        // without this padding the third device card
+                        // butts right up against the tab bar top edge.
+                        // iOS 26+ glass tab bar blurs over content so
+                        // no extra space needed. Same branching pattern
+                        // as every other tab-root screen.
+                        .padding(.bottom, pairDeviceBottomInset)
                     }
-                    // Pre-iOS 26 the tab bar is opaque + hairline — without
-                    // this padding the third device card butts right up
-                    // against the tab bar top edge. iOS 26+ glass tab bar
-                    // blurs over content so no extra space needed. Same
-                    // branching pattern as every other tab-root screen.
-                    .padding(.bottom, pairDeviceBottomInset)
                 }
                 .frame(minHeight: outerGeo.size.height)
             }
@@ -113,7 +159,17 @@ struct PairDeviceView: View {
             // `deviceAvailableListViewed` analytics call — fires each
             // time the Pair Your Device listing screen becomes
             // visible so Braze can track "started pairing" sessions.
-            env.analytics.track(TrackEventName.deviceAvailableListViewed.rawValue)
+            // Properties match the screen-view baseline used by
+            // FavoritesView L299 (`user_id` + `date`) so the event
+            // can be attributed to a user even before any pairing
+            // succeeds.
+            env.analytics.track(
+                TrackEventName.deviceAvailableListViewed.rawValue,
+                properties: [
+                    "user_id": UserDefaultsClass.getUserId() ?? "",
+                    "date": Date()
+                ]
+            )
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
