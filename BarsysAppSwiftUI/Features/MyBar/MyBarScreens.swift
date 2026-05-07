@@ -942,9 +942,23 @@ struct MyBarView: View {
                 showIngredientsFoundPopup = true
             } catch {
                 env.loading.hide()
-                env.alerts.show(message: Constants.ingredientUpdateError)
+                let message = Self.isCancellationError(error)
+                    ? Constants.requestCancelledMessage
+                    : Constants.ingredientUpdateError
+                env.alerts.show(message: message)
             }
         }
+    }
+
+    /// `true` when the thrown error represents a user-initiated cancel
+    /// (Task cancellation or `URLSession` `URLError.cancelled` -999).
+    /// Used by the upload catch path so a cancelled request surfaces
+    /// "Your request has been cancelled." instead of the generic
+    /// `ingredientUpdateError` message.
+    private static func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
     }
 
     /// 1:1 port of UIKit `MyBarViewModel.processImageScanResults`

@@ -890,12 +890,21 @@ final class BarBotViewModel: ObservableObject {
                 await MainActor.run { [weak self] in
                     self?.applyResponse(response, to: id)
                 }
-            } catch is CancellationError {
-                await MainActor.run { [weak self] in self?.markCancelled(id) }
             } catch {
-                await MainActor.run { [weak self] in
-                    self?.applyResponse(BarBotAIResponse(response: "Sorry, something went wrong. Please try again."),
-                                        to: id)
+                // Cancellation comes through two channels: an explicit
+                // `Task.checkCancellation()` (CancellationError) and a
+                // mid-flight URLSession that's cancelled by the user
+                // tapping the loading-cell cross (URLError.cancelled,
+                // -999). Treat BOTH as a user-initiated cancel so the
+                // chat bubble shows "Your request has been cancelled."
+                // instead of the generic "something went wrong" copy.
+                if Self.isCancellationError(error) {
+                    await MainActor.run { [weak self] in self?.markCancelled(id) }
+                } else {
+                    await MainActor.run { [weak self] in
+                        self?.applyResponse(BarBotAIResponse(response: "Sorry, something went wrong. Please try again."),
+                                            to: id)
+                    }
                 }
             }
         }
@@ -926,8 +935,25 @@ final class BarBotViewModel: ObservableObject {
         guard let idx = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[idx].isLoading = false
         messages[idx].isCancelled = true
-        if messages[idx].answerText == nil { messages[idx].answerText = "Cancelled" }
+        // Always overwrite with the cancellation copy — the URLSession
+        // catch path can race ahead of `cancel(messageID:)` and stamp
+        // an error string into `answerText` BEFORE we get here. Using a
+        // hard set (instead of `if answerText == nil`) guarantees the
+        // cancelled bubble always reads "Your request has been
+        // cancelled." regardless of which path arrived first.
+        messages[idx].answerText = Constants.requestCancelledMessage
         isTyping = false
+    }
+
+    /// `true` when the thrown error represents a user-initiated cancel
+    /// (Task cancellation or `URLSession` `URLError.cancelled` -999).
+    /// Used by the chat catch path so a cancelled request surfaces the
+    /// "Your request has been cancelled." bubble instead of the
+    /// generic "something went wrong" copy.
+    private static func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
     }
 
     private func applyResponse(_ response: BarBotAIResponse, to id: UUID) {

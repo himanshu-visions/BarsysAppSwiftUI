@@ -210,6 +210,7 @@ enum Constants {
     static let loginError = "Unable to sign in. Please try again."
     static let signUpError = "Unable to create account. Please try again."
     static let ingredientUpdateError = "Unable to update ingredients. Please try again."
+    static let requestCancelledMessage = "Your request has been cancelled."
     static let internetConnectionMessage = "Please check your internet connection."
     static let otpSentSuccessfully = "An OTP has been sent to your phone number."
     static let accountDoesNotExist = "This account doesn't exist. Please sign up first."

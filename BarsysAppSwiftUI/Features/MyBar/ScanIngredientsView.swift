@@ -753,15 +753,16 @@ struct ScanIngredientsView: View {
         //     re-layout pass behind the actual rotation.
         //   • Right column uses `.frame(maxWidth: .infinity)` so it
         //     soaks up whatever horizontal space remains.
-        //   • Camera frame uses `.frame(maxWidth: .infinity,
-        //     maxHeight: .infinity)` so it fills the right column.
-        //     The AV preview layer's `.resizeAspectFill` crops the
-        //     camera feed to fit — no aspect-ratio modifier required.
-        //   • Controls row is reserved at 80pt unconditionally so
-        //     swapping between the shutter (80pt) and retake+submit
-        //     (45pt) states doesn't yank the camera up or down. The
-        //     shorter button row stays vertically centered inside
-        //     the reserved 80pt slot.
+        //   • Camera frame fills the full right column (maxHeight:
+        //     .infinity) — no longer shares vertical space with a
+        //     controls row, so the live preview is as tall as the
+        //     viewport allows.
+        //   • Controls (shutter / retake+submit) are rendered as a
+        //     bottom-anchored `.overlay` ON TOP of the camera so the
+        //     user can see the framing AND the capture button at the
+        //     same time without the camera being pushed up. Anchored
+        //     to the bottom with 16pt inset so they hug the lower
+        //     edge of the camera rectangle.
 
         HStack(alignment: .center, spacing: 24) {
 
@@ -771,15 +772,14 @@ struct ScanIngredientsView: View {
                 .frame(width: 280)
                 .frame(maxHeight: .infinity)
 
-            // RIGHT — camera + controls.
-            VStack(spacing: 12) {
-                cameraOrCapturedImageView
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                bottomControlsContainer
-                    .frame(height: 80)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // RIGHT — camera fills the column, controls overlay on top.
+            cameraOrCapturedImageView
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) {
+                    bottomControlsContainer
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -1055,9 +1055,23 @@ struct ScanIngredientsView: View {
                 showIngredientsFoundPopup = true
             } catch {
                 env.loading.hide()
-                failAndRetake(message: Constants.ingredientUpdateError)
+                let message = Self.isCancellationError(error)
+                    ? Constants.requestCancelledMessage
+                    : Constants.ingredientUpdateError
+                failAndRetake(message: message)
             }
         }
+    }
+
+    /// `true` when the thrown error represents a user-initiated cancel
+    /// (Task cancellation or `URLSession` `URLError.cancelled` -999).
+    /// Used by the submit catch path so a cancelled upload surfaces
+    /// "Your request has been cancelled." instead of the generic
+    /// `ingredientUpdateError` message.
+    private static func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
     }
 
     /// Show the failure alert AND drop the captured image so the UI
