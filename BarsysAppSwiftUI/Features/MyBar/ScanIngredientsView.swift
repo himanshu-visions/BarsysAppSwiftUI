@@ -1,0 +1,970 @@
+//
+//  ScanIngredientsView.swift
+//  BarsysAppSwiftUI
+//
+//  1:1 port of UIKit `ScanIngredientsViewController` and its
+//  `+Camera` extension. Reference files:
+//    • Controllers/MyBar/ScanIngredientsViewController.swift
+//    • Controllers/MyBar/ScanIngredientsViewController+Camera.swift
+//    • Helpers/UploadImage/UploadIngredientsImage.swift
+//    • Helpers/CustomViews/UIViewClass+GlassEffects.swift
+//    • StoryBoards/Base.lproj/Device.storyboard scene `Lia-fw-G3l`
+//
+//  This screen is pushed from `MyBarView` when the user taps:
+//    • Empty state → "Take A Photo"               (storyboard btn `Avz-rE-CtO`)
+//    • Data state  → "Add ingredient" → "Camera"  (storyboard btn `jrL-ey-GS1`)
+//
+//  -------------------------------------------------------------------
+//  RUNTIME FLOW (ports UIKit ScanIngredientsViewController.viewDidLoad
+//  + viewWillAppear + capturePhoto + proceedForMyBar + popup)
+//  -------------------------------------------------------------------
+//
+//  • viewDidLoad → setupView() → setupCaptureButton() → setupRetakeSubmitButtons()
+//  • viewWillAppear → if !isImageCaptured → startCamera()
+//  • Tap capture → capturePhoto() → AVCapturePhotoCaptureDelegate
+//      → photoOutput(_:didFinishProcessingPhoto:error:) →
+//        capturedImage = image · stopCamera() · showCapturedImage()
+//        → swap viewCaptureImage out (hidden) and
+//          viewRetakeSubmitContainer in (visible)
+//  • Tap retake → restartCameraProcess() → drop captured image,
+//        flush session, startCamera() again
+//  • Tap submit → proceedForMyBar(capturedImage:) →
+//        ConnectionMonitor → showGlassLoader("Adding Ingredients") →
+//        UploadIngredientsImage().uploadImageAndGetIngredientsResponseForMyBar →
+//        filter base/mixer (drop garnish/additional) → addingredientPopUpShow
+//  • Popup Proceed → MyBarApiService.addIngredientToMyBar → on success,
+//        onIngredientScannedForMyBar?(arrayOfSelections) and pop the VC
+//  • Popup Reupload → restartCameraProcess()
+//
+
+import SwiftUI
+import AVFoundation
+import Combine
+
+// MARK: - Camera controller
+//
+// Owns a single `AVCaptureSession` for the scan screen and exposes the
+// state SwiftUI needs (`capturedImage`, `isCapturing`, `permissionState`).
+// Mirrors the imperative state machine in
+// `ScanIngredientsViewController` (`captureSession`, `photoOutput`,
+// `capturedImage`, `isImageCaptured`, `isCapturing`,
+// `sessionQueue`) inside an `ObservableObject` so the view can react
+// to capture / reset transitions.
+
+@MainActor
+final class ScanCameraController: NSObject, ObservableObject {
+
+    // MARK: Permission states
+
+    enum PermissionState: Equatable {
+        case unknown          // not yet checked
+        case authorized
+        case denied           // explicit deny / restricted / notDetermined-then-rejected
+        case unavailable      // device has no usable camera (simulator, hardware fault)
+    }
+
+    // MARK: Public state
+
+    /// Live AVCaptureSession — handed to `ScanCameraPreview` so the
+    /// preview layer renders directly off it.
+    let session = AVCaptureSession()
+
+    /// The image captured by the most recent shutter tap. SwiftUI
+    /// observes this to swap from "live preview" → "captured image"
+    /// state, matching UIKit `viewCaptureImage.isHidden = isImageCaptured`
+    /// / `viewRetakeSubmitContainer.isHidden = !isImageCaptured`
+    /// (ScanIngredientsViewController.swift L186-193).
+    @Published private(set) var capturedImage: UIImage?
+
+    /// Drives the disabled state of the shutter — guards against
+    /// double-tap that UIKit's `isCapturing` flag also covers
+    /// (ScanIngredientsViewController.swift L40 + L146-150).
+    @Published private(set) var isCapturing: Bool = false
+
+    /// Camera permission state. SwiftUI consults this to decide
+    /// whether to show the live preview or push a denied alert.
+    @Published var permissionState: PermissionState = .unknown
+
+    // MARK: Private state
+
+    private var photoOutput: AVCapturePhotoOutput?
+    private let sessionQueue = DispatchQueue(label: "scan.ingredients.session.queue")
+    /// Once we've added input + output to the session we don't need
+    /// to re-add them every time the screen reappears — UIKit avoids
+    /// this with the same `captureSession == nil` guard at the top of
+    /// `startCamera()` (ScanIngredientsViewController+Camera.swift L18).
+    private var didConfigure = false
+
+    override init() { super.init() }
+
+    // MARK: - Lifecycle
+
+    /// 1:1 with UIKit `viewWillAppear` recipe:
+    ///   if !isImageCaptured { sessionQueue.async { startCamera() } }
+    /// First-call path also requests AVCaptureDevice authorization.
+    func start() {
+        // Already running — nothing to do.
+        if session.isRunning { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let granted = await Self.ensureAuthorization()
+            await MainActor.run {
+                self.permissionState = granted ? .authorized : .denied
+            }
+            guard granted else { return }
+            self.sessionQueue.async {
+                self.configureSessionIfNeeded()
+                if !self.session.isRunning {
+                    self.session.startRunning()
+                }
+            }
+        }
+    }
+
+    /// 1:1 with UIKit `stopCamera()`. Called from `viewWillDisappear`.
+    func stop() {
+        sessionQueue.async { [session] in
+            if session.isRunning {
+                session.stopRunning()
+            }
+        }
+    }
+
+    /// 1:1 with UIKit `restartCameraProcess()` — drop the captured
+    /// image, flush state and restart the live preview.
+    func reset() {
+        capturedImage = nil
+        isCapturing = false
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if !self.session.isRunning {
+                self.session.startRunning()
+            }
+        }
+    }
+
+    /// 1:1 with UIKit `capturePhoto()` — guarded by `isCapturing`,
+    /// then `photoOutput.capturePhoto(with:delegate:)`. Result is
+    /// delivered via `AVCapturePhotoCaptureDelegate` below.
+    func capture() {
+        guard !isCapturing else { return }
+        guard let output = photoOutput else { return }
+        isCapturing = true
+        let settings = AVCapturePhotoSettings()
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            output.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    // MARK: - Internal
+
+    /// 1:1 with UIKit `startCamera()` body — runs ONCE on the first
+    /// `start()` call. Adds the back wide-angle camera as an input
+    /// and an `AVCapturePhotoOutput` for the shutter.
+    private func configureSessionIfNeeded() {
+        guard !didConfigure else { return }
+        didConfigure = true
+
+        session.beginConfiguration()
+        session.sessionPreset = .photo
+
+        guard let device = AVCaptureDevice.default(
+                .builtInWideAngleCamera,
+                for: .video,
+                position: .back),
+              let input = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(input) else {
+            session.commitConfiguration()
+            DispatchQueue.main.async { [weak self] in
+                // Surface the same "Camera Disabled" alert as UIKit
+                // `showCameraErrorAlert` (ScanIngredientsViewController
+                // +Camera.swift L75-88) — we reuse the `.denied` case
+                // since the resulting UI prompt is identical (cancel +
+                // Go-to-Settings).
+                self?.permissionState = .unavailable
+            }
+            return
+        }
+        session.addInput(input)
+
+        let output = AVCapturePhotoOutput()
+        if session.canAddOutput(output) {
+            session.addOutput(output)
+            self.photoOutput = output
+        }
+        session.commitConfiguration()
+    }
+
+    /// Bridges `AVCaptureDevice.authorizationStatus` to a single
+    /// async-await call. Mirrors UIKit's
+    /// `MediaPermissions.requestCamera` recipe used by the
+    /// SwiftUI port elsewhere.
+    private static func ensureAuthorization() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { c in
+                AVCaptureDevice.requestAccess(for: .video) { c.resume(returning: $0) }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+}
+
+// MARK: - AVCapturePhotoCaptureDelegate
+//
+// 1:1 with UIKit `photoOutput(_:didFinishProcessingPhoto:error:)` at
+// ScanIngredientsViewController+Camera.swift L153-183. On success:
+//   • capturedImage = image
+//   • stopCamera() (we just leave session running until the user
+//     submits/retakes — UIKit stops, we don't strictly need to since
+//     `ScanCameraPreview` is hidden when an image is captured anyway,
+//     but stopping saves battery + thermal so we mirror it).
+//   • showCapturedImage()  ← in SwiftUI this is just a state flip.
+
+extension ScanCameraController: AVCapturePhotoCaptureDelegate {
+    nonisolated func photoOutput(_ output: AVCapturePhotoOutput,
+                                 didFinishProcessingPhoto photo: AVCapturePhoto,
+                                 error: Error?) {
+        if let error {
+            print("ScanIngredients: capture error \(error)")
+            DispatchQueue.main.async { [weak self] in
+                self?.isCapturing = false
+            }
+            return
+        }
+        guard let data = photo.fileDataRepresentation(),
+              let image = UIImage(data: data) else {
+            DispatchQueue.main.async { [weak self] in
+                self?.isCapturing = false
+            }
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isCapturing = false
+            self.capturedImage = image
+        }
+        // Stop the session on the session queue so the preview layer
+        // immediately freezes — matches UIKit `stopCamera()` after
+        // the photo lands (ScanIngredientsViewController+Camera.swift
+        // L180).
+        sessionQueue.async { [session] in
+            if session.isRunning {
+                session.stopRunning()
+            }
+        }
+    }
+}
+
+// MARK: - Live camera preview
+//
+// Wraps `AVCaptureVideoPreviewLayer` in a `UIView` whose backing layer
+// IS that preview layer. Avoids the auto-resize headaches of inserting
+// the layer as a sublayer (which UIKit had to fight via
+// `viewDidLayoutSubviews`).
+
+struct ScanCameraPreview: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> PreviewView {
+        let view = PreviewView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        if uiView.previewLayer.session !== session {
+            uiView.previewLayer.session = session
+        }
+    }
+
+    final class PreviewView: UIView {
+        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+    }
+}
+
+// MARK: - ScanIngredientsView
+//
+// 1:1 with UIKit `ScanIngredientsViewController`. Renders the live
+// preview inside `viewCameraFrame`, swaps to the captured image when
+// the shutter fires, and presents the same multi-ingredient popup
+// after `proceedForMyBar(capturedImage:)`.
+
+struct ScanIngredientsView: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var router: AppRouter
+    @EnvironmentObject private var ble: BLEService
+    @Environment(\.dismiss) private var dismiss
+
+    @StateObject private var camera = ScanCameraController()
+
+    // Popup state — 1:1 with `MyBarView.detectedIngredients` /
+    // `showIngredientsFoundPopup`. Same layout, same Reupload /
+    // Proceed actions; differs only in that Reupload here restarts
+    // the live camera (UIKit `restartCameraProcess()`) instead of
+    // re-opening the system photo picker.
+    @State private var detectedIngredients: [DetectedMyBarIngredient] = []
+    @State private var showIngredientsFoundPopup = false
+    @State private var showCameraDeniedAlert = false
+
+    // MARK: - Derived helpers
+
+    private var deviceIconName: String {
+        if ble.isBarsys360Connected() { return "icon_barsys_360" }
+        if ble.isCoasterConnected() { return "icon_barsys_coaster" }
+        if ble.isBarsysShakerConnected() { return "icon_barsys_shaker" }
+        return ""
+    }
+    private var deviceKindName: String {
+        if ble.isBarsys360Connected() { return Constants.barsys360NameTitle }
+        if ble.isCoasterConnected() { return Constants.barsysCoasterTitle }
+        if ble.isBarsysShakerConnected() { return Constants.barsysShakerTitle }
+        return ""
+    }
+
+    private var hasCapturedImage: Bool { camera.capturedImage != nil }
+    private var selectedCount: Int {
+        detectedIngredients.filter { $0.isSelected && !$0.isExisting }.count
+    }
+    private var hasNewIngredients: Bool {
+        detectedIngredients.contains { !$0.isExisting }
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        ZStack {
+            Color("primaryBackgroundColor").ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                titleAndSubtitle
+                    .padding(.top, 8)
+
+                cameraOrCapturedImageView
+                    .padding(.top, 24)
+
+                Spacer(minLength: 16)
+
+                bottomControlsContainer
+                    .padding(.bottom, 50)
+            }
+            .padding(.horizontal, 24)
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent }
+        .chooseOptionsStyleNavBar()
+        .interactivePopGestureEnabled()
+        .onAppear {
+            camera.start()
+        }
+        .onDisappear {
+            camera.stop()
+        }
+        .onChange(of: camera.permissionState) { state in
+            // UIKit: `showCameraErrorAlert()` is invoked from inside
+            // `startCamera()` when the AV input fails to acquire.
+            if state == .denied || state == .unavailable {
+                showCameraDeniedAlert = true
+            }
+        }
+        .alert(Constants.cameraDisabledForApp,
+               isPresented: $showCameraDeniedAlert,
+               actions: {
+            Button(ConstantButtonsTitle.cancelButtonTitle, role: .cancel) {
+                dismiss()
+            }
+            Button(ConstantButtonsTitle.goToSettingsTitle) {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+        }, message: {
+            Text(Constants.cameraRequiredAuthorizationForScanIngredients)
+        })
+        .overlay {
+            if showIngredientsFoundPopup {
+                ingredientsFoundPopup
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: showIngredientsFoundPopup)
+    }
+
+    // MARK: - Toolbar (matches MyBarView's nav bar exactly)
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if ble.isAnyDeviceConnected, !deviceIconName.isEmpty {
+            ToolbarItem(placement: .principal) {
+                DevicePrincipalIcon(assetName: deviceIconName,
+                                    accessibilityLabel: deviceKindName)
+            }
+        }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            NavigationRightGlassButtons(
+                onFavorites: { router.push(.favorites) },
+                onProfile: {
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        router.showSideMenu = true
+                    }
+                }
+            )
+        }
+    }
+
+    // MARK: - Title & subtitle
+    //
+    // 1:1 with UIKit `lblTakeAPhotoTitle.text` (system 20pt bold,
+    // appBlackColor) and `lblDescription.text` (14pt, mutedGrayColor).
+    // The MyBar branch always sets:
+    //   • title: "Take a Photo of Ingredient(s)"
+    //   • description: "Snap a clear photo of the bottle or ingredient
+    //     and Barbot AI will add it to your 'My Bar' visible on the
+    //     next screen."
+    // (ScanIngredientsViewController.swift L72-78). The description
+    // hides once an image is captured (UIKit L189-190).
+
+    @ViewBuilder
+    private var titleAndSubtitle: some View {
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 26 : 20
+        let descSize: CGFloat = isIPad ? 17 : 14
+        VStack(spacing: 8) {
+            Text("Take a Photo of Ingredient(s)")
+                .font(.system(size: titleSize, weight: .semibold))
+                .foregroundStyle(Color("appBlackColor"))
+                .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
+            if !hasCapturedImage {
+                Text("Snap a clear photo of the bottle or ingredient and Barbot AI will add it to your 'My Bar' visible on the next screen.")
+                    .font(.system(size: descSize))
+                    .foregroundStyle(Color("veryDarkGrayColor"))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
+            }
+        }
+    }
+
+    // MARK: - Camera / captured image view
+    //
+    // Storyboard `viewCameraFrame` is a 16pt-cornered container
+    // (BarsysCornerRadius.medium = 12, but storyboard uses 16; we
+    // mirror the storyboard) sized to fill the available width with
+    // an aspect that the live preview can fill via .resizeAspectFill.
+    // We render an `AspectRatio(3:4)` frame which matches the
+    // common phone-camera aspect and gives the preview/captured image
+    // a stable, square-ish canvas across iPhone sizes.
+
+    @ViewBuilder
+    private var cameraOrCapturedImageView: some View {
+        ZStack {
+            if let image = camera.capturedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .accessibilityLabel("Captured photo")
+            } else if camera.permissionState == .authorized {
+                ScanCameraPreview(session: camera.session)
+                    .accessibilityLabel("Camera preview")
+            } else {
+                // Placeholder before permission is resolved or when
+                // the camera is unavailable. UIKit shows a black
+                // viewCameraFrame in the same window — same effect.
+                Color.black
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(3.0 / 4.0, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.85), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Bottom controls
+    //
+    // Two states, controlled by `hasCapturedImage`:
+    //   • Capturing: large 70×70 circular shutter button (storyboard
+    //     `btnCapture` inside `viewCaptureImage` 80×80 ring).
+    //   • Captured: side-by-side Retake (secondary) + Submit (primary)
+    //     buttons, 168.67×45 each, 8pt spacing — same pair as the
+    //     storyboard's `viewRetakeSubmitContainer` and the MyBar
+    //     bottom bar (which uses `MyBarPrimaryButton` /
+    //     `MyBarSecondaryButton`).
+
+    @ViewBuilder
+    private var bottomControlsContainer: some View {
+        if hasCapturedImage {
+            HStack(spacing: 8) {
+                ScanSecondaryButton(title: ConstantButtonsTitle.retakeButtonTitle) {
+                    HapticService.light()
+                    camera.reset()
+                }
+                ScanPrimaryButton(title: ConstantButtonsTitle.submitButtonTitle) {
+                    HapticService.light()
+                    submitCapturedImage()
+                }
+            }
+        } else {
+            HStack {
+                Spacer()
+                shutterButton
+                Spacer()
+            }
+        }
+    }
+
+    /// Circular shutter button — ports `viewCaptureImage` (80×80
+    /// outer ring) + `btnCapture` (inset hit target). UIKit applies
+    /// `roundCorners = frame.height/2` so it's a perfect circle.
+    @ViewBuilder
+    private var shutterButton: some View {
+        Button {
+            HapticService.light()
+            camera.capture()
+        } label: {
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.85), lineWidth: 4)
+                    .frame(width: 80, height: 80)
+                Circle()
+                    .fill(Color.white.opacity(0.95))
+                    .frame(width: 64, height: 64)
+                    .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(camera.isCapturing || camera.permissionState != .authorized)
+        .opacity(camera.permissionState == .authorized ? 1.0 : 0.5)
+        .accessibilityLabel("Capture photo")
+        .accessibilityHint("Takes a photo")
+    }
+
+    // MARK: - Submit / Reupload actions
+
+    /// 1:1 with UIKit `proceedForMyBar(capturedImage:)`
+    /// (ScanIngredientsViewController.swift L214-299).
+    private func submitCapturedImage() {
+        guard let image = camera.capturedImage else { return }
+        guard let data = image.jpegData(compressionQuality: 0.7) else {
+            env.alerts.show(message: Constants.ingredientUpdateError)
+            return
+        }
+        env.loading.show(Constants.addingIngredientLoaderText)
+        Task { @MainActor in
+            // UIKit L216-222: pre-flight connectivity check.
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.loading.hide()
+                env.alerts.show(
+                    title: Constants.internetConnectionMessage,
+                    message: "",
+                    primary: Constants.okButtonTitle
+                )
+                return
+            }
+            do {
+                let detected = try await env.api.uploadIngredientImageForMyBar(data)
+                env.loading.hide()
+                let (toShow, errorMessage) = processImageScanResults(detected)
+                if let errorMessage, toShow.isEmpty {
+                    env.alerts.show(message: errorMessage)
+                    return
+                }
+                if toShow.isEmpty {
+                    env.alerts.show(message: Constants.ingredientCannotBeUsedHere)
+                    return
+                }
+                detectedIngredients = toShow
+                showIngredientsFoundPopup = true
+            } catch {
+                env.loading.hide()
+                env.alerts.show(message: Constants.ingredientUpdateError)
+            }
+        }
+    }
+
+    /// 1:1 with `MyBarView.processImageScanResults` — kept private to
+    /// this file so the screen can be audited end-to-end without
+    /// chasing helpers across files.
+    private func processImageScanResults(
+        _ detected: [MyBarIngredientFromImage]
+    ) -> (ingredients: [DetectedMyBarIngredient], errorMessage: String?) {
+        guard !detected.isEmpty else {
+            return ([], Constants.ingredientCannotBeUsedHere)
+        }
+        // UIKit L244-247: NOT IN ('garnish','additionals','additional').
+        let baseAndMixer = detected.filter {
+            let p = ($0.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional" && p != "additionals"
+        }
+        if baseAndMixer.isEmpty {
+            return ([], Constants.ingredientCannotBeUsedHere)
+        }
+        let first = baseAndMixer[0]
+        let primary = first.category?.primary ?? ""
+        let secondary = first.category?.secondary ?? ""
+        if primary.isEmpty || secondary.isEmpty {
+            return ([], Constants.ingredientCannotBeUsedHere)
+        }
+
+        let existingNames = Set(env.storage.myBarIngredients().map { $0.name.lowercased() })
+        var result: [DetectedMyBarIngredient] = []
+        for item in baseAndMixer {
+            let name = item.name ?? ""
+            guard !name.isEmpty else { continue }
+            let category = IngredientCategory(
+                primary: item.category?.primary,
+                secondary: item.category?.secondary,
+                flavourTags: nil
+            )
+            let ingredient = Ingredient(
+                name: name,
+                unit: Constants.mlText.lowercased(),
+                notes: "",
+                category: category,
+                quantity: 0,
+                perishable: item.perishable,
+                substitutes: item.substitutes,
+                ingredientOptional: false
+            )
+            let isExisting = existingNames.contains(name.lowercased())
+            result.append(DetectedMyBarIngredient(
+                ingredient: ingredient,
+                isExisting: isExisting,
+                isSelected: !isExisting
+            ))
+        }
+        return (result, nil)
+    }
+
+    /// 1:1 with `MyBarView.proceedWithSelectedIngredients` and UIKit
+    /// `addingredientPopUpShow.onRightAction` callback at
+    /// ScanIngredientsViewController.swift L306-321:
+    ///   • Append confirmed ingredients to MyBar storage
+    ///   • Pop the screen
+    private func proceedWithSelectedIngredients() {
+        let selections = detectedIngredients.filter { $0.isSelected && !$0.isExisting }
+        guard !selections.isEmpty else { return }
+        HapticService.success()
+        showIngredientsFoundPopup = false
+        for detected in selections {
+            env.storage.toggleMyBar(detected.ingredient)
+        }
+        detectedIngredients = []
+        // UIKit L315 `popViewController` after the API succeeds.
+        dismiss()
+    }
+
+    private func closeIngredientsFoundPopup() {
+        showIngredientsFoundPopup = false
+        detectedIngredients = []
+    }
+
+    // MARK: - Ingredient(s) found popup
+    //
+    // Mirrors `MyBarView.ingredientsFoundPopup` exactly (same
+    // dimensions, same iPad bumps, same close X). The only difference
+    // is the Reupload action: here it triggers `camera.reset()` to
+    // restart the live preview, mirroring UIKit
+    // `addingredientPopUpShow.onCompleteAlertPopup` →
+    // `restartCameraProcess()` (ScanIngredientsViewController.swift
+    // L304).
+
+    @ViewBuilder
+    private var ingredientsFoundPopup: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+            ingredientsFoundCard
+                .padding(.horizontal, 24)
+        }
+    }
+
+    @ViewBuilder
+    private var ingredientsFoundCard: some View {
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 24 : 18
+        let subtitleSize: CGFloat = isIPad ? 18 : 14
+        let errorSize: CGFloat = isIPad ? 16 : 12
+        let listMaxHeight: CGFloat = isIPad ? 360 : 250
+
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    HapticService.light()
+                    closeIngredientsFoundPopup()
+                } label: {
+                    Image("crossIcon")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: isIPad ? 18 : 14, height: isIPad ? 18 : 14)
+                        .foregroundStyle(Color("appBlackColor"))
+                        .frame(width: isIPad ? 50 : 44, height: isIPad ? 50 : 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+            }
+
+            Text("Ingredient(s) found")
+                .font(.system(size: titleSize, weight: .semibold))
+                .foregroundStyle(Color("appBlackColor"))
+                .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
+
+            Text("Select ingredients to proceed")
+                .font(.system(size: subtitleSize))
+                .foregroundStyle(Color("veryDarkGrayColor"))
+                .multilineTextAlignment(.center)
+                .padding(.top, 6)
+                .padding(.bottom, 14)
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    ForEach($detectedIngredients) { $detected in
+                        detectedIngredientRow($detected)
+                    }
+                }
+            }
+            .frame(maxHeight: listMaxHeight)
+
+            if selectedCount == 0 && hasNewIngredients {
+                Text(Constants.pleaseAddAtleastOneIngredient)
+                    .font(.system(size: errorSize))
+                    .foregroundStyle(Color("errorLabelColor"))
+                    .padding(.top, 8)
+            }
+
+            HStack(spacing: 8) {
+                ScanSecondaryButton(title: ConstantButtonsTitle.reUploadButtonTitle) {
+                    closeIngredientsFoundPopup()
+                    // UIKit L304 — reupload restarts the live camera.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        camera.reset()
+                    }
+                }
+                ScanPrimaryButton(title: ConstantButtonsTitle.proceedButtonTitle) {
+                    proceedWithSelectedIngredients()
+                }
+                .opacity(selectedCount > 0 ? 1.0 : 0.5)
+                .disabled(selectedCount == 0)
+            }
+            .padding(.top, 16)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 20)
+        .padding(.top, 6)
+        .background(
+            ZStack {
+                if #available(iOS 26.0, *) {
+                    BarsysGlassPanelBackground(whiteTintAlpha: 0.20)
+                        .clipShape(RoundedRectangle(cornerRadius: 12,
+                                                    style: .continuous))
+                } else {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(UIColor { trait in
+                            trait.userInterfaceStyle == .dark
+                                ? UIColor(red: 0.173, green: 0.173, blue: 0.180, alpha: 0.95)
+                                : UIColor.white.withAlphaComponent(0.95)
+                        }))
+                }
+            }
+        )
+        .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 8)
+    }
+
+    @ViewBuilder
+    private func detectedIngredientRow(_ detected: Binding<DetectedMyBarIngredient>) -> some View {
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let checkboxCircle: CGFloat = isIPad ? 28 : 22
+        let checkboxFrame: CGFloat = isIPad ? 38 : 30
+        let checkmarkSize: CGFloat = isIPad ? 14 : 11
+        let nameSize: CGFloat = isIPad ? 18 : 14
+        let sublabelSize: CGFloat = isIPad ? 14 : 11
+        let d = detected.wrappedValue
+        return HStack(spacing: 12) {
+            Button {
+                guard !d.isExisting else { return }
+                HapticService.light()
+                detected.wrappedValue.isSelected.toggle()
+            } label: {
+                ZStack {
+                    Circle()
+                        .stroke(
+                            d.isExisting
+                                ? Color.gray.opacity(0.5)
+                                : Color("craftButtonBorderColor"),
+                            lineWidth: 1
+                        )
+                        .frame(width: checkboxCircle, height: checkboxCircle)
+                    if d.isSelected && !d.isExisting {
+                        Circle()
+                            .fill(Color("segmentSelectionColor"))
+                            .frame(width: checkboxCircle, height: checkboxCircle)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: checkmarkSize, weight: .bold))
+                            .foregroundStyle(Theme.Color.softWhiteText)
+                    }
+                }
+                .frame(width: checkboxFrame, height: checkboxFrame)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(d.isSelected ? "Selected" : "Not selected")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(d.ingredient.name)
+                    .font(.system(size: nameSize))
+                    .foregroundStyle(
+                        d.isExisting
+                            ? Color.gray
+                            : Color("veryDarkGrayColor")
+                    )
+                if d.isExisting {
+                    Text(Constants.alreadyAddedInMyBarText)
+                        .font(.system(size: sublabelSize))
+                        .foregroundStyle(Color.gray)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !d.isExisting else { return }
+            HapticService.light()
+            detected.wrappedValue.isSelected.toggle()
+        }
+    }
+}
+
+// MARK: - Local primary / secondary button styles
+//
+// Drop-in clones of `MyBarPrimaryButton` / `MyBarSecondaryButton` from
+// MyBarScreens.swift so this file is self-contained — those types are
+// `private` to MyBarScreens. Keeping them duplicated here avoids
+// promoting MyBar internals to file-private just to share two button
+// shells, and tests at the navigation boundary stay simple.
+
+private struct ScanPrimaryButton: View {
+    let title: String
+    let action: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(Color.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 45)
+                .background(primaryFill)
+                .clipShape(primaryShape)
+        }
+        .buttonStyle(BounceButtonStyle())
+        .accessibilityLabel(title)
+    }
+
+    @ViewBuilder
+    private var primaryFill: some View {
+        if #available(iOS 26.0, *) {
+            if colorScheme == .dark {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.980, green: 0.878, blue: 0.800),
+                        Color(red: 0.949, green: 0.761, blue: 0.631)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            } else {
+                LinearGradient(
+                    colors: [Color("brandGradientTop"), Color("brandGradientBottom")],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        } else {
+            Color("brandTanColor")
+        }
+    }
+
+    private var primaryShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+}
+
+private struct ScanSecondaryButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(Color.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 45)
+                .background(secondaryFill)
+                .overlay(secondaryBorder)
+                .clipShape(secondaryShape)
+        }
+        .buttonStyle(BounceButtonStyle())
+        .accessibilityLabel(title)
+    }
+
+    @ViewBuilder
+    private var secondaryFill: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .fill(SwiftUI.Color.white.opacity(0.85))
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(SwiftUI.Color.white)
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryBorder: some View {
+        if #available(iOS 26.0, *) {
+            Capsule(style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            SwiftUI.Color.white.opacity(0.95),
+                            SwiftUI.Color(white: 0.85).opacity(0.9),
+                            SwiftUI.Color.white.opacity(0.95)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color("craftButtonBorderColor"), lineWidth: 1)
+        }
+    }
+
+    private var secondaryShape: AnyShape {
+        if #available(iOS 26.0, *) {
+            return AnyShape(Capsule(style: .continuous))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+}

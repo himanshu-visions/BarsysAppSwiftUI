@@ -273,8 +273,20 @@ struct MyBarView: View {
         ) {
             // Button titles match UIKit `ConstantButtonsTitle.cameraTitle`
             // / `.photosTitle` (Constants+UI.swift L28-29).
+            //
+            // Camera branch routes to the dedicated ScanIngredientsView
+            // (live AVFoundation preview + retake/submit) — 1:1 with
+            // UIKit `ImagePickerViewController.checkAuthorizationAndShowCameraForMyBar`
+            // → `pushScanIngredientsViewController`. UIKit ALWAYS uses
+            // the dedicated screen for the MyBar camera path; the
+            // system `UIImagePickerController` is reserved for the
+            // photo-library branch (and the non-MyBar use case).
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button("Camera") { openPicker(source: .camera) }
+                Button("Camera") {
+                    env.alerts.requestCameraAccess {
+                        router.push(.scanIngredients, in: .myBar)
+                    }
+                }
             }
             Button("Photos") { openPicker(source: .photoLibrary) }
             Button(ConstantButtonsTitle.cancelButtonTitle, role: .cancel) {}
@@ -792,14 +804,18 @@ struct MyBarView: View {
                     }
                     MyBarPrimaryButton(title: "Take A Photo") {
                         HapticService.light()
-                        // UIKit `takeAPhotoAction:` →
-                        // openScanIngredientsScreenForMyBar (full camera
-                        // screen). With the dedicated scan screen still
-                        // stubbed, we open the in-line camera picker
-                        // directly — same end-to-end result: captured
-                        // image goes through the ingredient-detection
-                        // pipeline and lands in My Bar.
-                        openPicker(source: .camera)
+                        // 1:1 with UIKit `takeAPhotoAction:` →
+                        // `openScanIngredientsScreenForMyBar()`
+                        // (MyBarViewController.swift L315-339). Pushes
+                        // the dedicated `ScanIngredientsView` — full
+                        // AVFoundation live preview, retake/submit
+                        // controls, and the same multi-ingredient
+                        // selection popup. Permission gating happens
+                        // INSIDE `ScanIngredientsView.onAppear` via
+                        // `ScanCameraController.start()`, mirroring
+                        // UIKit which checks authorization in
+                        // `viewWillAppear` → `startCamera`.
+                        router.push(.scanIngredients, in: .myBar)
                     }
                 }
             }
@@ -1209,39 +1225,8 @@ private struct MyBarSecondaryButton: View {
     }
 }
 
-// MARK: - ScanIngredientsView (stub)
+// MARK: - ScanIngredientsView
 //
-// Preserves the existing router route so any external callers still
-// compile. The full AVFoundation camera + retake/submit port is a
-// separate work item; the MyBar buttons now bypass this entirely by
-// using the `BarBotImagePicker` sheet flow above.
-
-struct ScanIngredientsView: View {
-    @EnvironmentObject private var env: AppEnvironment
-    @Environment(\.dismiss) private var dismiss
-    @State private var scanned: String?
-
-    var body: some View {
-        ZStack {
-            QRScannerView(onScan: { code in
-                scanned = code
-                env.alerts.show(message: "Scanned ingredient code: \(code)")
-            }, onCancel: {
-                dismiss()
-            })
-            .ignoresSafeArea()
-
-            VStack {
-                Spacer()
-                Text("Point the camera at an ingredient barcode")
-                    .font(Theme.Font.body(14))
-                    .foregroundStyle(Theme.Color.softWhiteText)
-                    .padding(Theme.Spacing.m)
-                    .background(.black.opacity(0.6), in: Capsule())
-                    .padding(.bottom, Theme.Spacing.xxl)
-            }
-        }
-        .navigationTitle("Scan ingredient")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
+// Now lives in `Features/MyBar/ScanIngredientsView.swift` — full
+// AVFoundation camera + retake/submit + ingredient-detection popup.
+// 1:1 port of UIKit `ScanIngredientsViewController`.

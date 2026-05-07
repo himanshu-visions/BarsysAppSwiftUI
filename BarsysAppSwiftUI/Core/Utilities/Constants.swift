@@ -278,6 +278,11 @@ enum Constants {
 
     static let cameraRequiredAuthorizationForQr = "The app needs access to your camera to scan QRCode."
     static let cameraRequiredAuthorizationForScanIngredients = "The app needs access to your camera to scan ingredients."
+    /// 1:1 with UIKit `Constants.cameraDisabledForApp`
+    /// (Constants.swift L318). Title shown above the camera-denied
+    /// alert pushed by ScanIngredientsView when the system reports
+    /// camera permission is `.denied` / `.restricted`.
+    static let cameraDisabledForApp = "Camera Disabled"
     static let openSettingsTitle = "Open Settings"
     /// 1:1 with UIKit `Constants.appNeedsCameraAccess` — title shown
     /// in the Cancel / Go-to-Settings popup when the user taps
@@ -421,6 +426,16 @@ enum ConstantButtonsTitle {
     /// permission-denied alerts to deep-link the user into the
     /// Settings app where they can flip the access toggle back on.
     static let goToSettingsTitle = "Go to settings"
+    /// 1:1 with UIKit `ConstantButtonsTitle.retakeButtonTitle`
+    /// (Constants+UI.swift L37). Used by the dedicated
+    /// ScanIngredientsView to discard the captured image and
+    /// restart the live preview.
+    static let retakeButtonTitle = "Retake"
+    /// 1:1 with the Submit button title baked into the
+    /// `ScanIngredientsViewController` storyboard scene
+    /// (Device.storyboard btnSubmit `qJY-CF-YVw`). Used by the
+    /// dedicated ScanIngredientsView submit CTA.
+    static let submitButtonTitle = "Submit"
 }
 
 // MARK: - ReadyToPour empty-mixlists alert
