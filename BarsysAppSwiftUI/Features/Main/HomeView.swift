@@ -436,21 +436,20 @@ struct HomeView: View {
                     .aspectRatio(1.15, contentMode: .fit)
                     .accessibilityHidden(true)
                 } else if verticalSizeClass == .compact {
-                    // iPhone landscape: span the FULL card width —
-                    // matching the Connect Device header row above —
-                    // so the hero doesn't render as a small square in
-                    // the middle of an otherwise-empty card. Same
-                    // GeometryReader + `.fill` + `.clipped()` recipe
-                    // as the iPad branch below, just with a tighter
-                    // height cap (180pt instead of `aspectRatio 1.15`)
-                    // so the card still fits the short ~390pt
-                    // landscape viewport. The image asset
+                    // iPhone landscape: render the hero with a
+                    // landscape-friendly aspect ratio (3:1) so its
+                    // WIDTH matches the Connect Device header row
+                    // above (both sit flush at the inner card edge)
+                    // while the HEIGHT stays short enough to fit the
+                    // ~390pt landscape viewport. Same GeometryReader
+                    // + `.fill` + `.clipped()` recipe as the iPad
+                    // branch below — just with a 3:1 ratio instead
+                    // of 1.15:1. The image asset
                     // (`chooseOptionsBarsysImage`) has the device +
-                    // cocktails composed in the central horizontal
-                    // band, so cropping the top/bottom decorations
-                    // keeps the meaningful subject visible while
-                    // letting the image run flush from card edge to
-                    // card edge.
+                    // cocktails composed in the central band, so
+                    // clipping the top/bottom decorations keeps the
+                    // meaningful subject visible across the full
+                    // card width.
                     GeometryReader { geo in
                         Image("chooseOptionsBarsysImage")
                             .resizable()
@@ -459,8 +458,7 @@ struct HomeView: View {
                                    height: geo.size.height)
                             .clipped()
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 180)
+                    .aspectRatio(3, contentMode: .fit)
                     .accessibilityHidden(true)
                 } else {
                     // iPhone portrait: ORIGINAL storyboard 1:1,

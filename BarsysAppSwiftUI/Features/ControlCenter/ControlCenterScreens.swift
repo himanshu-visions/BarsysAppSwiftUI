@@ -1142,7 +1142,22 @@ struct DevicePairedView: View {
                                 },
                                 onFavourite: {
                                     HapticService.light()
+                                    // Compute the post-toggle state BEFORE calling
+                                    // `catalog.toggleFavourite` so the success alert
+                                    // copy matches the action the user just took
+                                    // (UIKit `FavouritesRecipesAndDrinksViewController
+                                    // +TableView.swift` shows
+                                    // `Constants.likeSuccessMessage` /
+                                    // `unlikeSuccessMessage` on every favourite tap;
+                                    // the Explore "We think you'll love these"
+                                    // carousel was the only listing that skipped
+                                    // it, so taps registered silently and the user
+                                    // had no confirmation that the change saved).
+                                    let willBeFav = !env.storage.favorites().contains(recipe.id)
                                     catalog.toggleFavourite(recipeId: recipe.id)
+                                    env.alerts.show(message: willBeFav
+                                                    ? Constants.likeSuccessMessage
+                                                    : Constants.unlikeSuccessMessage)
                                 }
                             )
                         }
@@ -1562,6 +1577,20 @@ private struct RecommendedRecipeCard: View {
         return raw.getImageUrl()
     }
 
+    /// Soft tint applied to the heart glyph — matches the favourites
+    /// button styling used by Mixlists / Favorites / Ready to Pour
+    /// cells (`favButtonTint` in those views): a subtle black overlay
+    /// inside the iOS 26 glass capsule, falling back to
+    /// `softWhiteText` on pre-26 so the heart reads against a darker
+    /// recipe thumbnail.
+    private var heartTint: Color {
+        if #available(iOS 26.0, *) {
+            return Color.black.opacity(0.3)
+        } else {
+            return Theme.Color.softWhiteText
+        }
+    }
+
     var body: some View {
         // iPad-only sizing knobs for the "We think you'll love these"
         // recommended recipe carousel card. iPhone keeps storyboard
@@ -1607,7 +1636,18 @@ private struct RecommendedRecipeCard: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: heartGlyph, height: heartGlyph)
                     .frame(width: heartButton, height: heartButton)
+                    // Aligns this heart with the favourites design used
+                    // in Mixlists / Favorites / Ready to Pour cells: a
+                    // soft tinted glyph wrapped in the iOS 26 glass
+                    // capsule (with a graceful pre-26 fallback) plus
+                    // the standard bounce-on-tap button style.
+                    .foregroundStyle(heartTint)
+                    .glassButtonIfAvailable(size: heartButton)
             }
+            .buttonStyle(BounceButtonStyle())
+            .accessibilityLabel(recipe.isFavourite == true
+                                ? "Remove from favourites"
+                                : "Add to favourites")
             .padding(.top, 6)
             .padding(.trailing, 6)
         }
