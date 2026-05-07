@@ -384,6 +384,7 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
     private let session = AVCaptureSession()
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var didCallOnScan = false
+    private var orientationObserver: NSObjectProtocol?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -405,6 +406,7 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         didCallOnScan = false
+        startObservingOrientation()
         if previewLayer != nil && !session.isRunning {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.session.startRunning()
@@ -414,9 +416,21 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopObservingOrientation()
         if session.isRunning {
             session.stopRunning()
         }
+    }
+
+    /// SwiftUI's `UIViewControllerRepresentable` doesn't always forward
+    /// `viewWillTransition` reliably, so re-sync the rotation when the
+    /// view first attaches to a window. Mirrors the
+    /// `ScanIngredientsView` preview-view pattern that survives
+    /// orientation changes without flashing the buffer in the wrong
+    /// rotation.
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        updatePreviewOrientation()
     }
 
     /// Called by the system before a rotation. We re-pin the preview
@@ -433,7 +447,30 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
             guard let self else { return }
             self.previewLayer?.frame = CGRect(origin: .zero, size: size)
             self.updatePreviewOrientation()
+        }, completion: { [weak self] _ in
+            // Belt-and-suspenders: re-apply after the transition
+            // commits in case `interfaceOrientation` was still stale
+            // when the alongside block ran.
+            self?.updatePreviewOrientation()
         })
+    }
+
+    private func startObservingOrientation() {
+        guard orientationObserver == nil else { return }
+        orientationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updatePreviewOrientation()
+        }
+    }
+
+    private func stopObservingOrientation() {
+        if let token = orientationObserver {
+            NotificationCenter.default.removeObserver(token)
+            orientationObserver = nil
+        }
     }
 
     /// Sync `AVCaptureVideoPreviewLayer`'s rotation with the current
@@ -443,16 +480,29 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
     /// sideways inside the now-landscape preview frame.
     private func updatePreviewOrientation() {
         guard let connection = previewLayer?.connection else { return }
-        let interfaceOrientation = view.window?.windowScene?.interfaceOrientation
-            ?? .portrait
+        let interfaceOrientation: UIInterfaceOrientation = {
+            if let scene = view.window?.windowScene {
+                return scene.interfaceOrientation
+            }
+            return UIApplication.shared
+                .connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?.interfaceOrientation ?? .portrait
+        }()
 
         if #available(iOS 17.0, *) {
+            // Angles match the working `ScanIngredientsView` mapping
+            // for the back camera — landscapeLeft (home button right)
+            // needs 180°, landscapeRight (home button left) needs 0°.
+            // The previous swap left the live preview rotated 180°
+            // from the device, so the camera looked "stuck" in
+            // landscape.
             let angle: CGFloat
             switch interfaceOrientation {
             case .portrait:            angle = 90
             case .portraitUpsideDown:  angle = 270
-            case .landscapeLeft:       angle = 0
-            case .landscapeRight:      angle = 180
+            case .landscapeLeft:       angle = 180
+            case .landscapeRight:      angle = 0
             default:                   angle = 90
             }
             if connection.isVideoRotationAngleSupported(angle) {
