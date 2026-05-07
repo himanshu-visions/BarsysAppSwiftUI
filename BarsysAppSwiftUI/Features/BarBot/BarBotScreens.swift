@@ -2026,6 +2026,13 @@ struct ChatMessageRow: View {
     /// they read on the dark backdrop. Light mode is untouched.
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Provides the signed-in user's avatar URL so the question bubble
+    /// can render the user's profile photo on the right of the bubble
+    /// (mirroring the side-menu avatar). Falls back to the static
+    /// `senderImageView` asset when no URL is saved or the remote
+    /// image fails to load.
+    @EnvironmentObject private var userStore: UserProfileStore
+
     /// iPad-only font knobs for the chat row. iPhone keeps every
     /// UIKit-parity caption1 (12pt) / callout (14pt) / 12pt size
     /// bit-identically — every value below collapses to its previous
@@ -2106,12 +2113,46 @@ struct ChatMessageRow: View {
                             )
                     }
                 }
-                Image("senderImageView")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 32, height: 32)
+                senderAvatar
             }
         }
+    }
+
+    /// User-profile avatar shown to the right of the question bubble.
+    /// Mirrors `SideMenuView.profileAvatar`: when the user has saved a
+    /// profile image (URL stored in `UserProfileStore.profileImageURL`,
+    /// same key UIKit's `MyProfileApiService.getProfile()` writes via
+    /// `UserDefaultsClass.getProfileImage()`), render an `AsyncImage`
+    /// circle. On empty URL / load failure, fall back to the static
+    /// `senderImageView` asset so the bubble is never blank.
+    @ViewBuilder
+    private var senderAvatar: some View {
+        if !userStore.profileImageURL.isEmpty,
+           let url = URL(string: userStore.profileImageURL) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 32, height: 32)
+                        .clipShape(Circle())
+                case .empty, .failure:
+                    fallbackSenderAvatar
+                @unknown default:
+                    fallbackSenderAvatar
+                }
+            }
+        } else {
+            fallbackSenderAvatar
+        }
+    }
+
+    private var fallbackSenderAvatar: some View {
+        Image("senderImageView")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 32, height: 32)
     }
 
     // Loading row — 1:1 port of `MainBarBotCell.xib` `yJc-xI-iGw`
