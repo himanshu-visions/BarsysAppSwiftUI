@@ -88,6 +88,13 @@ struct HomeView: View {
     @EnvironmentObject private var ble: BLEService
     @EnvironmentObject private var userStore: UserProfileStore
 
+    /// `compact` vertical size class on iPhone signals "landscape /
+    /// short viewport" — used to shrink the hero image in the
+    /// Connect Device card so it doesn't blow up to the full card
+    /// width (the storyboard 1:1 aspect ratio renders ~800pt tall on
+    /// iPhone landscape and pushes the Speakeasy card off-screen).
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     // Ports `isReconnectingStarted` local flag from UIKit.
     @State private var isReconnectingStarted: Bool = false
 
@@ -428,10 +435,38 @@ struct HomeView: View {
                     }
                     .aspectRatio(1.15, contentMode: .fit)
                     .accessibilityHidden(true)
+                } else if verticalSizeClass == .compact {
+                    // iPhone landscape: span the FULL card width —
+                    // matching the Connect Device header row above —
+                    // so the hero doesn't render as a small square in
+                    // the middle of an otherwise-empty card. Same
+                    // GeometryReader + `.fill` + `.clipped()` recipe
+                    // as the iPad branch below, just with a tighter
+                    // height cap (180pt instead of `aspectRatio 1.15`)
+                    // so the card still fits the short ~390pt
+                    // landscape viewport. The image asset
+                    // (`chooseOptionsBarsysImage`) has the device +
+                    // cocktails composed in the central horizontal
+                    // band, so cropping the top/bottom decorations
+                    // keeps the meaningful subject visible while
+                    // letting the image run flush from card edge to
+                    // card edge.
+                    GeometryReader { geo in
+                        Image("chooseOptionsBarsysImage")
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: geo.size.width,
+                                   height: geo.size.height)
+                            .clipped()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 180)
+                    .accessibilityHidden(true)
                 } else {
-                    // iPhone: ORIGINAL storyboard 1:1, scaleAspectFit —
-                    // byte-for-byte identical to the UIKit `xaz-fM-zZf`
-                    // layout (no `.clipped()`, no extra modifiers).
+                    // iPhone portrait: ORIGINAL storyboard 1:1,
+                    // scaleAspectFit — byte-for-byte identical to the
+                    // UIKit `xaz-fM-zZf` layout (no `.clipped()`, no
+                    // extra modifiers).
                     Color.clear
                         .aspectRatio(1, contentMode: .fit)
                         .overlay(
