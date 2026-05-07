@@ -276,6 +276,7 @@ struct ScanCameraPreview: UIViewRepresentable {
         let view = PreviewView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
+        view.startObservingOrientation()
         return view
     }
 
@@ -283,11 +284,111 @@ struct ScanCameraPreview: UIViewRepresentable {
         if uiView.previewLayer.session !== session {
             uiView.previewLayer.session = session
         }
+        // SwiftUI also re-evaluates `updateUIView` when the parent
+        // GeometryReader sees a size change (rotation), so this is a
+        // second belt-and-braces update path beyond the
+        // UIDeviceOrientationDidChange notification.
+        uiView.applyVideoOrientationFromInterface()
+    }
+
+    static func dismantleUIView(_ uiView: PreviewView, coordinator: ()) {
+        uiView.stopObservingOrientation()
     }
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+
+        private var orientationObserver: NSObjectProtocol?
+
+        // 1:1 with UIKit `viewDidLayoutSubviews` updating the preview
+        // layer frame to match `viewCameraFrame.bounds`
+        // (ScanIngredientsViewController.swift L138). In SwiftUI the
+        // backing layer IS the preview layer, so the layer frame
+        // tracks the view bounds automatically — but we still hook
+        // `layoutSubviews` to refresh the connection's video
+        // orientation when the frame changes (e.g. portrait ↔
+        // landscape rotation).
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            applyVideoOrientationFromInterface()
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            applyVideoOrientationFromInterface()
+        }
+
+        func startObservingOrientation() {
+            guard orientationObserver == nil else { return }
+            orientationObserver = NotificationCenter.default.addObserver(
+                forName: UIDevice.orientationDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.applyVideoOrientationFromInterface()
+            }
+        }
+
+        func stopObservingOrientation() {
+            if let token = orientationObserver {
+                NotificationCenter.default.removeObserver(token)
+                orientationObserver = nil
+            }
+        }
+
+        /// Rotate the live video to match the current interface
+        /// orientation. UIKit handles this implicitly via the
+        /// view-controller's auto-rotate behaviour; in SwiftUI we
+        /// have to drive it from the window scene each layout pass.
+        ///
+        /// Without this call the live preview stays locked to
+        /// `.portrait` even when the phone is in landscape, which is
+        /// what made the camera feed appear cropped / tiny in
+        /// landscape on iPhone.
+        func applyVideoOrientationFromInterface() {
+            guard let connection = previewLayer.connection else { return }
+            let interfaceOrientation: UIInterfaceOrientation = {
+                if let scene = window?.windowScene {
+                    return scene.interfaceOrientation
+                }
+                return UIApplication.shared
+                    .connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first?.interfaceOrientation ?? .portrait
+            }()
+
+            // iOS 17 deprecated `videoOrientation` in favour of a
+            // numeric `videoRotationAngle`. Use the new API when
+            // available, fall back to the old one for iOS 16.
+            if #available(iOS 17.0, *) {
+                let angle: CGFloat
+                switch interfaceOrientation {
+                case .portrait:           angle = 90
+                case .portraitUpsideDown: angle = 270
+                case .landscapeLeft:      angle = 180
+                case .landscapeRight:     angle = 0
+                case .unknown:            angle = 90
+                @unknown default:         angle = 90
+                }
+                if connection.isVideoRotationAngleSupported(angle) {
+                    connection.videoRotationAngle = angle
+                }
+            } else {
+                let avOrientation: AVCaptureVideoOrientation
+                switch interfaceOrientation {
+                case .portrait:           avOrientation = .portrait
+                case .portraitUpsideDown: avOrientation = .portraitUpsideDown
+                case .landscapeLeft:      avOrientation = .landscapeLeft
+                case .landscapeRight:     avOrientation = .landscapeRight
+                case .unknown:            avOrientation = .portrait
+                @unknown default:         avOrientation = .portrait
+                }
+                if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = avOrientation
+                }
+            }
+        }
     }
 }
 
@@ -303,6 +404,12 @@ struct ScanIngredientsView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
     @Environment(\.dismiss) private var dismiss
+    /// `compact` vertical size class on iPhone signals "landscape /
+    /// short" — we use it to (a) shorten the multi-ingredient popup
+    /// list height so the card fits the ~390pt landscape viewport,
+    /// and (b) stop the title's description from wrapping into a
+    /// multi-line block in the right column.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @StateObject private var camera = ScanCameraController()
 
@@ -339,30 +446,43 @@ struct ScanIngredientsView: View {
     }
 
     // MARK: - Body
+    //
+    // The body is wrapped in a `GeometryReader` so we can pick a
+    // portrait vs landscape layout per orientation. UIKit's storyboard
+    // version doesn't have to do this — UIKit auto-rotates the
+    // existing constraints. SwiftUI doesn't, and the previous fixed
+    // 3:4 aspect on `cameraOrCapturedImageView` made the live preview
+    // shrink to a tiny rectangle on iPhone in landscape (because
+    // height is the limiting axis there, and 3:4 of ~390pt landscape
+    // height = ~290pt wide). Switching the whole layout to an HStack
+    // in landscape (camera left, controls right) lets the camera fill
+    // the available height.
 
     var body: some View {
-        ZStack {
-            Color("primaryBackgroundColor").ignoresSafeArea()
+        GeometryReader { proxy in
+            let isLandscape = proxy.size.width > proxy.size.height
+            ZStack {
+                Color("primaryBackgroundColor").ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                titleAndSubtitle
-                    .padding(.top, 8)
-
-                cameraOrCapturedImageView
-                    .padding(.top, 24)
-
-                Spacer(minLength: 16)
-
-                bottomControlsContainer
-                    .padding(.bottom, 50)
+                if isLandscape {
+                    landscapeLayout(in: proxy.size)
+                } else {
+                    portraitLayout(in: proxy.size)
+                }
             }
-            .padding(.horizontal, 24)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .chooseOptionsStyleNavBar()
         .interactivePopGestureEnabled()
         .onAppear {
+            // Begin generating orientation notifications so the
+            // preview-layer rotation observer in `PreviewView` fires
+            // when the user rotates the device. Other screens in the
+            // app may have already enabled this; calling the API a
+            // second time is a no-op.
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             camera.start()
         }
         .onDisappear {
@@ -396,6 +516,80 @@ struct ScanIngredientsView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: showIngredientsFoundPopup)
+    }
+
+    // MARK: - Portrait layout (1:1 with the original UIKit storyboard)
+    //
+    // Title at top → camera frame (3:4 portrait aspect) → spacer →
+    // controls. Same dimensions as the iPhone storyboard scene.
+
+    @ViewBuilder
+    private func portraitLayout(in size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            titleAndSubtitle
+                .padding(.top, 8)
+
+            cameraOrCapturedImageView
+                .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                .padding(.top, 24)
+
+            Spacer(minLength: 16)
+
+            bottomControlsContainer
+                .padding(.bottom, 50)
+        }
+        .padding(.horizontal, 24)
+    }
+
+    // MARK: - Landscape layout (iPhone-only — iPad portrait still wins)
+    //
+    // Two columns:
+    //   • Camera on the leading edge, sized to fill the available
+    //     vertical space at a 4:3 (landscape) aspect — `aspectRatio
+    //     contentMode: .fit` keeps it within both bounds, but on
+    //     small iPhones (e.g. SE, 13 mini) we also clamp the camera
+    //     width to ~58% of total width so the right column always
+    //     has room for the title + buttons.
+    //   • Title + description + controls on the trailing edge,
+    //     centered vertically in a flexible-width column. The right
+    //     column is capped at 360pt on wider phones (iPhone Pro Max
+    //     in landscape ≈ 932pt wide) so the controls don't stretch
+    //     too wide.
+
+    @ViewBuilder
+    private func landscapeLayout(in size: CGSize) -> some View {
+        // Vertical insets for the camera column. The toolbar already
+        // owns the safe area on top in landscape, so we only need a
+        // small margin here.
+        let verticalPadding: CGFloat = 12
+        let horizontalPadding: CGFloat = 16
+        let interColumnSpacing: CGFloat = 20
+
+        // Available height for the camera frame.
+        let availableHeight = size.height - (verticalPadding * 2)
+        // Cap the camera column to ~58% of the screen width so the
+        // right-hand controls always have at least ~280pt to render
+        // the description + 2-button stack readably on small iPhones.
+        let widthBasedCap = (size.width - horizontalPadding * 2 - interColumnSpacing) * 0.58
+        // The natural 4:3 width given the available height.
+        let aspectBasedWidth = availableHeight * (4.0 / 3.0)
+        let cameraWidth = max(220, min(widthBasedCap, aspectBasedWidth))
+        let cameraHeight = min(availableHeight, cameraWidth * 3.0 / 4.0)
+
+        HStack(alignment: .center, spacing: interColumnSpacing) {
+            cameraOrCapturedImageView
+                .frame(width: cameraWidth, height: cameraHeight)
+
+            VStack(alignment: .center, spacing: 16) {
+                titleAndSubtitle
+                Spacer(minLength: 12)
+                bottomControlsContainer
+            }
+            .frame(maxWidth: 360, maxHeight: cameraHeight)
+            .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, verticalPadding)
     }
 
     // MARK: - Toolbar (matches MyBarView's nav bar exactly)
@@ -457,11 +651,19 @@ struct ScanIngredientsView: View {
     //
     // Storyboard `viewCameraFrame` is a 16pt-cornered container
     // (BarsysCornerRadius.medium = 12, but storyboard uses 16; we
-    // mirror the storyboard) sized to fill the available width with
-    // an aspect that the live preview can fill via .resizeAspectFill.
-    // We render an `AspectRatio(3:4)` frame which matches the
-    // common phone-camera aspect and gives the preview/captured image
-    // a stable, square-ish canvas across iPhone sizes.
+    // mirror the storyboard) sized to fill whatever bounds the
+    // parent layout proposes. The `.resizeAspectFill` setting on the
+    // underlying `AVCaptureVideoPreviewLayer` then crops the camera
+    // feed to fill that rectangle, so the camera always looks "full
+    // bleed" inside its container — portrait OR landscape.
+    //
+    // The aspect ratio (`3:4` portrait / `4:3` landscape / fixed
+    // size) is now applied by `portraitLayout(in:)` /
+    // `landscapeLayout(in:)`, NOT here. Putting the aspect on the
+    // child made the live preview shrink to ~290pt wide on iPhone
+    // landscape because the screen height (~390pt) became the
+    // limiting axis for a portrait aspect — that was the user-
+    // reported "camera comes very small in landscape" bug.
 
     @ViewBuilder
     private var cameraOrCapturedImageView: some View {
@@ -481,8 +683,7 @@ struct ScanIngredientsView: View {
                 Color.black
             }
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(3.0 / 4.0, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -692,10 +893,18 @@ struct ScanIngredientsView: View {
     @ViewBuilder
     private var ingredientsFoundCard: some View {
         let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        // iPhone in landscape (verticalSizeClass == .compact) has a
+        // very short viewport (~390pt). The popup chrome alone
+        // (close X + title + subtitle + buttons) is ~200pt, so the
+        // standard 250pt list height pushes the card off-screen.
+        // Cap the list at 140pt in landscape so the popup always
+        // fits inside the safe area without scrolling the whole
+        // card.
+        let isCompactHeight = verticalSizeClass == .compact && !isIPad
         let titleSize: CGFloat = isIPad ? 24 : 18
         let subtitleSize: CGFloat = isIPad ? 18 : 14
         let errorSize: CGFloat = isIPad ? 16 : 12
-        let listMaxHeight: CGFloat = isIPad ? 360 : 250
+        let listMaxHeight: CGFloat = isIPad ? 360 : (isCompactHeight ? 140 : 250)
 
         VStack(spacing: 0) {
             HStack {
