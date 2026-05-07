@@ -4850,6 +4850,10 @@ struct QRReaderView: View {
         //         code.lowercased().contains("barsys_360")`
         let lower = code.lowercased()
         guard lower.contains("basys") || lower.contains("barsys_360") else {
+            // Invalid code — UIKit pairs the "Device not available" alert
+            // with an error haptic so the user feels the rejection before
+            // reading the alert text.
+            HapticService.error()
             // UIKit pops + 0.4s delay + alert; SwiftUI shows alert inline.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 showInvalidCodeAlert = true
@@ -4882,7 +4886,11 @@ struct QRReaderView: View {
                     // `AppStateManager.shared.isSpeakEasyCase`.
                     loaderMessage = "Fetching Recipes"
                     env.toast.show("\(name) is Connected.")
-                    HapticService.light()
+                    // Speakeasy connect is a success event — match
+                    // MainTabView's BLE-connect convention which fires
+                    // `HapticService.success()` (MainTabView L1857/1869)
+                    // rather than the lighter tap that was here before.
+                    HapticService.success()
                     // UIKit `DelayedAction.afterBleResponse(seconds: 1.0,
                     // reason: "socket recipe load stabilization")`
                     // (SocketDelegates.swift L45).
@@ -4904,17 +4912,24 @@ struct QRReaderView: View {
                     // 1:1 UIKit `Constants.machineIsOffline` shown on
                     // CONTROL_DECLINED (SocketManager.swift L56-60).
                     socketErrorMessage = "The machine is currently offline. Please try again later."
+                    // Pair the alert with an error haptic so the user
+                    // feels the connection failure — matches the rest
+                    // of the app's error-alert pattern (e.g.
+                    // LoginView OTP failure, profile-save validation).
+                    HapticService.error()
                     showSocketFailedAlert = true
                     let socket: SpeakeasySocketManager = env.speakeasySocket
                     socket.disconnect()
                 case .connectFailed(let reason):
                     isConnecting = false
                     socketErrorMessage = reason
+                    HapticService.error()
                     showSocketFailedAlert = true
                 case .disconnected:
                     if isConnecting {
                         isConnecting = false
                         socketErrorMessage = "Disconnected before the machine was ready."
+                        HapticService.error()
                         showSocketFailedAlert = true
                     }
                 default:
