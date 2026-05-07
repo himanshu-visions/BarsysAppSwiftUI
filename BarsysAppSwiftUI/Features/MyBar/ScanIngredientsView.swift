@@ -819,10 +819,20 @@ struct ScanIngredientsView: View {
 
     /// 1:1 with UIKit `proceedForMyBar(capturedImage:)`
     /// (ScanIngredientsViewController.swift L214-299).
+    ///
+    /// Error-path UX: every failure branch (jpeg encode, no
+    /// connection, server response missing usable ingredients,
+    /// upload throws) calls `failAndRetake(message:)` instead of
+    /// just `env.alerts.show(...)`. That helper shows the alert AND
+    /// resets the camera back to live preview so the user lands on
+    /// the retake state automatically — they don't have to tap
+    /// "Retake" by hand after every error. Per the user request:
+    /// "when error comes in my bar it should automatically move to
+    /// retake option when error comes".
     private func submitCapturedImage() {
         guard let image = camera.capturedImage else { return }
         guard let data = image.jpegData(compressionQuality: 0.7) else {
-            env.alerts.show(message: Constants.ingredientUpdateError)
+            failAndRetake(message: Constants.ingredientUpdateError)
             return
         }
         env.loading.show(Constants.addingIngredientLoaderText)
@@ -830,10 +840,9 @@ struct ScanIngredientsView: View {
             // UIKit L216-222: pre-flight connectivity check.
             guard await ConnectionMonitor.shared.isConnected else {
                 env.loading.hide()
-                env.alerts.show(
+                failAndRetake(
                     title: Constants.internetConnectionMessage,
-                    message: "",
-                    primary: Constants.okButtonTitle
+                    message: ""
                 )
                 return
             }
@@ -842,19 +851,39 @@ struct ScanIngredientsView: View {
                 env.loading.hide()
                 let (toShow, errorMessage) = processImageScanResults(detected)
                 if let errorMessage, toShow.isEmpty {
-                    env.alerts.show(message: errorMessage)
+                    failAndRetake(message: errorMessage)
                     return
                 }
                 if toShow.isEmpty {
-                    env.alerts.show(message: Constants.ingredientCannotBeUsedHere)
+                    failAndRetake(message: Constants.ingredientCannotBeUsedHere)
                     return
                 }
                 detectedIngredients = toShow
                 showIngredientsFoundPopup = true
             } catch {
                 env.loading.hide()
-                env.alerts.show(message: Constants.ingredientUpdateError)
+                failAndRetake(message: Constants.ingredientUpdateError)
             }
+        }
+    }
+
+    /// Show the failure alert AND drop the captured image so the UI
+    /// flips back to the live camera preview (the retake state).
+    /// Used by every error branch in `submitCapturedImage` so the
+    /// user can re-shoot with one tap (the alert "OK") instead of
+    /// having to dismiss the alert AND tap "Retake" separately.
+    ///
+    /// `camera.reset()` clears `capturedImage` and restarts the
+    /// session — `bottomControlsContainer` reads `hasCapturedImage`
+    /// and re-renders to the shutter-button state automatically.
+    private func failAndRetake(title: String? = nil, message: String) {
+        camera.reset()
+        if let title {
+            env.alerts.show(title: title,
+                            message: message,
+                            primary: Constants.okButtonTitle)
+        } else {
+            env.alerts.show(message: message)
         }
     }
 
