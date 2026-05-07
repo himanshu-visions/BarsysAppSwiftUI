@@ -184,10 +184,40 @@ struct HomeView: View {
                 // on the Speakeasy card inside `safeAreaInset(.bottom)`
                 // below, so iPhone layout stays bit-identical to the
                 // storyboard (no padding hop introduced here).
-                mainCard
+                //
+                // iPhone landscape: render mainCard + speakeasyCard
+                // side-by-side in an HStack so the wide-but-short
+                // landscape viewport uses its horizontal real estate
+                // properly. The Speakeasy card stretches to match the
+                // Connect Device card's height via
+                // `.frame(maxHeight: .infinity)` — the HStack height
+                // is driven by the taller mainCard, so the speakeasy
+                // expands to fill that same height. In portrait /
+                // iPad we keep the original vertical layout (mainCard
+                // here, speakeasy pinned via safeAreaInset below).
+                if isPhoneLandscape {
+                    // ~65 / 35 split — cap the Speakeasy column at
+                    // 240pt so it stays a slim action card, and let
+                    // the Connect Device column expand to fill the
+                    // rest. On a typical iPhone landscape (content
+                    // area ≈ 700-770pt after the 19pt outer padding +
+                    // 12pt HStack spacing) this lands at roughly
+                    // 65:35 in favour of the main card.
+                    HStack(alignment: .top, spacing: 12) {
+                        mainCard
+                            .frame(maxWidth: .infinity)
+                        speakeasyCard
+                            .frame(maxWidth: 240, maxHeight: .infinity)
+                    }
                     .padding(.horizontal, 19)
                     .padding(.top, 16)
                     .padding(.bottom, 16)
+                } else {
+                    mainCard
+                        .padding(.horizontal, 19)
+                        .padding(.top, 16)
+                        .padding(.bottom, 16)
+                }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -202,9 +232,15 @@ struct HomeView: View {
             //   • iOS 26+ → 30pt bottom inset (tighter because
             //     the custom tab bar is itself a glass pill)
             //   • iOS <26 → 45pt bottom inset
-            speakeasyCard
-                .padding(.horizontal, 24)
-                .padding(.bottom, speakeasyCardBottomInset)
+            //
+            // In iPhone landscape the speakeasy card moves inline next
+            // to the main card (see HStack above), so the bottom inset
+            // renders nothing.
+            if !isPhoneLandscape {
+                speakeasyCard
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, speakeasyCardBottomInset)
+            }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         // System toolbar — 1:1 with PairYourDevice
@@ -353,6 +389,16 @@ struct HomeView: View {
     ///   • Pre-26  → 45pt
     private var speakeasyCardBottomInset: CGFloat {
         if #available(iOS 26.0, *) { return 30 } else { return 45 }
+    }
+
+    /// True only on iPhone in landscape (compact vertical size class).
+    /// iPad keeps `regular` vertical class in both orientations, so this
+    /// stays false there. Drives the side-by-side layout where the
+    /// Speakeasy card sits to the right of the Connect Device card and
+    /// stretches to match its height.
+    private var isPhoneLandscape: Bool {
+        verticalSizeClass == .compact
+            && UIDevice.current.userInterfaceIdiom != .pad
     }
 
     // MARK: - Main card (outer + inner 5pt inset + header + hero)
@@ -588,7 +634,15 @@ struct HomeView: View {
                     .foregroundStyle(Color("appBlackColor"))
                     .padding(.trailing, 12)
             }
-            .frame(height: isIPad ? 78 : 60)
+            // iPhone landscape: render with the storyboard minimum
+            // height (60pt) but allow vertical expansion so the card
+            // can stretch to match the Connect Device card sitting
+            // beside it in the HStack. Portrait / iPad keep the
+            // bit-identical fixed heights (60pt / 78pt).
+            .frame(
+                minHeight: isIPad ? 78 : 60,
+                maxHeight: isPhoneLandscape ? .infinity : (isIPad ? 78 : 60)
+            )
             .frame(maxWidth: .infinity)
             // `Theme.Color.surface` is an adaptive asset — light
             // variant is pure white sRGB(1, 1, 1), bit-identical to
