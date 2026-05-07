@@ -543,18 +543,23 @@ struct ScanIngredientsView: View {
 
     // MARK: - Landscape layout (iPhone-only — iPad portrait still wins)
     //
-    // Two columns:
-    //   • Camera on the leading edge, sized to fill the available
-    //     vertical space at a 4:3 (landscape) aspect — `aspectRatio
-    //     contentMode: .fit` keeps it within both bounds, but on
-    //     small iPhones (e.g. SE, 13 mini) we also clamp the camera
-    //     width to ~58% of total width so the right column always
-    //     has room for the title + buttons.
-    //   • Title + description + controls on the trailing edge,
-    //     centered vertically in a flexible-width column. The right
-    //     column is capped at 360pt on wider phones (iPhone Pro Max
-    //     in landscape ≈ 932pt wide) so the controls don't stretch
-    //     too wide.
+    // Two columns, per the user-confirmed layout:
+    //   • LEFT  — Title + description, vertically centered, left-
+    //             aligned text. Capped at ~38% of screen width so the
+    //             right (camera) column always gets the majority of
+    //             the viewport.
+    //   • RIGHT — Camera preview filling the available vertical
+    //             space at a 4:3 landscape aspect, with the
+    //             retake/submit (or shutter) button row directly
+    //             below it. The button row is 45pt for the two-button
+    //             state and 80pt for the shutter state, mirroring the
+    //             portrait layout. The camera frame uses
+    //             `aspectRatio(.fit)` so it scales down on smaller
+    //             iPhones automatically.
+    //
+    // Previous version had the columns reversed (camera on the left,
+    // controls on the right). This one matches the user's request:
+    // content on the left, camera + capture on the right.
 
     @ViewBuilder
     private func landscapeLayout(in size: CGSize) -> some View {
@@ -563,33 +568,72 @@ struct ScanIngredientsView: View {
         // small margin here.
         let verticalPadding: CGFloat = 12
         let horizontalPadding: CGFloat = 16
-        let interColumnSpacing: CGFloat = 20
-
-        // Available height for the camera frame.
-        let availableHeight = size.height - (verticalPadding * 2)
-        // Cap the camera column to ~58% of the screen width so the
-        // right-hand controls always have at least ~280pt to render
-        // the description + 2-button stack readably on small iPhones.
-        let widthBasedCap = (size.width - horizontalPadding * 2 - interColumnSpacing) * 0.58
-        // The natural 4:3 width given the available height.
-        let aspectBasedWidth = availableHeight * (4.0 / 3.0)
-        let cameraWidth = max(220, min(widthBasedCap, aspectBasedWidth))
-        let cameraHeight = min(availableHeight, cameraWidth * 3.0 / 4.0)
+        let interColumnSpacing: CGFloat = 24
+        // Cap the LEFT column to a reasonable share of the viewport.
+        // 38% on a 852pt-wide iPhone Pro Max ≈ 324pt — wide enough
+        // for the long description string to wrap to ~3 lines
+        // without overflowing. iPhone SE landscape (667pt wide) lands
+        // at ~253pt, which still fits the title + 4-line description
+        // comfortably.
+        let leftColumnWidth = max(220, min(360, size.width * 0.38))
 
         HStack(alignment: .center, spacing: interColumnSpacing) {
-            cameraOrCapturedImageView
-                .frame(width: cameraWidth, height: cameraHeight)
 
-            VStack(alignment: .center, spacing: 16) {
-                titleAndSubtitle
-                Spacer(minLength: 12)
+            // LEFT — title + description (left-aligned).
+            VStack(alignment: .leading, spacing: 12) {
+                Spacer(minLength: 0)
+                titleAndSubtitleLandscape
+                Spacer(minLength: 0)
+            }
+            .frame(width: leftColumnWidth,
+                   alignment: .leading)
+            .frame(maxHeight: .infinity)
+
+            // RIGHT — camera + controls.
+            //
+            // The camera fills the column with a 4:3 landscape aspect
+            // (`aspectRatio(.fit)`). The control row sits directly
+            // beneath it. SwiftUI's HStack/VStack layout naturally
+            // gives the camera as much height as it can without
+            // pushing the buttons off-screen.
+            VStack(spacing: 12) {
+                cameraOrCapturedImageView
+                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 bottomControlsContainer
             }
-            .frame(maxWidth: 360, maxHeight: cameraHeight)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, verticalPadding)
+    }
+
+    // MARK: - Landscape title block (left-aligned)
+    //
+    // Same content as `titleAndSubtitle` but left-aligned for the
+    // landscape side panel — the centered version reads as awkward
+    // when sitting next to a tall camera preview.
+    @ViewBuilder
+    private var titleAndSubtitleLandscape: some View {
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let titleSize: CGFloat = isIPad ? 26 : 20
+        let descSize: CGFloat = isIPad ? 17 : 14
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Take a Photo of Ingredient(s)")
+                .font(.system(size: titleSize, weight: .semibold))
+                .foregroundStyle(Color("appBlackColor"))
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            if !hasCapturedImage {
+                Text("Snap a clear photo of the bottle or ingredient and Barbot AI will add it to your 'My Bar' visible on the next screen.")
+                    .font(.system(size: descSize))
+                    .foregroundStyle(Color("veryDarkGrayColor"))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Toolbar (matches MyBarView's nav bar exactly)
