@@ -85,6 +85,13 @@ final class ScanCameraController: NSObject, ObservableObject {
     /// whether to show the live preview or push a denied alert.
     @Published var permissionState: PermissionState = .unknown
 
+    /// `true` after `AVCaptureSession.startRunning()` returns — the
+    /// view uses this to drop the "Starting camera…" loader as soon
+    /// as the preview layer can actually pump frames. Mirrors the
+    /// underlying `session.isRunning` state on the main actor so
+    /// SwiftUI can observe it.
+    @Published private(set) var isSessionRunning: Bool = false
+
     // MARK: Private state
 
     private var photoOutput: AVCapturePhotoOutput?
@@ -95,7 +102,40 @@ final class ScanCameraController: NSObject, ObservableObject {
     /// `startCamera()` (ScanIngredientsViewController+Camera.swift L18).
     private var didConfigure = false
 
-    override init() { super.init() }
+    /// The single `UIView` that backs the live camera preview, owned
+    /// by THIS controller — not by `ScanCameraPreview`'s
+    /// `UIViewRepresentable` lifecycle.
+    ///
+    /// Why ownership lives here: when SwiftUI swaps `portraitLayout`
+    /// (`VStack`) for `landscapeLayout` (`HStack` with a nested
+    /// `VStack`), the view tree shape around the camera changes
+    /// completely. SwiftUI then calls `dismantleUIView` on the old
+    /// `PreviewView` and `makeUIView` for a new one — and the new
+    /// `AVCaptureVideoPreviewLayer` has zero frames buffered, so it
+    /// renders solid black until the session pumps a fresh frame
+    /// into it. THAT is the "right half goes black on rotation"
+    /// glitch.
+    ///
+    /// Pinning the `UIView` (and therefore its
+    /// `AVCaptureVideoPreviewLayer`) to the controller means the
+    /// SAME layer is just reparented from old superview → new
+    /// superview on rotation. UIKit's `addSubview` automatically
+    /// removes from the previous superview, and the layer keeps its
+    /// last frame painted across the move — no black flash.
+    let previewView: ScanCameraPreview.PreviewView = {
+        let v = ScanCameraPreview.PreviewView()
+        v.previewLayer.videoGravity = .resizeAspectFill
+        return v
+    }()
+
+    override init() {
+        super.init()
+        // Wire the session into the controller-owned preview layer
+        // ONCE up front, so the preview is ready to display as soon
+        // as the session starts running — no waiting for SwiftUI's
+        // first `makeUIView` callback to attach it.
+        previewView.previewLayer.session = session
+    }
 
     // MARK: - Lifecycle
 
@@ -104,7 +144,10 @@ final class ScanCameraController: NSObject, ObservableObject {
     /// First-call path also requests AVCaptureDevice authorization.
     func start() {
         // Already running — nothing to do.
-        if session.isRunning { return }
+        if session.isRunning {
+            if !isSessionRunning { isSessionRunning = true }
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             let granted = await Self.ensureAuthorization()
@@ -112,10 +155,15 @@ final class ScanCameraController: NSObject, ObservableObject {
                 self.permissionState = granted ? .authorized : .denied
             }
             guard granted else { return }
-            self.sessionQueue.async {
+            self.sessionQueue.async { [weak self] in
+                guard let self else { return }
                 self.configureSessionIfNeeded()
                 if !self.session.isRunning {
                     self.session.startRunning()
+                }
+                let running = self.session.isRunning
+                DispatchQueue.main.async {
+                    self.isSessionRunning = running
                 }
             }
         }
@@ -123,9 +171,12 @@ final class ScanCameraController: NSObject, ObservableObject {
 
     /// 1:1 with UIKit `stopCamera()`. Called from `viewWillDisappear`.
     func stop() {
-        sessionQueue.async { [session] in
+        sessionQueue.async { [weak self, session] in
             if session.isRunning {
                 session.stopRunning()
+            }
+            DispatchQueue.main.async {
+                self?.isSessionRunning = false
             }
         }
     }
@@ -139,6 +190,10 @@ final class ScanCameraController: NSObject, ObservableObject {
             guard let self else { return }
             if !self.session.isRunning {
                 self.session.startRunning()
+            }
+            let running = self.session.isRunning
+            DispatchQueue.main.async {
+                self.isSessionRunning = running
             }
         }
     }
@@ -254,9 +309,12 @@ extension ScanCameraController: AVCapturePhotoCaptureDelegate {
         // immediately freezes — matches UIKit `stopCamera()` after
         // the photo lands (ScanIngredientsViewController+Camera.swift
         // L180).
-        sessionQueue.async { [session] in
+        sessionQueue.async { [weak self, session] in
             if session.isRunning {
                 session.stopRunning()
+            }
+            DispatchQueue.main.async {
+                self?.isSessionRunning = false
             }
         }
     }
@@ -270,34 +328,42 @@ extension ScanCameraController: AVCapturePhotoCaptureDelegate {
 // `viewDidLayoutSubviews`).
 
 struct ScanCameraPreview: UIViewRepresentable {
-    let session: AVCaptureSession
+    /// The controller owns the `PreviewView` — see
+    /// `ScanCameraController.previewView` for the rationale (TL;DR:
+    /// keeps the `AVCaptureVideoPreviewLayer` alive across SwiftUI
+    /// view tree rebuilds so rotation doesn't flash black).
+    let controller: ScanCameraController
 
     func makeUIView(context: Context) -> PreviewView {
-        let view = PreviewView()
-        view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+        let view = controller.previewView
+        // Defensive: if the view was attached to a previous
+        // superview (e.g. during a rotation, SwiftUI tears down the
+        // old representable BEFORE building the new one), make sure
+        // it's detached so UIKit doesn't reject the imminent
+        // `addSubview` call. UIKit's own `addSubview` does this
+        // implicitly, but doing it here keeps the state predictable
+        // when SwiftUI sequences makeUIView calls in the order it
+        // chooses.
+        view.removeFromSuperview()
         view.startObservingOrientation()
         return view
     }
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
-        if uiView.previewLayer.session !== session {
-            uiView.previewLayer.session = session
-        }
-        // The parent view also re-renders on rotation thanks to its
-        // `@Environment(\.verticalSizeClass)` dependency, so this
-        // method gets called once the trait collection settles at
-        // the new orientation. Refreshing the connection's video
-        // orientation here is a third update path beyond
-        // `layoutSubviews` and `UIDeviceOrientationDidChange` — it's
-        // the one that closes the lingering rotation lag the user
-        // saw where the camera feed stayed locked to the previous
-        // orientation until they navigated away and back.
+        // Session is wired up at controller-init time; no need to
+        // re-attach here. We do, however, refresh the connection's
+        // video rotation so the live feed reflects whatever
+        // orientation the window settled on after the last layout
+        // pass.
         uiView.applyVideoOrientationFromInterface()
     }
 
     static func dismantleUIView(_ uiView: PreviewView, coordinator: ()) {
-        uiView.stopObservingOrientation()
+        // Intentionally NOT calling `stopObservingOrientation()` —
+        // the controller owns the view and survives this dismantle.
+        // Calling it here would tear down the rotation observer for
+        // the next layout swap, leaving the live feed stuck at the
+        // pre-rotation orientation.
     }
 
     final class PreviewView: UIView {
@@ -427,6 +493,15 @@ struct ScanIngredientsView: View {
     @State private var showIngredientsFoundPopup = false
     @State private var showCameraDeniedAlert = false
 
+    /// Pre-resolved landscape flag — read from `UIDevice` /
+    /// `UIWindowScene` synchronously so the very first render is
+    /// already in the correct orientation. Without this, the screen
+    /// briefly composes the portrait layout (because the
+    /// `verticalSizeClass` env value lags one render pass) and then
+    /// snaps to landscape, which is exactly the "right half goes
+    /// black on rotation" behaviour the user reported.
+    @State private var deviceLandscape: Bool = ScanIngredientsView.resolveLandscapeNow()
+
     // MARK: - Derived helpers
 
     private var deviceIconName: String {
@@ -472,21 +547,89 @@ struct ScanIngredientsView: View {
     //     so the screen never collapses into the iPhone-landscape
     //     side-by-side variant on iPad split view.
 
+    // Two signals, OR'd together:
+    //   • `verticalSizeClass == .compact` — authoritative once
+    //     SwiftUI's trait collection has propagated (typically the
+    //     SECOND render pass after rotation / first appear).
+    //   • `deviceLandscape` — resolved synchronously from
+    //     `UIWindowScene.interfaceOrientation` / `UIDevice.current
+    //     .orientation`, so the FIRST render pass is already correct.
+    //
+    // OR'ing them means the layout flips to landscape the moment
+    // either source agrees. iPad is excluded from the landscape
+    // variant entirely so split-view never collapses to the iPhone
+    // side-by-side layout.
     private var isPhoneLandscape: Bool {
-        UIDevice.current.userInterfaceIdiom != .pad
-            && verticalSizeClass == .compact
+        guard UIDevice.current.userInterfaceIdiom != .pad else { return false }
+        return verticalSizeClass == .compact || deviceLandscape
+    }
+
+    /// Synchronous landscape probe used to seed `deviceLandscape`
+    /// at first render. Walks `UIWindowScene.interfaceOrientation`
+    /// first (most reliable: respects supported orientations / app
+    /// state), and falls back to `UIDevice.current.orientation`
+    /// when the scene's value is unknown (true in the brief window
+    /// between view init and the window being attached).
+    private static func resolveLandscapeNow() -> Bool {
+        guard UIDevice.current.userInterfaceIdiom != .pad else { return false }
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        let interface = scene?.interfaceOrientation ?? .unknown
+        if interface != .unknown { return interface.isLandscape }
+        let device = UIDevice.current.orientation
+        if device.isLandscape { return true }
+        if device.isPortrait { return false }
+        return false
+    }
+
+    /// Re-probe orientation from a notification / appear callback
+    /// and write the result to the `@State` flag. Cheap — only
+    /// commits to state when the value actually changed, so
+    /// SwiftUI doesn't trigger a redundant body pass.
+    private func refreshDeviceLandscape() {
+        let current = ScanIngredientsView.resolveLandscapeNow()
+        if current != deviceLandscape {
+            deviceLandscape = current
+        }
     }
 
     var body: some View {
         ZStack {
             Color("primaryBackgroundColor").ignoresSafeArea()
 
-            if isPhoneLandscape {
-                landscapeLayout
-            } else {
-                portraitLayout
+            // Wrapping the conditional in a `Group` + explicit
+            // `.transaction { $0.animation = nil }` collapses
+            // SwiftUI's implicit cross-fade between
+            // `portraitLayout` and `landscapeLayout`. Without
+            // suppression, on rotation SwiftUI tries to animate
+            // both branches simultaneously — the dismantled
+            // portrait branch fades out at its old (portrait)
+            // frame on top of the freshly-built landscape branch,
+            // and during that fade the camera-frame side of the
+            // screen is a near-black placeholder square. That fade
+            // window IS the black-half-screen the user sees mid-
+            // rotation. Cutting the animation flips the layout in
+            // a single layout pass instead.
+            Group {
+                if isPhoneLandscape {
+                    landscapeLayout
+                } else {
+                    portraitLayout
+                }
+            }
+            .transaction { transaction in
+                transaction.animation = nil
             }
         }
+        // Always fill whatever the parent proposes — during the
+        // rotation animation the view's frame can briefly retain
+        // its pre-rotation size while the window is already at
+        // post-rotation dimensions. Without this `.frame`, the
+        // gap between the (small) view and the (larger) window
+        // shows the window's black backing, which the user reads
+        // as "half the screen turned black".
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .chooseOptionsStyleNavBar()
@@ -498,10 +641,32 @@ struct ScanIngredientsView: View {
             // app may have already enabled this; calling the API a
             // second time is a no-op.
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            // Re-probe in case the scene attached after the @State
+            // seed ran (init runs before the window is wired up on
+            // some iOS versions).
+            refreshDeviceLandscape()
             camera.start()
         }
         .onDisappear {
             camera.stop()
+        }
+        // Rotation: update the synchronous landscape flag the moment
+        // the device reports a new orientation, so the layout flips
+        // BEFORE SwiftUI propagates the new `verticalSizeClass`.
+        // Without this, the layout is gated on the env update which
+        // can lag a frame and leaves the camera view recreated mid-
+        // rotation — that flash is the "black half-screen" the user
+        // saw.
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIDevice.orientationDidChangeNotification)) { _ in
+            refreshDeviceLandscape()
+        }
+        // Belt-and-braces: when SwiftUI's authoritative
+        // `verticalSizeClass` finally lands, mirror it into the
+        // synchronous flag. Keeps the two signals in agreement so
+        // the layout doesn't oscillate.
+        .onChange(of: verticalSizeClass) { _ in
+            refreshDeviceLandscape()
         }
         .onChange(of: camera.permissionState) { state in
             // UIKit: `showCameraErrorAlert()` is invoked from inside
@@ -724,16 +889,20 @@ struct ScanIngredientsView: View {
     @ViewBuilder
     private var cameraOrCapturedImageView: some View {
         ZStack {
-            // Subtle placeholder fill below the camera / image so
-            // there's never a stark black square during the brief
-            // moments where permission resolution or session start
-            // hasn't completed. Uses the page background tinted a
-            // shade darker — blends with the surrounding canvas
-            // instead of looking like a broken viewport.
+            // Placeholder fill below the camera / image so the
+            // viewport is never a stark black square while the
+            // session is warming up. Previously this used
+            // `UIColor(white: 0.08)` in dark mode — close enough to
+            // pure black that a half-screen of placeholder during
+            // rotation looked exactly like a hung view ("right side
+            // is black"). The new tone (~0.20 / ~0.92) keeps the
+            // viewfinder clearly visible as a UI surface, so even
+            // when a rotation flushes the preview layer the gap
+            // reads as "loading", not "broken".
             Color(UIColor { trait in
                 trait.userInterfaceStyle == .dark
-                    ? UIColor(white: 0.08, alpha: 1.0)
-                    : UIColor(white: 0.93, alpha: 1.0)
+                    ? UIColor(white: 0.20, alpha: 1.0)
+                    : UIColor(white: 0.92, alpha: 1.0)
             })
 
             if let image = camera.capturedImage {
@@ -742,12 +911,36 @@ struct ScanIngredientsView: View {
                     .aspectRatio(contentMode: .fill)
                     .accessibilityLabel("Captured photo")
             } else if camera.permissionState == .authorized {
-                ScanCameraPreview(session: camera.session)
+                // The `ScanCameraPreview` representable is a thin
+                // wrapper around `camera.previewView` — the actual
+                // `UIView` (and its `AVCaptureVideoPreviewLayer`)
+                // is owned by the controller, so it survives
+                // SwiftUI rebuilding this view tree on rotation.
+                // The `.id` is belt-and-braces: even with
+                // controller-owned UIKit state, asking SwiftUI to
+                // treat this representable as the same view across
+                // structural changes lets it reuse the existing
+                // bridge instead of tearing it down and recreating
+                // it.
+                ScanCameraPreview(controller: camera)
+                    .id("scan-ingredients-preview")
                     .accessibilityLabel("Camera preview")
             }
-            // No explicit else branch — the placeholder fill above
-            // shows through when neither the image nor the live
-            // preview is ready.
+
+            // Loader: only while we're authorized but the session
+            // hasn't reported running yet. Hides the moment the
+            // first frame can flow, and stays hidden after the user
+            // captures a photo (placeholder is replaced by the
+            // captured image at that point).
+            if camera.permissionState == .authorized
+                && camera.capturedImage == nil
+                && !camera.isSessionRunning {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(1.1)
+                    .tint(Color("appBlackColor"))
+                    .transition(.opacity)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
