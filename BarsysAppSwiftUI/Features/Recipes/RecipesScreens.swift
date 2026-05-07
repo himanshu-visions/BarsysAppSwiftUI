@@ -1570,9 +1570,22 @@ struct RecipeDetailView: View {
                         // Pass the FULL recipe so EditRecipeView can carry
                         // glassware / instructions / image / slug into the
                         // POST request without depending on a storage lookup.
+                        //
+                        // IMPORTANT — overlay the user's local quantity
+                        // edits (`editedIngredients`) onto the storage
+                        // recipe before handing it off. RecipeDetailView
+                        // mutates `editedIngredients` for every +/- tap,
+                        // but those edits never land in `env.storage`
+                        // (the storage recipe is the immutable Barsys
+                        // catalog version). Without this overlay, opening
+                        // Edit Recipe reset the quantities back to the
+                        // catalog defaults — user-reported bug: "On
+                        // recipe details when we decrease the quantity
+                        // and open edit recipe the updated quantity not
+                        // coming there".
                         EditRecipeView(
                             recipeID: recipe.id,
-                            existingRecipe: recipe,
+                            existingRecipe: recipeWithEditedQuantities(recipe),
                             isCustomizing: true
                         )
                     }
@@ -2979,6 +2992,39 @@ struct RecipeDetailView: View {
         let all = recipe.ingredients ?? []
         originalIngredients = all
         editedIngredients = all
+    }
+
+    /// Build a copy of `recipe` whose ingredient list has the user's
+    /// in-memory quantity edits applied. Garnish / additional rows
+    /// pass through unchanged (the recipe-detail +/- buttons only
+    /// touch base + mixer rows). Ingredients that aren't in
+    /// `editedIngredients` (defensive — should never happen in
+    /// practice because `editedIngredients` is seeded from the same
+    /// `recipe.ingredients` source) keep their original quantity.
+    ///
+    /// Used only by the Edit Recipe presentation path so the cover
+    /// opens with the same quantities the user is currently looking
+    /// at, not the catalog defaults.
+    private func recipeWithEditedQuantities(_ recipe: Recipe) -> Recipe {
+        guard let original = recipe.ingredients, !original.isEmpty else {
+            return recipe
+        }
+        // Index edits by ingredient identity for O(1) lookup. Ingredient.id
+        // is the stable `localID: IngredientID` minted on decode, so it
+        // tracks across the `recipe-detail @State` and the storage
+        // copy reliably.
+        let editsByID = Dictionary(uniqueKeysWithValues:
+            editedIngredients.map { ($0.id, $0) }
+        )
+        let merged: [Ingredient] = original.map { ing in
+            guard let edited = editsByID[ing.id] else { return ing }
+            var copy = ing
+            copy.quantity = edited.quantity
+            return copy
+        }
+        var patched = recipe
+        patched.ingredients = merged
+        return patched
     }
 
     /// 1:1 port of `RecipePageViewModel.increase/decreaseQuantity` →
