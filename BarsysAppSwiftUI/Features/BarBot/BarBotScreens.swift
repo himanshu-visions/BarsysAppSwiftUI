@@ -5182,7 +5182,16 @@ struct BarBotCraftingView: View {
             // Set active crafting screen so BLE disconnect alerts use the
             // "during crafting" copy path (AppRouter.swift L230).
             router.activeCraftingScreen = .barBotCrafting
-            // Fire analytics (UIKit trackEventCraftBegin).
+            // 1:1 with UIKit `BarBotCraftingViewController` —
+            //   TrackEventsClass().addBrazeCustomEventWithEventName(
+            //       eventName: TrackEventName.barbotCraftBegin.rawValue)
+            // The non-BarBot crafting path fires `craftBegin`
+            // (CraftingScreens.swift:1427); the BarBot variant has its
+            // own dedicated event so Braze can segment "BarBot users
+            // who started a craft" from the standard pour flow. The
+            // `barbotCraftBegin` enum case existed but was unused —
+            // this fires it where the UIKit comment said it should.
+            env.analytics.track(TrackEventName.barbotCraftBegin.rawValue)
             Task { @MainActor in
                 await viewModel.start(recipe: workingRecipe, ble: ble)
             }
