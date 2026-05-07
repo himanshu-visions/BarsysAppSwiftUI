@@ -284,10 +284,15 @@ struct ScanCameraPreview: UIViewRepresentable {
         if uiView.previewLayer.session !== session {
             uiView.previewLayer.session = session
         }
-        // SwiftUI also re-evaluates `updateUIView` when the parent
-        // GeometryReader sees a size change (rotation), so this is a
-        // second belt-and-braces update path beyond the
-        // UIDeviceOrientationDidChange notification.
+        // The parent view also re-renders on rotation thanks to its
+        // `@Environment(\.verticalSizeClass)` dependency, so this
+        // method gets called once the trait collection settles at
+        // the new orientation. Refreshing the connection's video
+        // orientation here is a third update path beyond
+        // `layoutSubviews` and `UIDeviceOrientationDidChange` — it's
+        // the one that closes the lingering rotation lag the user
+        // saw where the camera feed stayed locked to the previous
+        // orientation until they navigated away and back.
         uiView.applyVideoOrientationFromInterface()
     }
 
@@ -447,30 +452,40 @@ struct ScanIngredientsView: View {
 
     // MARK: - Body
     //
-    // The body is wrapped in a `GeometryReader` so we can pick a
-    // portrait vs landscape layout per orientation. UIKit's storyboard
-    // version doesn't have to do this — UIKit auto-rotates the
-    // existing constraints. SwiftUI doesn't, and the previous fixed
-    // 3:4 aspect on `cameraOrCapturedImageView` made the live preview
-    // shrink to a tiny rectangle on iPhone in landscape (because
-    // height is the limiting axis there, and 3:4 of ~390pt landscape
-    // height = ~290pt wide). Switching the whole layout to an HStack
-    // in landscape (camera left, controls right) lets the camera fill
-    // the available height.
+    // Layout switch is driven by `@Environment(\.verticalSizeClass)`,
+    // NOT a `GeometryReader`. Why:
+    //   • `verticalSizeClass` is propagated through SwiftUI's trait
+    //     collection. iOS updates it once per rotation, after the
+    //     window has settled at the new size. The body re-renders
+    //     exactly once, with the final layout — no intermediate
+    //     "in-flight" sizes during the animation.
+    //   • A previous `GeometryReader { proxy in … }` wrapper (with
+    //     an explicit `.frame(width: proxy.size.width, height:
+    //     proxy.size.height)` on the inner ZStack) caused the screen
+    //     to look "stuck" on rotation: the proxy reports a stream of
+    //     intermediate sizes during the rotation animation, the
+    //     explicit frame fights the system's adaptive layout, and
+    //     the result was that the camera preview occasionally froze
+    //     in the pre-rotation orientation until the user navigated
+    //     away and back.
+    //   • iPad is forced to portrait layout regardless of size class
+    //     so the screen never collapses into the iPhone-landscape
+    //     side-by-side variant on iPad split view.
+
+    private var isPhoneLandscape: Bool {
+        UIDevice.current.userInterfaceIdiom != .pad
+            && verticalSizeClass == .compact
+    }
 
     var body: some View {
-        GeometryReader { proxy in
-            let isLandscape = proxy.size.width > proxy.size.height
-            ZStack {
-                Color("primaryBackgroundColor").ignoresSafeArea()
+        ZStack {
+            Color("primaryBackgroundColor").ignoresSafeArea()
 
-                if isLandscape {
-                    landscapeLayout(in: proxy.size)
-                } else {
-                    portraitLayout(in: proxy.size)
-                }
+            if isPhoneLandscape {
+                landscapeLayout
+            } else {
+                portraitLayout
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
@@ -524,7 +539,7 @@ struct ScanIngredientsView: View {
     // controls. Same dimensions as the iPhone storyboard scene.
 
     @ViewBuilder
-    private func portraitLayout(in size: CGSize) -> some View {
+    private var portraitLayout: some View {
         VStack(spacing: 0) {
             titleAndSubtitle
                 .padding(.top, 8)
@@ -562,50 +577,47 @@ struct ScanIngredientsView: View {
     // content on the left, camera + capture on the right.
 
     @ViewBuilder
-    private func landscapeLayout(in size: CGSize) -> some View {
-        // Vertical insets for the camera column. The toolbar already
-        // owns the safe area on top in landscape, so we only need a
-        // small margin here.
-        let verticalPadding: CGFloat = 12
-        let horizontalPadding: CGFloat = 16
-        let interColumnSpacing: CGFloat = 24
-        // Cap the LEFT column to a reasonable share of the viewport.
-        // 38% on a 852pt-wide iPhone Pro Max ≈ 324pt — wide enough
-        // for the long description string to wrap to ~3 lines
-        // without overflowing. iPhone SE landscape (667pt wide) lands
-        // at ~253pt, which still fits the title + 4-line description
-        // comfortably.
-        let leftColumnWidth = max(220, min(360, size.width * 0.38))
+    private var landscapeLayout: some View {
+        // Sizing notes:
+        //   • Left column has a FIXED 280pt width — wide enough for
+        //     the title + 4-line description on every iPhone, narrow
+        //     enough to leave the majority of the viewport for the
+        //     camera. Hard-coding the width avoids the "stuck on
+        //     rotation" pathology that came from computing widths
+        //     via a `GeometryReader` proxy whose size lags one
+        //     re-layout pass behind the actual rotation.
+        //   • Right column uses `.frame(maxWidth: .infinity)` so it
+        //     soaks up whatever horizontal space remains.
+        //   • Camera frame uses `.frame(maxWidth: .infinity,
+        //     maxHeight: .infinity)` so it fills the right column.
+        //     The AV preview layer's `.resizeAspectFill` crops the
+        //     camera feed to fit — no aspect-ratio modifier required.
+        //   • Controls row is reserved at 80pt unconditionally so
+        //     swapping between the shutter (80pt) and retake+submit
+        //     (45pt) states doesn't yank the camera up or down. The
+        //     shorter button row stays vertically centered inside
+        //     the reserved 80pt slot.
 
-        HStack(alignment: .center, spacing: interColumnSpacing) {
+        HStack(alignment: .center, spacing: 24) {
 
-            // LEFT — title + description (left-aligned).
-            VStack(alignment: .leading, spacing: 12) {
-                Spacer(minLength: 0)
-                titleAndSubtitleLandscape
-                Spacer(minLength: 0)
-            }
-            .frame(width: leftColumnWidth,
-                   alignment: .leading)
-            .frame(maxHeight: .infinity)
+            // LEFT — title + description, left-aligned, vertically
+            // centered.
+            titleAndSubtitleLandscape
+                .frame(width: 280)
+                .frame(maxHeight: .infinity)
 
             // RIGHT — camera + controls.
-            //
-            // The camera fills the column with a 4:3 landscape aspect
-            // (`aspectRatio(.fit)`). The control row sits directly
-            // beneath it. SwiftUI's HStack/VStack layout naturally
-            // gives the camera as much height as it can without
-            // pushing the buttons off-screen.
             VStack(spacing: 12) {
                 cameraOrCapturedImageView
-                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
                 bottomControlsContainer
+                    .frame(height: 80)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, verticalPadding)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Landscape title block (left-aligned)
@@ -712,6 +724,18 @@ struct ScanIngredientsView: View {
     @ViewBuilder
     private var cameraOrCapturedImageView: some View {
         ZStack {
+            // Subtle placeholder fill below the camera / image so
+            // there's never a stark black square during the brief
+            // moments where permission resolution or session start
+            // hasn't completed. Uses the page background tinted a
+            // shade darker — blends with the surrounding canvas
+            // instead of looking like a broken viewport.
+            Color(UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? UIColor(white: 0.08, alpha: 1.0)
+                    : UIColor(white: 0.93, alpha: 1.0)
+            })
+
             if let image = camera.capturedImage {
                 Image(uiImage: image)
                     .resizable()
@@ -720,14 +744,11 @@ struct ScanIngredientsView: View {
             } else if camera.permissionState == .authorized {
                 ScanCameraPreview(session: camera.session)
                     .accessibilityLabel("Camera preview")
-            } else {
-                // Placeholder before permission is resolved or when
-                // the camera is unavailable. UIKit shows a black
-                // viewCameraFrame in the same window — same effect.
-                Color.black
             }
+            // No explicit else branch — the placeholder fill above
+            // shows through when neither the image nor the live
+            // preview is ready.
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
