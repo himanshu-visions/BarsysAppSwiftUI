@@ -4264,11 +4264,26 @@ final class StationCleaningFlowViewModel: ObservableObject {
         if let station, station.ingredientQuantity > 0 {
             cleaningMode = .flush
             currentFlow = .placeGlassStart
+            // 1:1 with UIKit
+            // `StationCleaningFlowViewModel.trackBeginFlushEvent()`
+            // (StationCleaningFlowViewModel+Analytics.swift L33-36).
+            // UIKit builds a properties dictionary but ultimately calls
+            // `addBrazeCustomEventWithEventName` WITHOUT passing it —
+            // so the Braze event fires with NO properties. Match
+            // exactly so the SwiftUI port produces an identical event.
+            BrazeService.shared.track(event: TrackEventName.beginFlushFlow.rawValue)
             _ = ble.send(.flushStation(stationNumber: selectedStation.tag))
             startSimulatorIfNeeded()
         } else {
             cleaningMode = .clean
             currentFlow = .pourCleaningSolution
+            // 1:1 with UIKit
+            // `StationCleaningFlowViewModel.trackBeginCleanEvent()`
+            // (StationCleaningFlowViewModel+Analytics.swift L38-41).
+            // Same pattern as the flush variant — UIKit's call site
+            // omits the properties argument so the Braze event fires
+            // with NO properties.
+            BrazeService.shared.track(event: TrackEventName.beginCleanFlow.rawValue)
         }
     }
 
@@ -4284,8 +4299,44 @@ final class StationCleaningFlowViewModel: ObservableObject {
 
     func tapPause(ble: BLEService) {
         processState = .paused
+        // 1:1 with UIKit
+        // `StationCleaningFlowViewModel.trackPauseEvent()`
+        // (StationCleaningFlowViewModel+Analytics.swift L43-50).
+        // Fires `flush_station_pause` or `clean_station_pause` with
+        // trigger / station / ingredient_name / primary_ingredient_type
+        // / secondary_ingredient_type / quantity so Braze can segment
+        // pause-rate per ingredient.
+        let event = cleaningMode == .flush
+            ? TrackEventName.pauseFlushFlow.rawValue
+            : TrackEventName.pauseCleanFlow.rawValue
+        BrazeService.shared.track(
+            event: event,
+            properties: cleaningTrackingProperties()
+        )
         ble.send(.pauseDispense)
         simulatorTimer?.invalidate()
+    }
+
+    /// Builds the `flush_station_*` / `clean_station_*` properties.
+    /// 1:1 port of UIKit
+    /// `StationCleaningFlowViewModel.buildTrackingProperties()`
+    /// (StationCleaningFlowViewModel+Analytics.swift L20-31).
+    private func cleaningTrackingProperties() -> [String: Any] {
+        // `trigger` mirrors UIKit's `buildTrackingTrigger()` — the
+        // setupStationsFlow path becomes "automated flow", every
+        // other origin becomes "manual flow".
+        let trigger = stationsOrigin == .recipeCrafting
+            ? "automated flow"
+            : "manual flow"
+        let currentStation = stations.first { $0.station == selectedStation }
+        return [
+            "trigger": trigger,
+            "station": currentStation?.station.rawValue as Any,
+            "ingredient_name": currentStation?.ingredientName ?? "",
+            "primary_ingredient_type": currentStation?.category?.primary ?? "",
+            "secondary_ingredient_type": currentStation?.category?.secondary ?? "",
+            "quantity": currentStation?.ingredientQuantity ?? 0.0
+        ]
     }
 
     func tapStop(ble: BLEService) {
@@ -4452,6 +4503,21 @@ final class StationCleaningFlowViewModel: ObservableObject {
     /// flips on cleanComplete — gives the device time to seat the glass
     /// arm before we swap labels.
     private func scheduleCleanCompleteTransition(ble: BLEService) {
+        // 1:1 with UIKit
+        // `StationCleaningFlowViewModel.trackCleaningOrFlushingCompleted(...)`
+        // (StationCleaningFlowViewModel+Analytics.swift L52-59). Fires
+        // `clean_station_completed` or `flush_station_completed` with
+        // the station tracking properties. UIKit fires this on the
+        // cleanComplete BLE response (BEFORE the 1.5s settle delay)
+        // — we mirror that ordering so the event timestamp lines up
+        // with the firmware-emitted complete signal, not the UI flip.
+        let completedEvent = cleaningMode == .flush
+            ? TrackEventName.flushStationCompletedFlow.rawValue
+            : TrackEventName.cleanStationCompletedFlow.rawValue
+        BrazeService.shared.track(
+            event: completedEvent,
+            properties: cleaningTrackingProperties()
+        )
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard let self else { return }
