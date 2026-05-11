@@ -5286,8 +5286,23 @@ struct BarBotCraftingView: View {
                     .frame(height: 210)
 
                 // collectionViewProgress — 10pt horizontal segment bar.
-                progressBar
-                    .frame(height: 10)
+                // UIKit `updateIngredientsUI` (BarBotCraftingViewController L223-242)
+                // hides the bar when `hasStartedDispensing == false` (pre-pour:
+                // .idle / .waitingForGlass). UIKit `updateDrinkCompletedUI`
+                // (L253) hides it again once the drink is fully completed.
+                // Mid-pour states (.dispensing, .glassLifted, .awaitingGlassRemoval,
+                // and any cancel-related state which transitions in after dispensing
+                // began) keep the bar visible. Reserve the 10pt slot with
+                // `Color.clear` so the sheet height (452pt) and the surrounding
+                // VStack spacing don't reflow when the bar toggles.
+                Group {
+                    if shouldShowProgressBar {
+                        progressBar
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(height: 10)
             }
             .padding(.top, 24)
             .padding(.horizontal, 24)
@@ -5508,6 +5523,23 @@ struct BarBotCraftingView: View {
             return Color("grayBorderColor").opacity(0.30)
         } else {
             return Color("grayColorForBarBot")
+        }
+    }
+
+    /// Visibility rule for the segment progress bar — 1:1 port of UIKit
+    /// `BarBotCraftingViewController.updateIngredientsUI` /
+    /// `updateDrinkCompletedUI`. Pre-pour (`.idle`, `.waitingForGlass`)
+    /// the bar is hidden because UIKit checks `hasStartedDispensing`,
+    /// which only flips true on the first transition into `.dispensing`.
+    /// On `.completed` the bar is hidden again. All mid-pour /
+    /// awaiting-removal / cancel states keep it visible — UIKit's
+    /// BleResponse handlers leave the bar shown across those.
+    private var shouldShowProgressBar: Bool {
+        switch viewModel.state {
+        case .idle, .waitingForGlass, .completed:
+            return false
+        default:
+            return true
         }
     }
 
