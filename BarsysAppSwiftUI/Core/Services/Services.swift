@@ -50,6 +50,37 @@ struct MyDrinksDataModel {
     var total, limit, offset: Int?
 }
 
+// MARK: - My Bar payload models (declared before `APIClient` so the
+// protocol's method signatures resolve cleanly without any forward-
+// reference dance. The original declarations sat further down in the
+// file — Xcode 26.2's live indexer occasionally failed to bind them
+// from the protocol's signature line (surfacing as "Cannot find type
+// 'MyBarResponse' in scope" at the `fetchMyBar()` return type), even
+// though clean builds succeeded. Moving the types here removes the
+// ambiguity.)
+
+/// Body row for `POST /my/bar` — 1:1 with UIKit
+/// `MyBarAddIngredientRequest` (BarsysApp/Controllers/MyBar/
+/// MyBarApiService.swift L88-119). UIKit posts an ARRAY of these
+/// (`[MyBarAddIngredientRequest]`) so the SwiftUI port accepts an
+/// array too via `APIClient.addMyBarIngredients`.
+struct MyBarAddIngredient: Codable {
+    let name: String
+    let category: IngredientCategory?
+    let confidence: Double
+    let perishable: Bool
+    let substitutes: [String]
+}
+
+/// Response shape for `GET /my/bar` — 1:1 with UIKit
+/// `MyBarResponseModel` (BarsysApp/Controllers/MyBar/MyBarApiService.swift
+/// L20-23). Server returns arrays of ingredient NAMES (strings), so
+/// callers must reconstruct `Ingredient` rows with derived category.
+struct MyBarResponse: Codable {
+    let base: [String]?
+    let mixer: [String]?
+}
+
 protocol APIClient: AnyObject {
     func sendOtp(phone: String) async throws
     func verifyOtp(phone: String, code: String) async throws -> UserProfile
@@ -165,28 +196,6 @@ struct MyBarIngredientFromImage: Codable {
     let category: IngredientCategory?
     let perishable: Bool?
     let substitutes: [String]?
-}
-
-/// Body row for `POST /my/bar` — 1:1 with UIKit
-/// `MyBarAddIngredientRequest` (BarsysApp/Controllers/MyBar/
-/// MyBarApiService.swift L88-119). UIKit posts an ARRAY of these
-/// (`[MyBarAddIngredientRequest]`) so the SwiftUI port accepts an
-/// array too via `APIClient.addMyBarIngredients`.
-struct MyBarAddIngredient: Codable {
-    let name: String
-    let category: IngredientCategory?
-    let confidence: Double
-    let perishable: Bool
-    let substitutes: [String]
-}
-
-/// Response shape for `GET /my/bar` — 1:1 with UIKit
-/// `MyBarResponseModel` (BarsysApp/Controllers/MyBar/MyBarApiService.swift
-/// L20-23). Server returns arrays of ingredient NAMES (strings), so
-/// callers must reconstruct `Ingredient` rows with derived category.
-struct MyBarResponse: Codable {
-    let base: [String]?
-    let mixer: [String]?
 }
 
 /// Wrapper response — the API returns `[ { ingredients: [...] } ]`,

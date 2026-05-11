@@ -778,12 +778,29 @@ struct SelectQuantityView: View {
     /// Snaps both picker components to the row(s) representing
     /// `quantityMl` in the current unit. UIKit
     /// `setupPickerInitialSelection`.
+    ///
+    /// ml ↔ oz conversion uses the SAME constant UIKit's
+    /// `computeOzDefaultValue` uses: the free-floating `ounceValue`
+    /// (= 0.033814 — multiplier from ml → oz). UIKit's reverse
+    /// formula is `defaultValue = ozValue / ounceValue`. The
+    /// previous SwiftUI port used the unrelated `oneMlValue`
+    /// (= 29.5735) for multiplication, which is NOT the exact
+    /// inverse of `ounceValue`. At the extreme cap that drift
+    /// pushed 25.36 oz → 750.06 ml (≥ 750 cap) so Save was rejected
+    /// with "exceeds 750 ml" even though UIKit allows the same
+    /// picker selection — the QA-reported "cannot add 750 ml in
+    /// refill station" failure. Dividing by `ounceValue` instead
+    /// preserves UIKit's byte-for-byte conversion (25.36 oz →
+    /// 749.985 ml < 750 cap).
     private func positionPickerForCurrentQuantity() {
         if selectedUnit == .ml {
             let target = Int(quantityMl.rounded())
             wholeRow = clampWholeRow(target)
         } else {
-            let oz = quantityMl / NumericConstants.oneMlValue
+            // ml → oz: multiply by `ounceValue` to mirror UIKit's
+            // `Quantity.convertDisplayForMixListIngredients` which uses
+            // the same 0.033814 factor in the ml→oz direction.
+            let oz = quantityMl * ounceValue
             let whole = Int(oz.rounded(.down))
             wholeRow = clampWholeRow(whole)
             let dec = Int(((oz - Double(whole)) * 100).rounded())
@@ -845,12 +862,27 @@ struct SelectQuantityView: View {
     /// Whenever the picker rows change, recompute `quantityMl` so
     /// the validation + save use the live value. UIKit
     /// `handlePickerDidSelectRow` + `computeOzDefaultValue`.
+    ///
+    /// **Critical conversion fix (QA: "cannot add 750 ml in refill")**
+    /// UIKit's `computeOzDefaultValue`
+    /// (SelectQuantityViewModel+PickerData.swift L128-134) computes
+    /// `defaultValue = valueInOZSelected / ounceValue` where
+    /// `ounceValue = NumericConstants.ounceConversionFactor` (= 0.033814).
+    /// The previous SwiftUI port multiplied by `oneMlValue` (= 29.5735)
+    /// — that constant is NOT the exact inverse of `ounceValue`. At the
+    /// oz extreme:
+    ///   • UIKit:    25.36 / 0.033814 ≈ 749.985 ml ✓ (under 750 cap)
+    ///   • SwiftUI:  25.36 × 29.5735 ≈ 750.064 ml ✗ (over 750 cap)
+    /// That 0.08 ml drift made `handleSave`'s `quantityMl > 750` check
+    /// fire and surface the "exceeds 750 ml" alert at the maximum oz
+    /// selection — blocking the entire "refill to full" flow in oz
+    /// mode. Dividing by `ounceValue` matches UIKit byte-for-byte.
     private func recomputeQuantity() {
         if selectedUnit == .ml {
             let row = clampWholeRow(wholeRow)
             quantityMl = Double(wholeArray[row])
         } else {
-            quantityMl = currentOzValue() * NumericConstants.oneMlValue
+            quantityMl = currentOzValue() / ounceValue
         }
     }
 

@@ -790,6 +790,20 @@ private struct SideMenuPanel: View {
     /// `MyProfileApiService.getProfile()` writes to). Falls back to the
     /// static `profileIcon` asset if no URL is present or the image fails
     /// to load.
+    ///
+    /// **iPad sizing fix (QA report)**: UIKit storyboard
+    /// `Uq9-vB-KWi` is fixed at 24×24 — that's the iPhone-canvas glyph
+    /// size. iPad keeps the same storyboard so the avatar renders tiny
+    /// next to the 22pt user name and 16pt "Edit Profile" button (both
+    /// already bumped from the iPhone literals). The avatar looked
+    /// mis-scaled against the rest of the header on iPad — QA flagged
+    /// it as "profile pic not showing correct on iPad". Bumping the
+    /// avatar to 56×56 on iPad with a matching circle clip (so a
+    /// real photo crops cleanly without showing the square frame)
+    /// restores the visual rhythm. iPhone keeps the storyboard 24×24
+    /// bit-identically.
+    private var avatarSize: CGFloat { SideMenuPanel.isIPad ? 56 : 24 }
+
     @ViewBuilder
     private var profileAvatar: some View {
         if !userStore.profileImageURL.isEmpty,
@@ -800,7 +814,7 @@ private struct SideMenuPanel: View {
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 24, height: 24)
+                        .frame(width: avatarSize, height: avatarSize)
                         .clipShape(Circle())
                 case .empty, .failure:
                     fallbackProfileIcon
@@ -814,10 +828,17 @@ private struct SideMenuPanel: View {
     }
 
     private var fallbackProfileIcon: some View {
+        // UIKit storyboard renders `profileIcon` as a bare icon
+        // (no circle clip) at 24pt — keeping the same fit-aspect /
+        // template-tint contract on iPhone for bit-parity. On iPad we
+        // bump to `avatarSize` (56pt) so the fallback glyph keeps pace
+        // with the bumped name beside it; still no circle clip because
+        // the asset itself is a centered glyph on a transparent canvas
+        // (clipping would crop the visible outline).
         Image("profileIcon")
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .frame(width: 24, height: 24)
+            .frame(width: avatarSize, height: avatarSize)
             .foregroundStyle(Color("appBlackColor"))
     }
 
