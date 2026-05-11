@@ -314,6 +314,18 @@ struct ExploreRecipesView: View {
 
     @State private var query = ""
     @State private var isSearching = false
+    /// QA fix (Explore Recipes — "No results to display" overlaps
+    /// the search field when the keyboard is open). When the user
+    /// taps into the search bar, the keyboard rises and the
+    /// visible ScrollView area shrinks UPWARD — the
+    /// `.overlay(alignment: .center)` then resolves its centre
+    /// against the smaller visible area, which on iPhone /
+    /// iPad-Mini landscape lands the "No results" label right on
+    /// top of the search bar. Tracking the keyboard's open/closed
+    /// state here lets us push the empty-state text down by a
+    /// safe offset only while the keyboard is up, restoring the
+    /// natural centring when the keyboard dismisses.
+    @State private var isKeyboardOpen: Bool = false
 
     /// Layout selector for the recipe listing.
     /// iPad always renders the grid (2 columns). iPhone uses the
@@ -716,10 +728,50 @@ struct ExploreRecipesView: View {
                     .foregroundStyle(Color("mediumGrayColor"))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
+                    // QA fix: when the keyboard is up the visible
+                    // area shrinks and the centred overlay slides
+                    // upward toward the search bar. Shift the text
+                    // DOWN by 90pt so it stays clear of the search
+                    // field on iPhone / iPad-Mini landscape with
+                    // the keyboard open. No offset on portrait or
+                    // with the keyboard dismissed — natural centring
+                    // remains the visual default. Applies to every
+                    // device idiom (iPhone, iPad portrait + landscape,
+                    // iPad split-view) because the same overlap
+                    // mechanic appears whenever the keyboard reduces
+                    // the visible area enough that the geometric
+                    // centre lands at the search bar.
+                    .offset(y: isKeyboardOpen ? 90 : 0)
+                    .animation(.easeInOut(duration: 0.20),
+                               value: isKeyboardOpen)
                     .allowsHitTesting(false)
             }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
+        // QA fix: observe keyboard show/hide so the empty-state
+        // label can shift down when the user is typing in the
+        // search field. UIKit handled this implicitly because the
+        // storyboard's `lblNoDataFound` was anchored to the
+        // physical screen centre (not the visible area), so the
+        // keyboard didn't move it; SwiftUI's overlay centres in
+        // the visible viewport which shrinks with the keyboard.
+        // Toggle a `@State` flag here instead of reading
+        // `keyboardWillShow.userInfo` heights — we just need to
+        // know "is the keyboard up?" not its exact height.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillShowNotification
+            )
+        ) { _ in
+            isKeyboardOpen = true
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillHideNotification
+            )
+        ) { _ in
+            isKeyboardOpen = false
+        }
         // Ports ExploreRecipesViewController.viewDidLoad staleness check:
         // if cacheRecipes.isEmpty || AppStateManager.shared.areCacheRecipesStale
         .task {

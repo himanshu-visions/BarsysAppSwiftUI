@@ -28,6 +28,18 @@ struct MixlistListView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var query = ""
+    /// QA fix (Cocktail Kits — "No results to display" overlaps
+    /// the search field when the keyboard is open). When the user
+    /// taps into the search bar, the keyboard rises and the
+    /// visible ScrollView area shrinks UPWARD — the
+    /// `.overlay(alignment: .center)` then resolves its centre
+    /// against the smaller visible area, which on iPhone /
+    /// iPad-Mini landscape lands the "No results" label right on
+    /// top of the search bar. Tracking the keyboard's open/closed
+    /// state here lets us push the empty-state text down only
+    /// while the keyboard is up, restoring the natural centring
+    /// when the keyboard dismisses.
+    @State private var isKeyboardOpen: Bool = false
 
     private var isConnected: Bool { ble.isAnyDeviceConnected }
 
@@ -284,10 +296,41 @@ struct MixlistListView: View {
                     .foregroundStyle(Color("mediumGrayColor"))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
+                    // QA fix: when the keyboard is up the visible
+                    // area shrinks and the centred overlay slides
+                    // upward toward the search bar. Shift the text
+                    // DOWN by 90pt so it stays clear of the search
+                    // field on iPhone / iPad-Mini landscape with
+                    // the keyboard open. Mirrors the same fix used
+                    // on `ExploreRecipesView`.
+                    .offset(y: isKeyboardOpen ? 90 : 0)
+                    .animation(.easeInOut(duration: 0.20),
+                               value: isKeyboardOpen)
                     .allowsHitTesting(false)
             }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
+        // QA fix: observe keyboard show/hide so the empty-state
+        // label can shift down when the user is typing in the
+        // search field. UIKit's storyboard `lblNoDataFound`
+        // anchored to the physical screen centre so the keyboard
+        // didn't shift it; SwiftUI's overlay centres in the
+        // visible viewport which shrinks with the keyboard. Same
+        // observer as `ExploreRecipesView`.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillShowNotification
+            )
+        ) { _ in
+            isKeyboardOpen = true
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillHideNotification
+            )
+        ) { _ in
+            isKeyboardOpen = false
+        }
         .navigationBarTitleDisplayMode(.inline)
         // 1:1 with DevicePairedView (ControlCenterScreens.swift:960) —
         // same toolbar bookkeeping as the reference screens so the
