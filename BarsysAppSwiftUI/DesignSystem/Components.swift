@@ -296,6 +296,16 @@ struct BarsysSearchBar: View {
                     .frame(width: 18, height: 18)
                     .foregroundStyle(Color("grayBorderColor"))
                     .frame(width: 44, height: 44)
+                    // QA fix (iPad): explicit `.contentShape` so the full
+                    // 44×44 frame is hit-testable. Without this the SwiftUI
+                    // button's hit region collapses to the 18×18 image
+                    // glyph on iPad — `.buttonStyle(.plain)` doesn't infer
+                    // hit-shape from the outer frame the way it does on
+                    // iPhone, so taps that land in the surrounding padding
+                    // pass through to the TextField behind. The contentShape
+                    // pins the hit region to the entire frame for both
+                    // idioms, restoring iPhone-parity tap behaviour.
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Search")
@@ -328,6 +338,12 @@ struct BarsysSearchBar: View {
                 Button {
                     HapticService.light()
                     query = ""
+                    // Keep the field focused after clearing so the user
+                    // can immediately type a new query without having to
+                    // tap the field again. Matches UIKit's native
+                    // `clearButtonMode = .always` behaviour — clearing
+                    // does NOT resign first responder.
+                    isFocused = true
                 } label: {
                     Image("crossIcon")
                         .renderingMode(.template)
@@ -339,9 +355,39 @@ struct BarsysSearchBar: View {
                         .frame(width: 14, height: 14)
                         .foregroundStyle(Color("grayBorderColor"))
                         .frame(width: 36, height: 44)
+                        // QA fix (iPad — ticket 0062262 "Explore Recipes >
+                        // User is unable to clear the searched text from
+                        // search field if pressed cross button (iPad)").
+                        // On iPad, the SwiftUI `Button` with
+                        // `.buttonStyle(.plain)` shrinks its hit-test
+                        // region to the inner 14pt glyph instead of the
+                        // explicit 36×44 outer frame — so the QA tap
+                        // landed in the padding around the cross and
+                        // passed through to the focused TextField behind,
+                        // which absorbed it as a caret-move tap and the
+                        // query was never cleared. Pinning the hit shape
+                        // to the full 36×44 frame restores the tap target
+                        // iPhone has by default.
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                // `.buttonStyle(.borderless)` (instead of `.plain`) gives
+                // SwiftUI an explicit interactive style so it routes the
+                // tap through the button's gesture recognizer FIRST,
+                // ahead of the TextField's. The visual appearance is
+                // identical — `.borderless` on iOS draws no chrome — but
+                // the gesture priority is no longer ambiguous. Without
+                // this the TextField's text-selection gesture could win
+                // on iPad and consume the tap.
+                .buttonStyle(.borderless)
                 .accessibilityLabel("Clear search")
+                // Bring the clear button above the TextField in the Z
+                // order so iPad's gesture system always hits the button
+                // first when the user taps inside the 36×44 frame. On
+                // iPhone the HStack ordering is enough, but on iPad's
+                // wider canvas the TextField's intrinsic content size
+                // can occasionally overlap the trailing button by a few
+                // pixels (an iPad-specific SwiftUI layout quirk).
+                .zIndex(1)
                 .transition(.opacity)
             }
 
