@@ -1051,6 +1051,40 @@ final class OryAPIClient: APIClient {
         }
     }
 
+    /// 1:1 port of UIKit `MyBarApiService.fetchMyBarData`
+    /// (BarsysApp/Controllers/MyBar/MyBarApiService.swift L49-84).
+    /// GET `{recipesBaseURL}my/bar` returning
+    /// `{ "base": [String], "mixer": [String] }`. The SwiftUI port was
+    /// previously missing this call entirely — every screen entry
+    /// showed an empty list because the local cache started empty and
+    /// nothing ever populated it from the server, which is the QA
+    /// "My Bar not working" report.
+    func fetchMyBar() async throws -> MyBarResponse {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
+
+        let urlStr = Self.recipesBaseURL + "my/bar"
+        guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpShouldHandleCookies = false
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] fetchMyBar: HTTP \(status)")
+        guard (200..<300).contains(status) else {
+            throw AppError.network(Constants.ingredientUpdateError)
+        }
+        do {
+            return try JSONDecoder().decode(MyBarResponse.self, from: data)
+        } catch {
+            throw AppError.network(Constants.ingredientUpdateError)
+        }
+    }
+
     /// 1:1 port of UIKit `MyBarApiService.deleteBaseIngredient` /
     /// `deleteMixerIngredient` (BarsysApp/Controllers/MyBar/MyBarApiService.swift L144-222).
     /// DELETE `{recipesBaseURL}my/bar/{type}?n={name}` — `type` is `"base"`

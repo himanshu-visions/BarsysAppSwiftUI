@@ -104,6 +104,14 @@ protocol APIClient: AnyObject {
     /// ingredient name. Success: HTTP 200/201/204.
     func deleteMyBarIngredient(type: String, name: String) async throws
 
+    /// 1:1 port of UIKit `MyBarApiService.fetchMyBarData`.
+    /// GET `{recipesBaseURL}my/bar` returning `{base: [String], mixer: [String]}`.
+    /// The server returns arrays of ingredient NAMES (not full objects);
+    /// the SwiftUI port reconstructs `Ingredient` rows with hardcoded
+    /// `category.primary` ("base" / "mixer") and `secondary = name.lowercased()`,
+    /// matching UIKit `MyBarViewModel.processServerResponse` L178-210.
+    func fetchMyBar() async throws -> MyBarResponse
+
     /// 1:1 port of UIKit `BarBotApiService.getFullRecipeApi(fullRecipeId:)`.
     ///
     /// Endpoint: GET `{recipesBaseURL}my/recipes/{fullRecipeId}`
@@ -170,6 +178,15 @@ struct MyBarAddIngredient: Codable {
     let confidence: Double
     let perishable: Bool
     let substitutes: [String]
+}
+
+/// Response shape for `GET /my/bar` — 1:1 with UIKit
+/// `MyBarResponseModel` (BarsysApp/Controllers/MyBar/MyBarApiService.swift
+/// L20-23). Server returns arrays of ingredient NAMES (strings), so
+/// callers must reconstruct `Ingredient` rows with derived category.
+struct MyBarResponse: Codable {
+    let base: [String]?
+    let mixer: [String]?
 }
 
 /// Wrapper response — the API returns `[ { ingredients: [...] } ]`,
@@ -296,6 +313,11 @@ final class MockAPIClient: APIClient {
         try await Task.sleep(nanoseconds: 300_000_000)
     }
 
+    func fetchMyBar() async throws -> MyBarResponse {
+        try await Task.sleep(nanoseconds: 300_000_000)
+        return MyBarResponse(base: [], mixer: [])
+    }
+
     /// Mock returns a canned recipe after a ~1.5s delay. Does NOT throw
     /// `.wait` — that's reserved for real backend polling.
     func fetchFullRecipe(fullRecipeId: String) async throws -> Recipe {
@@ -332,6 +354,13 @@ protocol StorageService: AnyObject {
     func clearRecipesAndMixlists()
     func myBarIngredients() -> [Ingredient]
     func toggleMyBar(_ ingredient: Ingredient)
+    /// Replaces the local My Bar cache with the authoritative
+    /// server list. Called after a successful `GET /my/bar` so the
+    /// UI reflects what the backend says the user has, not a stale
+    /// local snapshot. 1:1 with UIKit
+    /// `MyBarViewModel.processServerResponse`: replaces the two
+    /// arrays wholesale rather than merging.
+    func replaceMyBar(_ ingredients: [Ingredient])
     func favorites() -> Set<RecipeID>
     func toggleFavorite(_ id: RecipeID)
     /// Explicitly set favourite state (idempotent). Prefer over
@@ -674,6 +703,9 @@ final class MockStorageService: StorageService {
         } else {
             ingredients[ingredient.id] = ingredient
         }
+    }
+    func replaceMyBar(_ list: [Ingredient]) {
+        ingredients = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
     }
     /// Clear all recipes and mixlists. Called before inserting fresh API data
     /// so sample data doesn't mix with real data.

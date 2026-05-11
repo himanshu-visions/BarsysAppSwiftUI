@@ -96,6 +96,16 @@ final class LocalCache: ObservableObject {
         }
     }
 
+    /// Replace the My Bar cache wholesale with the server-fetched list.
+    /// 1:1 with UIKit `MyBarViewModel.processServerResponse` which
+    /// assigns `liqourIngredientsArray = ...` and
+    /// `mixerIngredientsArray = ...` rather than merging — any local
+    /// row not present on the server is dropped, so re-fetching after
+    /// a successful delete keeps client + server in sync.
+    func replaceMyBar(_ ingredients: [Ingredient]) {
+        myBar = Dictionary(uniqueKeysWithValues: ingredients.map { ($0.id, $0) })
+    }
+
     /// Toggle a recipe as favourite.
     func toggleFavorite(_ id: RecipeID) {
         if favorites.contains(id) {
