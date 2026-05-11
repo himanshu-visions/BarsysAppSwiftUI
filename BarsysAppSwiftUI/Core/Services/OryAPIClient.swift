@@ -1024,6 +1024,63 @@ final class OryAPIClient: APIClient {
         ).first?.ingredients ?? []
     }
 
+    /// 1:1 port of UIKit `MyBarApiService.addIngredientToMyBar`
+    /// (BarsysApp/Controllers/MyBar/MyBarApiService.swift L86-142).
+    /// POST `{recipesBaseURL}my/bar` with body
+    /// `[{name, category, confidence, perishable, substitutes}]`.
+    /// Success: HTTP 2xx.
+    func addMyBarIngredients(_ items: [MyBarAddIngredient]) async throws {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
+
+        let urlStr = Self.recipesBaseURL + "my/bar"
+        guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpShouldHandleCookies = false
+        request.httpBody = try JSONEncoder().encode(items)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] addMyBarIngredients count=\(items.count): HTTP \(status)")
+        guard (200..<300).contains(status) else {
+            throw AppError.network(Constants.ingredientUpdateError)
+        }
+    }
+
+    /// 1:1 port of UIKit `MyBarApiService.deleteBaseIngredient` /
+    /// `deleteMixerIngredient` (BarsysApp/Controllers/MyBar/MyBarApiService.swift L144-222).
+    /// DELETE `{recipesBaseURL}my/bar/{type}?n={name}` — `type` is `"base"`
+    /// or `"mixer"`. Success: HTTP 200/201/204. The UIKit service URL-encodes
+    /// the name via `URLQueryItem`; URLComponents handles that for us here.
+    func deleteMyBarIngredient(type: String, name: String) async throws {
+        let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
+        guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
+
+        let baseStr = Self.recipesBaseURL + "my/bar/\(type)"
+        guard var components = URLComponents(string: baseStr) else {
+            throw AppError.network("Invalid URL")
+        }
+        components.queryItems = [URLQueryItem(name: "n", value: name)]
+        guard let url = components.url else { throw AppError.network("Invalid URL") }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpShouldHandleCookies = false
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] deleteMyBarIngredient type=\(type) name=\(name): HTTP \(status)")
+        guard status == 200 || status == 201 || status == 204 else {
+            throw AppError.network(Constants.ingredientUpdateError)
+        }
+    }
+
     /// Shared multipart upload — the two callers differ only in the
     /// response decoding model.
     private func uploadMultipart<T: Decodable>(image: Data, decode: T.Type) async throws -> T {

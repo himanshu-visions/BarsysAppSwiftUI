@@ -92,6 +92,18 @@ protocol APIClient: AnyObject {
     /// which adds `substitutes: [String]?`.
     func uploadIngredientImageForMyBar(_ image: Data) async throws -> [MyBarIngredientFromImage]
 
+    /// 1:1 port of UIKit `MyBarApiService.addIngredientToMyBar`.
+    /// POST `{recipesBaseURL}my/bar` with body
+    /// `[{name, category, confidence, perishable, substitutes}]`.
+    /// Success: HTTP 2xx. Mirrors UIKit `MyBarAddIngredientRequest`.
+    func addMyBarIngredients(_ items: [MyBarAddIngredient]) async throws
+
+    /// 1:1 port of UIKit `MyBarApiService.deleteBaseIngredient` /
+    /// `deleteMixerIngredient`. DELETE `{recipesBaseURL}my/bar/{type}?n={name}`
+    /// where `type` is `"base"` or `"mixer"` and `name` is the user-visible
+    /// ingredient name. Success: HTTP 200/201/204.
+    func deleteMyBarIngredient(type: String, name: String) async throws
+
     /// 1:1 port of UIKit `BarBotApiService.getFullRecipeApi(fullRecipeId:)`.
     ///
     /// Endpoint: GET `{recipesBaseURL}my/recipes/{fullRecipeId}`
@@ -145,6 +157,19 @@ struct MyBarIngredientFromImage: Codable {
     let category: IngredientCategory?
     let perishable: Bool?
     let substitutes: [String]?
+}
+
+/// Body row for `POST /my/bar` — 1:1 with UIKit
+/// `MyBarAddIngredientRequest` (BarsysApp/Controllers/MyBar/
+/// MyBarApiService.swift L88-119). UIKit posts an ARRAY of these
+/// (`[MyBarAddIngredientRequest]`) so the SwiftUI port accepts an
+/// array too via `APIClient.addMyBarIngredients`.
+struct MyBarAddIngredient: Codable {
+    let name: String
+    let category: IngredientCategory?
+    let confidence: Double
+    let perishable: Bool
+    let substitutes: [String]
 }
 
 /// Wrapper response — the API returns `[ { ingredients: [...] } ]`,
@@ -261,6 +286,14 @@ final class MockAPIClient: APIClient {
                 substitutes: ["Gin", "Rum"]
             )
         ]
+    }
+
+    func addMyBarIngredients(_ items: [MyBarAddIngredient]) async throws {
+        try await Task.sleep(nanoseconds: 300_000_000)
+    }
+
+    func deleteMyBarIngredient(type: String, name: String) async throws {
+        try await Task.sleep(nanoseconds: 300_000_000)
     }
 
     /// Mock returns a canned recipe after a ~1.5s delay. Does NOT throw

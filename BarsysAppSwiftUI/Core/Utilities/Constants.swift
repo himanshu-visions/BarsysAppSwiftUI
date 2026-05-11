@@ -240,6 +240,17 @@ enum Constants {
     static let ingredientUpdateError = "Unable to update ingredients. Please try again."
     static let requestCancelledMessage = "Your request has been cancelled."
     static let internetConnectionMessage = "Please check your internet connection."
+
+    /// Loading spinner copy while the DELETE `/my/bar/{type}?n={name}`
+    /// request is in flight. 1:1 with UIKit `Constants.deletingIngredient`
+    /// (BarsysApp Helpers/Constants/Constants.swift) — UIKit shows this
+    /// via `glassLoader` from `MyBarViewController` while awaiting the
+    /// API response.
+    static let deletingIngredientMessage = "Deleting ingredient..."
+    /// Loading spinner copy while the POST `/my/bar` request is in
+    /// flight (multi-ingredient add via "Add ingredient" sheet).
+    /// 1:1 with UIKit `Constants.savingIngredients`.
+    static let savingIngredientsMessage = "Saving ingredients..."
     static let otpSentSuccessfully = "An OTP has been sent to your phone number."
     static let accountDoesNotExist = "This account doesn't exist. Please sign up first."
     static let userAlreadyExists = "Account already exists."

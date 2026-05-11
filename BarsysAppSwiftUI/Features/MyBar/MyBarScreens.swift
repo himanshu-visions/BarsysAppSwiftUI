@@ -578,16 +578,56 @@ struct MyBarView: View {
     ///   - Call `onRightAlertPopup(selections)` which in MyBar becomes
     ///     `viewModel.addIngredientToServer(baseAndMixer:)` →
     ///     `appendConfirmedIngredients(cleanAction)`.
+    /// 1:1 with UIKit
+    /// `MultipleIngredientsPopUpViewController.rightButtonClicked` →
+    /// `MyBarViewController.onRightAlertPopup(_:)` →
+    /// `viewModel.addIngredientToServer(baseAndMixer:)` →
+    /// `MyBarApiService.addIngredientToMyBar` → POST `/my/bar`.
+    ///
+    /// Previously the SwiftUI port skipped the API and only mutated the
+    /// local cache, so any newly-added ingredient was lost on next
+    /// catalog pull / app relaunch. Now we mirror UIKit:
+    ///   1. POST every selected ingredient to `/my/bar` in a single
+    ///      request (UIKit posts an array body — we keep that)
+    ///   2. on 2xx, refresh the in-memory cache via `toggleMyBar`
+    ///   3. on failure surface the same UIKit error toast
     private func proceedWithSelectedIngredients() {
         let selections = detectedIngredients.filter { $0.isSelected && !$0.isExisting }
         guard !selections.isEmpty else { return }
         HapticService.success()
         showIngredientsFoundPopup = false
         detectedIngredients = []
-        // UIKit `appendConfirmedIngredients(models)` — append each to
-        // the correct array (base → liqour, else → mixer).
-        for detected in selections {
-            env.storage.toggleMyBar(detected.ingredient)
+        let payload: [MyBarAddIngredient] = selections.map { detected in
+            MyBarAddIngredient(
+                name: detected.ingredient.name,
+                category: detected.ingredient.category,
+                // UIKit uses the `confidence` returned from the
+                // detection API. We don't currently surface confidence
+                // through the `MyBarIngredientForReview` row, so
+                // default to the same 0.0 UIKit falls back to (the
+                // `?? 0.0` in `MyBarApiService` L111) — the backend
+                // tolerates 0 here.
+                confidence: 0.0,
+                perishable: detected.ingredient.perishable ?? false,
+                substitutes: detected.ingredient.substitutes ?? []
+            )
+        }
+        Task { @MainActor in
+            env.loading.show(Constants.savingIngredientsMessage)
+            defer { env.loading.hide() }
+            do {
+                try await env.api.addMyBarIngredients(payload)
+                for detected in selections {
+                    env.storage.toggleMyBar(detected.ingredient)
+                }
+            } catch {
+                env.alerts.show(
+                    title: "",
+                    message: error.localizedDescription.isEmpty
+                        ? Constants.ingredientUpdateError
+                        : error.localizedDescription
+                )
+            }
         }
     }
 
@@ -1054,11 +1094,62 @@ struct MyBarView: View {
         router.push(.exploreRecipes, in: .myBar)
     }
 
-    /// 1:1 with UIKit delete-confirmation `Yes` branch.
+    /// 1:1 with UIKit delete-confirmation `Yes` branch
+    /// (MyBarViewController+TableView.swift L48-70 → `viewModel.deleteMixerIngredient` /
+    /// `deleteLiquorIngredient` → `MyBarApiService.deleteBaseIngredient` /
+    /// `deleteMixerIngredient` → DELETE `/my/bar/{type}?n={name}`).
+    ///
+    /// UIKit dispatches base/mixer by category — the ViewModel's
+    /// `deleteMixerIngredient` / `deleteLiquorIngredient` look at the
+    /// originating array, and `MyBarApiService` hits `/my/bar/mixer` or
+    /// `/my/bar/base`. We do the same by reading `category.primary` —
+    /// "base" / anything else → mixer endpoint (matches UIKit's two
+    /// dedicated controllers calling two endpoints).
+    ///
+    /// Previously the SwiftUI port called only `env.storage.toggleMyBar`
+    /// which mutates the local cache — the API was never hit so the
+    /// deletion reverted on next pull-down refresh / app relaunch. QA
+    /// reported that the row "comes back" — same root cause as the
+    /// in-memory bug. We now mirror UIKit:
+    ///   1. fire the DELETE request first (with loading spinner +
+    ///      error toast on failure)
+    ///   2. update the local cache only after the server acks 2xx
     private func confirmDelete() {
         guard let ingredient = pendingDelete else { return }
-        env.storage.toggleMyBar(ingredient)
         pendingDelete = nil
+        let categoryType = myBarCategoryType(for: ingredient)
+        Task { @MainActor in
+            env.loading.show(Constants.deletingIngredientMessage)
+            defer { env.loading.hide() }
+            do {
+                try await env.api.deleteMyBarIngredient(type: categoryType,
+                                                        name: ingredient.name)
+                env.storage.toggleMyBar(ingredient)
+            } catch {
+                env.alerts.show(
+                    title: "",
+                    message: error.localizedDescription.isEmpty
+                        ? Constants.ingredientUpdateError
+                        : error.localizedDescription
+                )
+            }
+        }
+    }
+
+    /// UIKit dispatches DELETE on two endpoints (`/my/bar/base` vs
+    /// `/my/bar/mixer`) based on which ingredient array the row lives in
+    /// — `liqourIngredientsArray` (base) vs `mixerIngredientsArray`.
+    /// The SwiftUI port keeps a single `[Ingredient]` list, so we read
+    /// the row's category and bucket "base" / "spirit" / "liquor"
+    /// primaries into the base endpoint, everything else into mixer.
+    /// Matches the partition rule the SwiftUI port already uses when
+    /// rendering the two sections.
+    private func myBarCategoryType(for ingredient: Ingredient) -> String {
+        let primary = (ingredient.category?.primary ?? "").lowercased()
+        if primary == "base" || primary == "spirit" || primary == "liquor" {
+            return "base"
+        }
+        return "mixer"
     }
 }
 
