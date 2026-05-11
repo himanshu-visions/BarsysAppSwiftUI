@@ -166,18 +166,27 @@ enum Route: Hashable {
 // the router. The target screen (StationsMenuView / StationCleaningView)
 // reads it on appear and clears it when the flow completes.
 struct SetupStationsContext: Equatable {
-    let mixlist: Mixlist
-    /// Mixlist base + mixer ingredients (used to detect "missing" entries
-    /// when the user edits a mapped station).
+    /// `nil` when the setup flow originated on the BarBot screen —
+    /// BarBot setup feeds ingredients directly from an action card's
+    /// `station_configuration` payload and does NOT carry a mixlist
+    /// reference (1:1 with UIKit
+    /// `RecipeCraftingClass+BarBotSetup.swift` L8 where the
+    /// `mixlist` parameter is always `nil` for BarBot — see
+    /// `MainBarBotCell+Actions.swift` L330). Mixlist-detail setup
+    /// keeps populating this field as before.
+    let mixlist: Mixlist?
+    /// Mixlist or BarBot recipe base + mixer ingredients (used to
+    /// detect "missing" entries when the user edits a mapped
+    /// station).
     let baseAndMixerIngredients: [Ingredient]
-    /// Pre-mapped array — each station already has the mixlist ingredient
-    /// assigned (UIKit `finalArrayMapped`).
+    /// Pre-mapped array — each station already has the mixlist /
+    /// BarBot ingredient assigned (UIKit `finalArrayMapped`).
     let mappedSlots: [StationSlot]
     /// True when the mapping discovered stations that previously had
-    /// ingredients which need cleaning BEFORE the mixlist ones can be
+    /// ingredients which need cleaning BEFORE the new ones can be
     /// poured. Drives the "Ingredients may be spoiled…" alert.
     let requiresCleaning: Bool
-    /// Stations that need cleaning before the new mixlist ingredients
+    /// Stations that need cleaning before the new ingredients
     /// can be poured into them (UIKit `differentStationsToCleanArr`).
     let stationsToClean: [StationSlot]
 }

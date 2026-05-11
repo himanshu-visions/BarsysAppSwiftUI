@@ -145,11 +145,58 @@ struct BarBotMixlistElement: Codable, Identifiable, Hashable {
     var image: BarBotImageModel?
 }
 
+/// One slot inside the BarBot action card's `data.station_configuration`
+/// payload — 1:1 with UIKit `StationItemBarbot`
+/// (BarBotAIModelResponse.swift L132-146). The server returns up to six
+/// of these (A-F) when an AI recipe needs specific physical-station
+/// assignments. UIKit's `MainBarBotCell+Actions.swift` L289-316 reads
+/// these to seed `baseAndMixerIngredientsArr` before calling
+/// `setupStationsActionForBarBotRecipe(...)`. The SwiftUI port was
+/// missing this decoder entirely, so taps on "Setup Stations" arrived
+/// at the StationsMenu screen with NO ingredient context — the QA
+/// "Setup Stations command is not working" bug.
+struct BarBotStationItem: Codable, Hashable {
+    let ingredient: String?
+    let category_primary: String?
+    let secondary_category: String?
+    let perishable: Bool?
+}
+
+/// `data` wrapper on a BarBot action card — 1:1 with UIKit
+/// `DataClass` (BarBotAIModelResponse.swift L102-118). Only the
+/// `station_configuration` field is decoded here because that's the
+/// one the Setup Stations flow consumes; if other fields are needed
+/// later they can be added without breaking the existing schema.
+struct BarBotActionCardData: Codable, Hashable {
+    let station_configuration: BarBotStationConfiguration?
+}
+
+/// A-F station map — 1:1 with UIKit `StationConfiguration`
+/// (BarBotAIModelResponse.swift L121-128).
+struct BarBotStationConfiguration: Codable, Hashable {
+    let A: BarBotStationItem?
+    let B: BarBotStationItem?
+    let C: BarBotStationItem?
+    let D: BarBotStationItem?
+    let E: BarBotStationItem?
+    let F: BarBotStationItem?
+
+    /// Walk the six positional slots in UIKit order so callers can
+    /// reuse the same iteration shape
+    /// (`MainBarBotCell+Actions.swift` L292-316).
+    var orderedSlots: [BarBotStationItem?] { [A, B, C, D, E, F] }
+}
+
 struct BarBotActionCard: Codable, Identifiable, Hashable {
     var id: String { (type ?? "") + "|" + (label ?? "") + "|" + (value ?? "") }
     let type: String?      // "chat" | "device" | "craft" | "shop"
     let label: String?
     let value: String?     // also used as actionID for device subroutes
+    /// Server-provided station-mapping payload for the Setup Stations
+    /// action. Nil for cards that don't carry one (chat / craft / shop
+    /// types). 1:1 with UIKit `actionCardsArr[i].data` — see
+    /// `MainBarBotCell+Actions.swift` L289 (`actionCardsArr?[i].data?.station_configuration`).
+    let data: BarBotActionCardData?
 
     /// Ports filterActionCards — only keep the four supported types.
     static let allowedTypes: Set<String> = ["chat", "device", "craft", "shop"]
@@ -165,7 +212,7 @@ struct BarBotActionCard: Codable, Identifiable, Hashable {
     /// Decoding from BOTH keys keeps backward compatibility with any
     /// mock/sample payloads that used `value` directly.
     enum CodingKeys: String, CodingKey {
-        case type, label, value, action_id
+        case type, label, value, action_id, data
     }
 
     init(from decoder: Decoder) throws {
@@ -176,6 +223,7 @@ struct BarBotActionCard: Codable, Identifiable, Hashable {
         // for legacy fixtures.
         self.value = try c.decodeIfPresent(String.self, forKey: .action_id)
             ?? c.decodeIfPresent(String.self, forKey: .value)
+        self.data  = try c.decodeIfPresent(BarBotActionCardData.self, forKey: .data)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -185,12 +233,15 @@ struct BarBotActionCard: Codable, Identifiable, Hashable {
         // Emit as the canonical API key so downstream consumers can
         // round-trip the payload without the field disappearing.
         try c.encodeIfPresent(value, forKey: .action_id)
+        try c.encodeIfPresent(data,  forKey: .data)
     }
 
-    init(type: String?, label: String?, value: String?) {
+    init(type: String?, label: String?, value: String?,
+         data: BarBotActionCardData? = nil) {
         self.type = type
         self.label = label
         self.value = value
+        self.data = data
     }
 }
 
@@ -3549,11 +3600,11 @@ struct BarBotCraftView: View {
         case .pairDevice:       promptPairDevice()
         case .stationCleaning:  router.push(.stationCleaning, in: .barBot)
         case .setupBarsys360:   handleSetupBarsys360()
-        case .setupStations:    handleSetupStations()
+        case .setupStations:    handleSetupStations(card: card)
         case .switchTab(let t): router.selectTabAndPopToRoot(t)
         case .openShop(let url, let title): router.push(.web(url, title), in: .barBot)
         case .startCraft(let r): startCraft(r)
-        case .setupMixlistStations: handleSetupStations()
+        case .setupMixlistStations: handleSetupStations(card: card)
         case .openRecipe:       router.push(.recipeDetail(RecipeID()), in: .barBot)
         case .noop: break
         }
@@ -3581,20 +3632,48 @@ struct BarBotCraftView: View {
         router.push(.stationsMenu, in: .barBot)
     }
 
-    /// 1:1 port of UIKit `MainBarBotCell+Actions.swift` L275-287
-    /// device-validation cascade for `redirect:setup_stations`:
+    /// 1:1 port of UIKit `MainBarBotCell+Actions.swift` L275-332
+    /// for the `redirect:setup_stations` branch.
     ///
-    ///   1. Coaster OR Shaker connected (but no 360) →
-    ///      showDefaultAlert(message: pleaseConnectWithBarsys360Device)
-    ///      and return — Coaster/Shaker can't host stations.
-    ///   2. NO device connected at all → openPairYourDeviceWhenNotConnected.
-    ///   3. Otherwise (Barsys 360 connected) → push StationsMenu.
+    /// UIKit's flow:
+    ///   1. BLE guards:
+    ///       a. Coaster OR Shaker connected (but no 360) → alert
+    ///          `pleaseConnectWithBarsys360Device`, return.
+    ///       b. No device connected → `openPairYourDeviceWhenNotConnected`.
+    ///   2. Read `actionCardsArr[tag].data.station_configuration`
+    ///      and build six `Ingredient` rows (slots A-F) — quantity
+    ///      defaults to `minimumQtyDouble` (5 ml) per UIKit L293.
+    ///   3. Track `barBotStationSetUpBegin` (UIKit L326).
+    ///   4. Call
+    ///      `RecipeCraftingClass().setupStationsActionForBarBotRecipe(
+    ///        recipesMergedArray: …, mixlist: nil,
+    ///        baseAndMixerIngredientsArr: ingredientsInStations,
+    ///        garnishIngredientsArr: [],
+    ///        additionalIngredientsArr: [],
+    ///        presentation: .barBotScreen)`.
+    ///      That helper:
+    ///        • GETs the current 6 stations.
+    ///        • Auto-maps ingredients to physical stations.
+    ///        • Either pushes `StationCleaningFlowViewController`
+    ///          (if any station needs cleaning OR has expired
+    ///          perishables) OR pushes `StationsMenuViewController`
+    ///          with `stationsOrigin = .setupStationsFlow`.
     ///
-    /// The previous SwiftUI port routed straight to `router.push(.stationsMenu)`
-    /// regardless of BLE state, so a disconnected user landed on an
-    /// inert StationsMenu screen. Mirrors UIKit verbatim.
-    private func handleSetupStations() {
-        // Step 1 — Coaster/Shaker connected (but not 360) → wrong
+    /// The previous SwiftUI port DID the BLE guards but skipped
+    /// steps 2-4 entirely — it just called
+    /// `router.push(.stationsMenu, in: .barBot)` with no context.
+    /// The StationsMenuView then opened empty because
+    /// `router.setupStationsContext` was nil, so the user couldn't
+    /// actually set up the AI recipe's stations — the QA-reported
+    /// "Setup Stations command is not working" bug.
+    ///
+    /// We now mirror UIKit step-for-step, reusing the same
+    /// `RecipeCraftingSetup.autoMap` pipeline that Mixlist setup uses
+    /// (MixlistsScreens.swift L2472). Mixlist setup is untouched —
+    /// only the new BarBot entry point feeds in a `nil` mixlist value
+    /// (matching UIKit's `mixlist: nil` parameter for BarBot).
+    private func handleSetupStations(card: BarBotActionCard) {
+        // Step 1a — Coaster/Shaker connected (but not 360) → wrong
         // device class for stations. Surface the dedicated
         // "Please connect with the Barsys360 machine" alert.
         let coasterOrShakerOnly = (ble.isCoasterConnected() || ble.isBarsysShakerConnected())
@@ -3607,14 +3686,120 @@ struct BarBotCraftView: View {
             )
             return
         }
-        // Step 2 — nothing connected → standard pair-device prompt
+        // Step 1b — nothing connected → standard pair-device prompt
         // (mirrors UIKit `openPairYourDeviceWhenNotConnected`).
         guard ble.isAnyDeviceConnected else {
             promptPairDevice()
             return
         }
-        // Step 3 — Barsys 360 connected → proceed.
-        router.push(.stationsMenu, in: .barBot)
+
+        // Step 2 — extract ingredients from the card's
+        // `data.station_configuration` payload. Each non-nil slot
+        // becomes an `Ingredient` with the UIKit-default 5 ml seed
+        // quantity (`NumericConstants.minimumQtyDouble`) — UIKit uses
+        // the same value at `MainBarBotCell+Actions.swift` L293.
+        let baseAndMixerIngredients: [Ingredient]
+        if let config = card.data?.station_configuration {
+            baseAndMixerIngredients = config.orderedSlots.compactMap { slot in
+                guard let slot, let name = slot.ingredient, !name.isEmpty else {
+                    return nil
+                }
+                let category = IngredientCategory(
+                    primary: slot.category_primary,
+                    secondary: slot.secondary_category,
+                    flavourTags: []
+                )
+                return Ingredient(
+                    name: name,
+                    unit: Constants.mlText.lowercased(),
+                    notes: "",
+                    category: category,
+                    quantity: NumericConstants.minimumQtyDouble,
+                    perishable: slot.perishable ?? false,
+                    substitutes: [],
+                    ingredientOptional: false
+                )
+            }
+        } else {
+            // No station_configuration on the card — UIKit also
+            // tolerates this (the for-each `if config?.A != nil`
+            // checks each slot individually, so an entirely-missing
+            // config falls through to an empty `ingredientsInStations`
+            // array). Continue with empty so the StationsMenu lands in
+            // the standard "stations" UI; the user can still configure
+            // each slot by hand.
+            baseAndMixerIngredients = []
+        }
+
+        // Step 3 — track the BarBot setup-begin event. 1:1 with UIKit
+        // L326 (`TrackEventsClass().addBrazeCustomEventWithEventName`).
+        BrazeService.shared.track(
+            event: TrackEventName.barBotStationSetUpBegin.rawValue,
+            properties: [:]
+        )
+
+        // Step 4 — run the UIKit auto-map pipeline and route. Lives
+        // in an async Task because we GET the device's current 6
+        // stations before mapping.
+        Task { @MainActor in
+            // Pre-flight `ConnectionMonitor` check — UIKit
+            // `RecipeCraftingClass+BarBotSetup.swift` itself doesn't
+            // explicit-guard for offline, but the underlying
+            // `MixlistsUpdateClass().getStationsHere` call relies on
+            // network access; without this guard the user sees an
+            // indefinite spinner.
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(
+                    title: Constants.internetConnectionMessage,
+                    message: "",
+                    primary: Constants.okButtonTitle
+                )
+                return
+            }
+            let deviceName = ble.getConnectedDeviceName()
+            guard !deviceName.isEmpty else { return }
+
+            env.loading.show("Setting up…")
+            let currentStations = await StationsAPIService.loadStations(
+                deviceName: deviceName
+            )
+            env.loading.hide()
+
+            // Auto-map ingredients to stations. Same algorithm UIKit
+            // uses (RecipeCraftingClass+BarBotSetup.swift L24-90) and
+            // the same algorithm the SwiftUI Mixlist setup runs.
+            let result = RecipeCraftingSetup.autoMap(
+                mixlistIngredients: baseAndMixerIngredients,
+                currentStations: currentStations
+            )
+
+            // Perishable-expired detection — 1:1 with UIKit
+            // `getPerishableArrayFromIngredientsArr`.
+            let perishableExpired = currentStations.filter { $0.isPerishableExpired }
+            let needsCleaning = !result.stationsToClean.isEmpty
+                             || !perishableExpired.isEmpty
+
+            // Publish the setup context (mixlist is nil for BarBot —
+            // matches UIKit's `mixlist: nil` param at the BarBot call
+            // site `MainBarBotCell+Actions.swift` L330).
+            router.setupStationsContext = SetupStationsContext(
+                mixlist: nil,
+                baseAndMixerIngredients: baseAndMixerIngredients,
+                mappedSlots: result.mappedSlots,
+                requiresCleaning: needsCleaning,
+                stationsToClean: result.stationsToClean + perishableExpired
+            )
+
+            // Step 4b — route based on whether cleaning is required.
+            // 1:1 with UIKit
+            // `RecipeCraftingClass+BarBotSetup.swift` L103-128.
+            HapticService.light()
+            if needsCleaning {
+                router.push(.stationCleaning, in: .barBot)
+            } else {
+                router.push(.stationsMenu, in: .barBot)
+            }
+        }
     }
 
     private func startCraft(_ recipe: BarBotRecipeElement) {

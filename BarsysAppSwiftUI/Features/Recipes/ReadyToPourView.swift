@@ -278,8 +278,19 @@ struct ReadyToPourView: View {
             // subsequent Control-Center entries don't see stale
             // setup data.
             if let ctx = router.setupStationsContext {
-                selectedMixlist = ctx.mixlist
-                selectedTab = .mixlists
+                // Mixlist-detail setup → preselect the mixlist tab so
+                // the user lands back on the same mixlist they were
+                // setting up. BarBot setup feeds a `nil` mixlist
+                // (1:1 with UIKit `setupStationsActionForBarBotRecipe`
+                // which calls `setupStationsActionForBarBotRecipe(…,
+                // mixlist: nil, …)`) — in that branch we still clear
+                // the context but leave the tab selection alone so
+                // the user stays on the recipe list flow the BarBot
+                // craft pipe expects.
+                if let mixlist = ctx.mixlist {
+                    selectedMixlist = mixlist
+                    selectedTab = .mixlists
+                }
                 router.setupStationsContext = nil
             }
             // 1:1 port of UIKit
