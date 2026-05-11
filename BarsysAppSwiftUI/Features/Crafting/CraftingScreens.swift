@@ -2275,10 +2275,29 @@ struct DrinkCompleteView: View {
                                 } else {
                                     env.analytics.track(TrackEventName.craftCustomise.rawValue)
                                 }
-                                router.popToRoot()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    router.push(.recipeDetail(recipeID))
-                                }
+                                // QA fix (testers' bug: "Recipe details
+                                // screen is not open up if user tapped on
+                                // customize button"): delegate to the new
+                                // `AppRouter.customizeFromDrinkComplete`
+                                // helper which is a 1:1 port of UIKit
+                                // `DrinkCompleteViewController.didPressCustomizeButton`.
+                                // The helper inspects the route history
+                                // mirror, finds the `.crafting` entry,
+                                // looks at its predecessor, and either:
+                                //   • pops back to RecipeDetail / Favorites
+                                //     / MakeMyOwn (the three predecessors
+                                //     UIKit recognises), OR
+                                //   • pops Crafting + DrinkComplete off
+                                //     and pushes a fresh `.recipeDetail`
+                                //     when the predecessor is none of
+                                //     those.
+                                // The previous `popToRoot()` + delayed
+                                // `push(.recipeDetail)` raced SwiftUI's
+                                // NavigationPath animation and frequently
+                                // left the user on the tab root with no
+                                // recipe-detail push landing — the exact
+                                // QA-reported symptom.
+                                router.customizeFromDrinkComplete(recipeID: recipeID)
                             } label: {
                                 Text("Customize")
                                     .font(.system(size: 16, weight: .medium))

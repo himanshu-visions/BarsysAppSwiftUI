@@ -333,6 +333,23 @@ final class AppRouter: ObservableObject {
     @Published var myBarPath = NavigationPath()
     @Published var homePath = NavigationPath()
 
+    // QA fix (DrinkComplete Customize button — "Recipe details screen
+    // is not open up if user tapped on customize button"): SwiftUI's
+    // `NavigationPath` doesn't expose its contents, so to port UIKit
+    // `DrinkCompleteViewController.didPressCustomizeButton`'s
+    // predecessor-of-Crafting introspection we maintain a parallel
+    // mirror array of the typed `Route` values per tab. Every `push`
+    // / `popTop` / `popToRoot` updates BOTH the NavigationPath AND
+    // the matching mirror so the two stay in lock-step. Consumers
+    // never read the mirror to drive rendering — it exists purely
+    // so navigation helpers like `customizeFromDrinkComplete` can
+    // ask "what `Route` sat before Crafting?". `private(set)` keeps
+    // the writes funnelled through the helpers below.
+    @Published private(set) var barBotPathHistory: [Route] = []
+    @Published private(set) var explorePathHistory: [Route] = []
+    @Published private(set) var myBarPathHistory: [Route] = []
+    @Published private(set) var homePathHistory: [Route] = []
+
     /// Transient — populated by `MixlistDetailView.setupStations()`
     /// (or any future Recipe-based setup flow) right before pushing
     /// `.stationsMenu` / `.stationCleaning`. Consumers read the context
@@ -476,10 +493,18 @@ final class AppRouter: ObservableObject {
         Self.dismissKeyboard()
         let target = tab ?? selectedTab
         switch target {
-        case .barBot:              barBotPath.append(route)
-        case .explore:             explorePath.append(route)
-        case .myBar:               myBarPath.append(route)
-        case .homeOrControlCenter: homePath.append(route)
+        case .barBot:
+            barBotPath.append(route)
+            barBotPathHistory.append(route)
+        case .explore:
+            explorePath.append(route)
+            explorePathHistory.append(route)
+        case .myBar:
+            myBarPath.append(route)
+            myBarPathHistory.append(route)
+        case .homeOrControlCenter:
+            homePath.append(route)
+            homePathHistory.append(route)
         }
     }
 
@@ -545,10 +570,18 @@ final class AppRouter: ObservableObject {
         Self.dismissKeyboard()
         let target = tab ?? selectedTab
         switch target {
-        case .barBot:              barBotPath.removeLast(barBotPath.count)
-        case .explore:             explorePath.removeLast(explorePath.count)
-        case .myBar:               myBarPath.removeLast(myBarPath.count)
-        case .homeOrControlCenter: homePath.removeLast(homePath.count)
+        case .barBot:
+            barBotPath.removeLast(barBotPath.count)
+            barBotPathHistory.removeAll()
+        case .explore:
+            explorePath.removeLast(explorePath.count)
+            explorePathHistory.removeAll()
+        case .myBar:
+            myBarPath.removeLast(myBarPath.count)
+            myBarPathHistory.removeAll()
+        case .homeOrControlCenter:
+            homePath.removeLast(homePath.count)
+            homePathHistory.removeAll()
         }
     }
 
@@ -562,13 +595,25 @@ final class AppRouter: ObservableObject {
         let target = tab ?? selectedTab
         switch target {
         case .barBot:
-            if !barBotPath.isEmpty { barBotPath.removeLast() }
+            if !barBotPath.isEmpty {
+                barBotPath.removeLast()
+                if !barBotPathHistory.isEmpty { barBotPathHistory.removeLast() }
+            }
         case .explore:
-            if !explorePath.isEmpty { explorePath.removeLast() }
+            if !explorePath.isEmpty {
+                explorePath.removeLast()
+                if !explorePathHistory.isEmpty { explorePathHistory.removeLast() }
+            }
         case .myBar:
-            if !myBarPath.isEmpty { myBarPath.removeLast() }
+            if !myBarPath.isEmpty {
+                myBarPath.removeLast()
+                if !myBarPathHistory.isEmpty { myBarPathHistory.removeLast() }
+            }
         case .homeOrControlCenter:
-            if !homePath.isEmpty { homePath.removeLast() }
+            if !homePath.isEmpty {
+                homePath.removeLast()
+                if !homePathHistory.isEmpty { homePathHistory.removeLast() }
+            }
         }
     }
 
@@ -576,5 +621,151 @@ final class AppRouter: ObservableObject {
     func selectTabAndPopToRoot(_ tab: AppTab) {
         popToRoot(in: tab)
         selectedTab = tab
+    }
+
+    // MARK: - Customize-from-DrinkComplete navigation
+    //
+    // 1:1 port of UIKit
+    // `DrinkCompleteViewController.didPressCustomizeButton`
+    // (DrinkCompleteViewController.swift L294-322). UIKit's logic:
+    //
+    //   1. Find the index of `CraftingViewController` in the
+    //      navigation stack.
+    //   2. Look at the controller IMMEDIATELY BEFORE Crafting:
+    //      • RecipePageViewController              → popToViewController
+    //      • FavouritesRecipesAndDrinksViewController → popToViewController
+    //      • MakeMyOwnViewController               → popToViewController
+    //        (and set `makeMyOwnOrigin = .customize`)
+    //      • Anything else                         → push a NEW
+    //        RecipePageViewController with the recipe and
+    //        `currentContext = .customize`
+    //
+    // SwiftUI port uses the parallel `*PathHistory` mirrors above to
+    // introspect the route stack. The pop sequence mutates BOTH the
+    // NavigationPath and the mirror so they stay in lock-step. After
+    // the pop, the user lands on the predecessor of `.crafting`,
+    // EXACTLY where they were before they entered the craft flow —
+    // mirroring UIKit's `popToViewController` semantics.
+    //
+    // QA bug: the previous SwiftUI implementation called
+    // `popToRoot()` followed by a 0.3s-delayed `push(.recipeDetail)`.
+    // That cleared the entire stack and tried to recover via a
+    // timed push — which raced SwiftUI's NavigationPath internal
+    // animations and frequently left the user on the tab root WITH
+    // no recipe-detail push landed. The new helper does the pops
+    // synchronously (no delay) and only pushes a fresh
+    // `.recipeDetail` when the predecessor isn't one of the three
+    // expected screens.
+    func customizeFromDrinkComplete(recipeID: RecipeID, in tab: AppTab? = nil) {
+        Self.dismissKeyboard()
+        let target = tab ?? selectedTab
+        let history = pathHistory(for: target)
+
+        // Locate the most-recent `.crafting(...)` entry in the
+        // current tab's route history (the DrinkComplete push sits
+        // ABOVE it — we want the one underneath).
+        let craftingIndex = history.lastIndex { route in
+            if case .crafting = route { return true }
+            return false
+        }
+
+        guard let craftingIdx = craftingIndex else {
+            // Edge case: no .crafting in history (DrinkComplete
+            // reached via deep-link / restoration without going
+            // through Crafting). Fall back to pushing recipeDetail
+            // on top so the user lands somewhere useful.
+            push(.recipeDetail(recipeID), in: target)
+            return
+        }
+
+        // Compute the predecessor of `.crafting` — the route the
+        // user was on BEFORE entering the craft flow. If
+        // `.crafting` is the very first entry (idx == 0), there's
+        // no predecessor in the stack and we treat it as the
+        // "push new recipeDetail" branch.
+        let predecessor: Route? = craftingIdx > 0
+            ? history[craftingIdx - 1]
+            : nil
+
+        // Decide between "pop back to predecessor" and "push fresh
+        // recipeDetail" using the SAME predecessor switch UIKit
+        // uses in `DrinkCompleteViewController.didPressCustomizeButton`:
+        //   • RecipePageViewController              → pop back
+        //   • FavouritesRecipesAndDrinksViewController → pop back
+        //   • MakeMyOwnViewController               → pop back
+        //   • anything else                         → push fresh
+        //                                            `.recipeDetail`
+        //
+        // Uses `guard let` + non-optional pattern matching to keep
+        // the Swift pattern-matcher happy across compiler versions
+        // (some older / strict Swift modes refuse to coerce a
+        // non-optional enum case pattern against `Optional<Route>`).
+        let shouldPopBack: Bool = {
+            guard let pred = predecessor else { return false }
+            switch pred {
+            case .recipeDetail, .favorites, .makeMyOwn:
+                return true
+            default:
+                return false
+            }
+        }()
+
+        if shouldPopBack {
+            // Pop every route at or above `.crafting` (inclusive),
+            // landing the user on the predecessor route. The
+            // number of pops needed is `(history.count - craftingIdx)`
+            // — everything from `.crafting` upward.
+            let popsNeeded = history.count - craftingIdx
+            popN(popsNeeded, in: target)
+        } else {
+            // Predecessor isn't one of the three UIKit-mirrored
+            // screens. Pop the Crafting + DrinkComplete pair off
+            // (so the stack is back to the original entry point)
+            // and then push a fresh `.recipeDetail` — matches
+            // UIKit's `pushViewController(recipePageVc)` branch.
+            let popsNeeded = history.count - craftingIdx
+            popN(popsNeeded, in: target)
+            push(.recipeDetail(recipeID), in: target)
+        }
+    }
+
+    /// Pops N entries off the active tab's navigation stack.
+    /// Mirrors UIKit `popToViewController` by removing multiple
+    /// view controllers at once.
+    private func popN(_ count: Int, in tab: AppTab) {
+        guard count > 0 else { return }
+        switch tab {
+        case .barBot:
+            let n = min(count, barBotPath.count)
+            barBotPath.removeLast(n)
+            let m = min(count, barBotPathHistory.count)
+            barBotPathHistory.removeLast(m)
+        case .explore:
+            let n = min(count, explorePath.count)
+            explorePath.removeLast(n)
+            let m = min(count, explorePathHistory.count)
+            explorePathHistory.removeLast(m)
+        case .myBar:
+            let n = min(count, myBarPath.count)
+            myBarPath.removeLast(n)
+            let m = min(count, myBarPathHistory.count)
+            myBarPathHistory.removeLast(m)
+        case .homeOrControlCenter:
+            let n = min(count, homePath.count)
+            homePath.removeLast(n)
+            let m = min(count, homePathHistory.count)
+            homePathHistory.removeLast(m)
+        }
+    }
+
+    /// Returns the route-history mirror for the given tab. Used by
+    /// navigation introspection helpers above.
+    private func pathHistory(for tab: AppTab) -> [Route] {
+        switch tab {
+        case .barBot:              return barBotPathHistory
+        case .explore:             return explorePathHistory
+        case .myBar:               return myBarPathHistory
+        case .homeOrControlCenter: return homePathHistory
+        }
     }
 }
