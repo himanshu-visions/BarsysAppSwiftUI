@@ -254,6 +254,12 @@ enum Constants {
     /// fires `showGlassLoader(message: "Adding Ingredients")` (UIKit
     /// MyBarViewController.swift L360). Exact title-case preserved.
     static let savingIngredientsMessage = "Adding Ingredients"
+    /// Loading spinner copy while the GET `/my/bar` request is in
+    /// flight on screen entry. 1:1 with UIKit
+    /// `MyBarViewModel.fetchMyBarDataFromServer` which fires
+    /// `onShowLoader?("Fetching Your Ingredients")` (UIKit
+    /// MyBarViewModel.swift L93). Exact title-case preserved.
+    static let fetchingMyBarIngredientsMessage = "Fetching Your Ingredients"
     static let otpSentSuccessfully = "An OTP has been sent to your phone number."
     static let accountDoesNotExist = "This account doesn't exist. Please sign up first."
     static let userAlreadyExists = "Account already exists."

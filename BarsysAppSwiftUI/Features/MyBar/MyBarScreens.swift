@@ -260,6 +260,19 @@ struct MyBarView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .chooseOptionsStyleNavBar()
+        // 1:1 with UIKit `MyBarViewController.viewDidLoad` L98:
+        //   `viewModel.fetchMyBarDataFromServer(controller: self)`
+        // The SwiftUI port previously skipped this entirely — the local
+        // cache started empty and never reconciled with the server, so
+        // the screen always rendered as if My Bar was empty. QA flagged
+        // this as "My Bar functionality not working" because every
+        // visit looked identical regardless of what the user had added
+        // on a previous session. Wiring the fetch into `.task` (runs
+        // once per appearance, cancellable, MainActor) mirrors UIKit's
+        // viewDidLoad-only fetch — re-entering the screen via the
+        // navigation stack also refetches so a server-side change made
+        // elsewhere shows up immediately.
+        .task { await loadMyBarFromServer() }
         // Delete confirmation — 1:1 with UIKit alert (Yes destructive, No cancel).
         .barsysPopup($deletePopup, onPrimary: { confirmDelete() },
                                    onSecondary: { pendingDelete = nil })
@@ -624,13 +637,19 @@ struct MyBarView: View {
                 return
             }
             env.loading.show(Constants.savingIngredientsMessage)
-            defer { env.loading.hide() }
             do {
                 try await env.api.addMyBarIngredients(payload)
-                for detected in selections {
-                    env.storage.toggleMyBar(detected.ingredient)
-                }
+                // UIKit MyBarViewModel L116-122: on success, the VM
+                // calls `processServerResponse(...)` only when the
+                // FETCH endpoint returns updated data. The POST path
+                // itself doesn't return the new list, so UIKit calls
+                // `fetchMyBarDataFromServer` again to repopulate.
+                // We mirror that with a `loadMyBarFromServer()` call
+                // — single source of truth, no local merge needed.
+                env.loading.hide()
+                await loadMyBarFromServer()
             } catch {
+                env.loading.hide()
                 env.alerts.show(
                     title: "",
                     message: error.localizedDescription.isEmpty
@@ -1140,12 +1159,20 @@ struct MyBarView: View {
                 return
             }
             env.loading.show(Constants.deletingIngredientMessage)
-            defer { env.loading.hide() }
             do {
                 try await env.api.deleteMyBarIngredient(type: categoryType,
                                                         name: ingredient.name)
-                env.storage.toggleMyBar(ingredient)
+                // UIKit MyBarViewModel L138-141: on success, the VM
+                // removes the row from the local array and fires
+                // `onDataReloaded?()` which reloads the table. We
+                // re-fetch instead — the server is authoritative, and
+                // a refetch handles the edge case where the same
+                // ingredient sits in both base and mixer lists (server
+                // may keep them, the local diff wouldn't).
+                env.loading.hide()
+                await loadMyBarFromServer()
             } catch {
+                env.loading.hide()
                 env.alerts.show(
                     title: "",
                     message: error.localizedDescription.isEmpty
@@ -1170,6 +1197,66 @@ struct MyBarView: View {
             return "base"
         }
         return "mixer"
+    }
+
+    /// 1:1 with UIKit
+    /// `MyBarViewModel.fetchMyBarDataFromServer(controller:)` +
+    /// `processServerResponse(data:)` (MyBarViewModel.swift L86-210).
+    /// Sequence:
+    ///   1. Show glass loader "Fetching Your Ingredients" (UIKit L93)
+    ///   2. Guard offline → `internetConnectionMessage` toast
+    ///   3. GET /my/bar
+    ///   4. Convert {base:[String], mixer:[String]} → [Ingredient]
+    ///      with category.primary = "base"|"mixer" + secondary = name.lowercased()
+    ///      + perishable = false (UIKit hardcodes these in
+    ///      `processServerResponse` L180-209)
+    ///   5. `replaceMyBar(list)` wholesale — UIKit reassigns the
+    ///      arrays rather than merging so any row deleted server-side
+    ///      drops out locally too.
+    ///   6. Hide loader.
+    @MainActor
+    private func loadMyBarFromServer() async {
+        guard await ConnectionMonitor.shared.isConnected else {
+            env.alerts.show(message: Constants.internetConnectionMessage)
+            return
+        }
+        env.loading.show(Constants.fetchingMyBarIngredientsMessage)
+        defer { env.loading.hide() }
+        do {
+            let response = try await env.api.fetchMyBar()
+            let baseRows: [Ingredient] = (response.base ?? []).map { name in
+                Ingredient(
+                    name: name,
+                    category: IngredientCategory(
+                        primary: "base",
+                        secondary: name.lowercased(),
+                        flavourTags: nil
+                    ),
+                    quantity: 0,
+                    perishable: false
+                )
+            }
+            let mixerRows: [Ingredient] = (response.mixer ?? []).map { name in
+                Ingredient(
+                    name: name,
+                    category: IngredientCategory(
+                        primary: "mixer",
+                        secondary: name.lowercased(),
+                        flavourTags: nil
+                    ),
+                    quantity: 0,
+                    perishable: false
+                )
+            }
+            env.storage.replaceMyBar(baseRows + mixerRows)
+        } catch {
+            env.alerts.show(
+                title: "",
+                message: error.localizedDescription.isEmpty
+                    ? Constants.ingredientUpdateError
+                    : error.localizedDescription
+            )
+        }
     }
 }
 
