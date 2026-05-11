@@ -483,6 +483,19 @@ struct LoginView: View {
                             .padding(.horizontal, 30)
                             .padding(.bottom, iPadValue(50, 60))
                     }
+                    // `.frame(maxWidth: .infinity)` makes the VStack span the
+                    // full ScrollView width so its children inherit the same
+                    // wide horizontal container and align to the centre via
+                    // the VStack's default `.center` alignment. Without it,
+                    // the VStack collapses to its widest child's intrinsic
+                    // width — on iPad Mini that meant the splash logo (440pt
+                    // wide) anchored the VStack at ~440pt and the entire
+                    // column shifted left-of-centre on the 1133pt landscape
+                    // canvas (QA: "all textfields buttons and ui is not
+                    // coming in center"). Mirrors the same modifier
+                    // SignUpView uses at L635 which already renders
+                    // correctly on iPad Mini.
+                    .frame(maxWidth: .infinity)
                     // Make the VStack fill the screen height so the Spacer
                     // actually pushes the login card down — otherwise the
                     // ScrollView would collapse the Spacer to zero.
@@ -570,7 +583,26 @@ struct LoginView: View {
                     // card instead — see `body`'s VStack.
                     Color("primaryBackgroundColor")
                 } else {
-                    if UIDevice.current.userInterfaceIdiom == .pad {
+                    // QA fix (iPad Mini landscape): the source asset is a
+                    // portrait iPhone image (375×812). On iPad Mini in
+                    // landscape (1133×744) `.aspectRatio(.fill)` blows the
+                    // image height up to ~2463pt to match canvas width, then
+                    // crops top/bottom — the visible middle slice reads as
+                    // a stretched / distorted band to QA. Detect iPad Mini
+                    // (short edge ≤ 768pt) AND landscape, and use
+                    // `.scaledToFit()` with a brand-tinted background so the
+                    // full cocktail artwork stays visible centered, while
+                    // the canvas edges fill with the splash background color.
+                    // Other iPads / iPhones keep their existing rendering
+                    // bit-identically.
+                    if isIPadMiniLandscape(proxy: proxy) {
+                        ZStack {
+                            Color("primaryBackgroundColor")
+                            Image("loginBackgroundImage")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                        }
+                    } else if UIDevice.current.userInterfaceIdiom == .pad {
                         // iPad: preserve aspect ratio so the artwork is not
                         // stretched on the wider/squarer iPad canvas. The
                         // outer `.clipped()` crops any overflow.
@@ -588,6 +620,22 @@ struct LoginView: View {
         }
         .ignoresSafeArea(.all)
         .allowsHitTesting(false)
+    }
+
+    /// Detects iPad Mini in landscape orientation. iPad Mini 6 has a
+    /// physical short edge of 744pt — every other current iPad family has
+    /// a short edge of 768pt (iPad 9th gen) or larger (810pt+ on iPad
+    /// 10th gen / iPad Air / iPad Pro). Using a `< 768pt` threshold
+    /// pinpoints iPad Mini specifically and leaves every other iPad —
+    /// including iPad 9th gen — on its existing layout untouched.
+    /// Landscape is detected via `proxy.size.width > proxy.size.height`
+    /// so the check reacts to runtime orientation changes (Split View,
+    /// rotation, multitasking).
+    private func isIPadMiniLandscape(proxy: GeometryProxy) -> Bool {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let shortEdge = min(proxy.size.width, proxy.size.height)
+        let isLandscape = proxy.size.width > proxy.size.height
+        return shortEdge < 768 && isLandscape
     }
 
     // MARK: - Login card (mirrors FTr-d8-3bm in storyboard)

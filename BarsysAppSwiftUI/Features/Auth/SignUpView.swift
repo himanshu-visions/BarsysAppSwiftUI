@@ -502,7 +502,22 @@ struct SignUpView: View {
                         // still renders the original image.
                         Color("primaryBackgroundColor")
                     } else {
-                        if UIDevice.current.userInterfaceIdiom == .pad {
+                        // QA fix (iPad Mini landscape): same fix as LoginView
+                        // backgroundLayer — `signUpBg` is a portrait iPhone
+                        // asset (375×819) that stretches/crops badly on
+                        // iPad Mini landscape (1133×744) when `.aspectRatio(.fill)`
+                        // is used. Detect iPad Mini in landscape and switch
+                        // to `.fit` with a brand-tinted backdrop so the
+                        // artwork stays centered and undistorted. Every
+                        // other device keeps its existing rendering.
+                        if isIPadMiniLandscape(proxy: proxy) {
+                            ZStack {
+                                Color("primaryBackgroundColor")
+                                Image("signUpBg")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                            }
+                        } else if UIDevice.current.userInterfaceIdiom == .pad {
                             // iPad: preserve aspect ratio so the artwork is
                             // not stretched on the wider/squarer iPad
                             // canvas. The outer `.clipped()` crops overflow.
@@ -691,6 +706,22 @@ struct SignUpView: View {
 
     private var defaultDob: Date {
         Calendar.current.date(byAdding: .year, value: -25, to: Date()) ?? Date()
+    }
+
+    /// Detects iPad Mini in landscape orientation. iPad Mini 6 has a
+    /// physical short edge of 744pt — every other current iPad family has
+    /// a short edge of 768pt (iPad 9th gen) or larger (810pt+ on iPad
+    /// 10th gen / iPad Air / iPad Pro). Using a `< 768pt` threshold
+    /// pinpoints iPad Mini specifically and leaves every other iPad —
+    /// including iPad 9th gen — on its existing layout untouched.
+    /// Landscape is detected via `proxy.size.width > proxy.size.height`
+    /// so the check reacts to runtime orientation changes (Split View,
+    /// rotation, multitasking).
+    private func isIPadMiniLandscape(proxy: GeometryProxy) -> Bool {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let shortEdge = min(proxy.size.width, proxy.size.height)
+        let isLandscape = proxy.size.width > proxy.size.height
+        return shortEdge < 768 && isLandscape
     }
 
     // MARK: - Form card
