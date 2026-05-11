@@ -2026,13 +2026,6 @@ struct ChatMessageRow: View {
     /// they read on the dark backdrop. Light mode is untouched.
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Provides the signed-in user's avatar URL so the question bubble
-    /// can render the user's profile photo on the right of the bubble
-    /// (mirroring the side-menu avatar). Falls back to the static
-    /// `senderImageView` asset when no URL is saved or the remote
-    /// image fails to load.
-    @EnvironmentObject private var userStore: UserProfileStore
-
     /// iPad-only font knobs for the chat row. iPhone keeps every
     /// UIKit-parity caption1 (12pt) / callout (14pt) / 12pt size
     /// bit-identically — every value below collapses to its previous
@@ -2075,7 +2068,19 @@ struct ChatMessageRow: View {
     //   • corner mask: top-left, top-right, bottom-left rounded (bottom-right sharp)
     //     via `layer.maskedCorners = [.layerMinXMinY, .layerMaxXMinY, .layerMinXMaxY]`.
     //   • Optional 150×150 image above the text (ports `imgQuestion`).
-    //   • Sender avatar (`senderImageView`) sits beside the bubble.
+    //   • Static sender avatar (`senderImageView`) sits beside the bubble.
+    //
+    // QA fix (sender avatar): the avatar to the right of the question
+    // bubble renders the STATIC `senderImageView` asset shipped in
+    // Assets.xcassets — the SAME placeholder image UIKit's
+    // `MainBarBotCell.xib` shows (xib element `eyu-xb-YDE`,
+    // `image="senderImageView"`, 32×32). It is NOT the signed-in
+    // user's actual profile photo — an earlier port was loading
+    // `UserProfileStore.profileImageURL` into a circular image here,
+    // which surfaced as "the user's profile pic showing in BarBot"
+    // QA reported. Reverting to the static asset matches the older
+    // UIKit code exactly: every device, every user, the same
+    // placeholder glyph.
     @ViewBuilder private var question: some View {
         if !msg.questionText.isEmpty || msg.questionImage != nil {
             HStack(alignment: .bottom, spacing: 8) {
@@ -2118,49 +2123,15 @@ struct ChatMessageRow: View {
         }
     }
 
-    /// User-profile avatar shown to the right of the question bubble.
-    /// Mirrors `SideMenuView.profileAvatar`: when the user has saved a
-    /// profile image (URL stored in `UserProfileStore.profileImageURL`,
-    /// same key UIKit's `MyProfileApiService.getProfile()` writes via
-    /// `UserDefaultsClass.getProfileImage()`), render the user's photo
-    /// in a 32pt circle. Falls back to the static `senderImageView`
-    /// asset when no URL is saved or the remote image fails to load.
-    ///
-    /// Uses `CachedAsyncImage` (the same loader Explore / Mixlists /
-    /// Recipes use for cell thumbnails) so the avatar is served
-    /// instantly from the on-disk cache after the first load — stock
-    /// `AsyncImage` was repeatedly showing the placeholder because it
-    /// has no persistent cache and re-issued a network request on
-    /// every render, which races against the chat row recomposing
-    /// before the response lands. `String.getImageUrl()` handles both
-    /// proxy URLs (`optimizeImage?fileUrl=...`) and plain S3 URLs by
-    /// percent-encoding correctly so the avatar URL never silently
-    /// fails parsing.
-    @ViewBuilder
+    /// Static sender avatar — 1:1 with UIKit
+    /// `MainBarBotCell.xib` element `eyu-xb-YDE`
+    /// (`image="senderImageView"`, frame 32×32, `contentMode="scaleAspectFit"`).
+    /// Identical for every signed-in user; renders the same
+    /// `senderImageView` asset on every device (iPhone, iPad — every
+    /// size class, every orientation, light + dark mode). NOT the
+    /// user's profile photo — that's a different feature lived only
+    /// on the side menu / MyProfile screens.
     private var senderAvatar: some View {
-        let raw = userStore.profileImageURL
-        if !raw.isEmpty, let url = raw.getImageUrl() ?? URL(string: raw) {
-            CachedAsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 32, height: 32)
-                        .clipShape(Circle())
-                case .empty, .failure:
-                    fallbackSenderAvatar
-                @unknown default:
-                    fallbackSenderAvatar
-                }
-            }
-            .frame(width: 32, height: 32)
-        } else {
-            fallbackSenderAvatar
-        }
-    }
-
-    private var fallbackSenderAvatar: some View {
         Image("senderImageView")
             .resizable()
             .aspectRatio(contentMode: .fit)
