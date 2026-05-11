@@ -33,9 +33,42 @@ struct PairDeviceView: View {
     @State private var showBluetoothAlert = false
     @State private var bluetoothPopup: BarsysPopup? = nil
 
+    /// QA fix (iPad landscape Pair Your Device horizontal layout):
+    /// reactive token bumped on every rotation via
+    /// `UIDevice.orientationDidChangeNotification`. iPad's
+    /// `verticalSizeClass` / `horizontalSizeClass` are both
+    /// `.regular` in portrait AND landscape full-screen, so there's
+    /// no environment value that flips on rotation. Bumping a
+    /// `@State` counter forces body re-evaluation; the actual
+    /// orientation check then reads `UIScreen.main.bounds`. Same
+    /// pattern as `HomeView.orientationBumpTick`.
+    @State private var orientationBumpTick: Int = 0
+
     private var isPhoneLandscape: Bool {
         verticalSizeClass == .compact
             && UIDevice.current.userInterfaceIdiom != .pad
+    }
+
+    /// True when on iPad in landscape orientation. iPad size classes
+    /// don't differ across orientations, so `UIScreen.main.bounds` is
+    /// the authoritative source. `_ = orientationBumpTick` registers
+    /// a dependency on the rotation signal so this computed property
+    /// re-evaluates whenever the device rotates.
+    private var isIPadLandscape: Bool {
+        _ = orientationBumpTick  // dependency on rotation signal
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let bounds = UIScreen.main.bounds
+        return bounds.width > bounds.height
+    }
+
+    /// QA fix (ticket "make the UI for iPad also similar like it
+    /// comes on iPhone landscape — show horizontal collection view
+    /// for device type image and label"): unified signal driving
+    /// the side-by-side HStack layout for BOTH iPhone landscape AND
+    /// iPad landscape. Portrait on either idiom keeps the original
+    /// vertically-stacked card list.
+    private var isLandscapeHorizontal: Bool {
+        isPhoneLandscape || isIPadLandscape
     }
 
     private let devices: [(kind: DeviceKind, name: String, image: String)] = [
@@ -104,12 +137,18 @@ struct PairDeviceView: View {
                     // SE landscape).
                     let landscapeCardHeight = max(140, availableHeight)
 
-                    if isPhoneLandscape {
+                    if isLandscapeHorizontal {
                         // Lay the 3 device cards out side-by-side so
                         // the wide-but-short landscape viewport uses
                         // its horizontal real estate properly. The
                         // cards split width evenly via
                         // `.frame(maxWidth: .infinity)` on each child.
+                        // iPhone landscape AND iPad landscape both use
+                        // this horizontal collection-view arrangement
+                        // (QA: "make the UI for iPad also similar like
+                        // it comes on iPhone landscape — show horizontal
+                        // collection view for device type image and
+                        // label").
                         HStack(spacing: 0) {
                             ForEach(Array(devices.enumerated()), id: \.offset) { _, device in
                                 Button {
@@ -154,7 +193,31 @@ struct PairDeviceView: View {
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // QA fix (iPad landscape horizontal layout): listen for
+        // device rotation and bump `orientationBumpTick`. Forces the
+        // body to re-evaluate so `isIPadLandscape` is re-resolved
+        // and the HStack / VStack branch swap takes effect when the
+        // user rotates the iPad. iPad full-screen size classes don't
+        // change on rotation so this notification is the only
+        // reliable signal. iPhone is unaffected — its
+        // `verticalSizeClass` already flips on rotation.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            orientationBumpTick &+= 1
+        }
         .onAppear {
+            // QA fix (iPad landscape horizontal layout): activate
+            // accelerometer-driven orientation events so the
+            // rotation notification actually fires. UIKit
+            // reference-counts this call internally so it composes
+            // safely with the matching call in HomeView /
+            // MainTabView.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
             // 1:1 with UIKit `PairYourDeviceViewController.viewWillAppear`
             // L209 — `view_barbot_connect_device_screen` fires each
             // time the Pair Your Device screen becomes visible so
