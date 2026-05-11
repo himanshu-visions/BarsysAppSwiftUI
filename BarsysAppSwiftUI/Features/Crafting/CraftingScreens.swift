@@ -1125,6 +1125,23 @@ struct CraftingView: View {
     /// stroke). Light mode keeps the original `cancelCapsule`
     /// material-based recipe.
     @Environment(\.colorScheme) private var colorScheme
+    /// QA fix (Edit Recipe → Crafting → "remove glass doesn't go
+    /// to DrinkComplete" + "Customize should open Edit Recipe"):
+    /// the `EditRecipeCoverContent` cover hosts its own
+    /// `NavigationStack(path: $path)` and publishes the path via
+    /// `\.editCoverPath`. When CraftingView is hosted INSIDE that
+    /// cover, the `.crafting` route lives on the cover's local
+    /// path — not the tab's main router path. The previous port
+    /// pushed `.drinkComplete` onto `router` regardless, so the
+    /// push landed on a different navigation stack than the one
+    /// that contained CraftingView. Visually the user saw no
+    /// transition when removing the glass (DrinkComplete pushed
+    /// "behind" the cover, invisible). Reading the cover path
+    /// here lets us push DrinkComplete onto the SAME stack so the
+    /// transition lands inside the cover and the user sees the
+    /// DrinkComplete screen as expected. iPhone, iPad, every BLE
+    /// device kind (Barsys 360, Coaster, Shaker).
+    @Environment(\.editCoverPath) private var editCoverPath
     @StateObject private var viewModel = CraftingViewModel()
     @State private var showCancelConfirm = false
     /// Glass-card popup for "Cancel Drink" — replaces native .alert
@@ -1398,7 +1415,20 @@ struct CraftingView: View {
             viewModel.dispatch(
                 response, ble: ble,
                 onCompleted: {
-                    router.push(.drinkComplete(recipeID))
+                    // QA fix (Edit Recipe craft flow): if the
+                    // `.crafting` route was pushed onto the
+                    // `EditRecipeCoverContent` cover's local
+                    // NavigationPath, the matching `.drinkComplete`
+                    // push MUST go on the SAME local path —
+                    // otherwise the push lands on the tab's main
+                    // router stack which sits BEHIND the cover and
+                    // the user sees no transition. iPhone +
+                    // iPad, every BLE device kind.
+                    if let localPath = editCoverPath {
+                        localPath.wrappedValue.append(Route.drinkComplete(recipeID))
+                    } else {
+                        router.push(.drinkComplete(recipeID))
+                    }
                 },
                 onDismiss: {
                     // Ports `navigationController?.popViewController(animated:)`
@@ -2046,6 +2076,21 @@ struct DrinkCompleteView: View {
     /// (matches the Recipe Page Craft button treatment — see
     /// `drinkCompleteDoneBackground`). Light mode is untouched.
     @Environment(\.colorScheme) private var colorScheme
+    /// QA fix (Edit Recipe → Crafting → DrinkComplete → Customize):
+    /// when the craft flow was initiated from inside the Edit Recipe
+    /// fullScreenCover, `.crafting` and `.drinkComplete` were pushed
+    /// onto the cover's LOCAL `NavigationPath` (published via
+    /// `\.editCoverPath`) instead of the tab's main router path. The
+    /// Customize button needs to know this so it can pop the LOCAL
+    /// path back to the cover root (revealing the Edit Recipe screen
+    /// underneath) instead of trying to introspect the tab's main
+    /// path — which has no `.crafting` entry in this scenario. UIKit
+    /// parity: UIKit pops back to `RecipePage` which still has the
+    /// `EditViewController` overlay as its child (`addChild(editVc)`
+    /// was never removed). SwiftUI mirrors this by clearing the
+    /// cover's local path so the user lands back on the Edit Recipe
+    /// view that sits at the cover's root.
+    @Environment(\.editCoverPath) private var editCoverPath
 
     /// Rating popup state — 1:1 port of UIKit DrinkCompleteViewController
     /// viewDidLoad L126-134 which checks shouldShowRatingPrompt interval.
@@ -2277,27 +2322,46 @@ struct DrinkCompleteView: View {
                                 }
                                 // QA fix (testers' bug: "Recipe details
                                 // screen is not open up if user tapped on
-                                // customize button"): delegate to the new
+                                // customize button" + "crafting from Edit
+                                // Recipe: Customize should reopen Edit
+                                // Recipe").
+                                //
+                                // BRANCH A — Crafting was initiated from
+                                // inside the Edit Recipe fullScreenCover
+                                // (`editCoverPath != nil`). The route
+                                // stack INSIDE the cover is
+                                // `[.crafting, .drinkComplete]`; the
+                                // EditRecipe screen itself sits at the
+                                // cover's NavigationStack root (not as a
+                                // Route). Popping the cover's local path
+                                // to zero clears both routes and reveals
+                                // EditRecipeView underneath — 1:1 with
+                                // UIKit `popToViewController(RecipePage)`
+                                // where RecipePage still had Edit as a
+                                // child overlay (UIKit
+                                // `addChild(editVc)` was never reversed),
+                                // so the user lands back on the Edit
+                                // Recipe screen with their customised
+                                // ingredients still intact.
+                                //
+                                // BRANCH B — Crafting was initiated from
+                                // anywhere else (Recipe Detail, Favorites,
+                                // MakeMyOwn, BarBot, etc.). Delegate to
                                 // `AppRouter.customizeFromDrinkComplete`
-                                // helper which is a 1:1 port of UIKit
-                                // `DrinkCompleteViewController.didPressCustomizeButton`.
-                                // The helper inspects the route history
-                                // mirror, finds the `.crafting` entry,
-                                // looks at its predecessor, and either:
-                                //   • pops back to RecipeDetail / Favorites
-                                //     / MakeMyOwn (the three predecessors
-                                //     UIKit recognises), OR
-                                //   • pops Crafting + DrinkComplete off
-                                //     and pushes a fresh `.recipeDetail`
-                                //     when the predecessor is none of
-                                //     those.
-                                // The previous `popToRoot()` + delayed
-                                // `push(.recipeDetail)` raced SwiftUI's
-                                // NavigationPath animation and frequently
-                                // left the user on the tab root with no
-                                // recipe-detail push landing — the exact
-                                // QA-reported symptom.
-                                router.customizeFromDrinkComplete(recipeID: recipeID)
+                                // which inspects the tab path history
+                                // mirror and either pops back to the
+                                // predecessor of `.crafting` (RecipeDetail
+                                // / Favorites / MakeMyOwn) or pushes a
+                                // fresh `.recipeDetail` (matching UIKit's
+                                // `pushViewController(RecipePageViewController)`
+                                // branch).
+                                if let localPath = editCoverPath {
+                                    localPath.wrappedValue.removeLast(
+                                        localPath.wrappedValue.count
+                                    )
+                                } else {
+                                    router.customizeFromDrinkComplete(recipeID: recipeID)
+                                }
                             } label: {
                                 Text("Customize")
                                     .font(.system(size: 16, weight: .medium))
