@@ -2410,11 +2410,25 @@ struct DrinkCompleteView: View {
     // MARK: - Attributed label helper
     // UIKit: makeAttributedString(fullText:boldPart:normalFont:boldFont:)
     // Renders "Garnish: Lime, Mint" with "Garnish:" in bold 16pt.
+    //
+    // QA fix: centre-aligned on every device. Previously the label
+    // stretched edge-to-edge with `.frame(maxWidth: .infinity,
+    // alignment: .leading)`, which left "Garnish: Lime, Mint" /
+    // "Additional Ingredients: …" hugging the left margin on every
+    // idiom. QA asked for both labels to be horizontally CENTRED on
+    // the Drink Completed screen for all devices (iPhone, iPad —
+    // every size class, every orientation). `.multilineTextAlignment(.center)`
+    // covers the case where the joined ingredient list wraps to a
+    // second line (long names) so each line stays centred. The
+    // outer `.frame(maxWidth: .infinity, alignment: .center)`
+    // anchors the wrapping text block to the horizontal centre of
+    // the parent ScrollView column.
     private func drinkCompleteAttributedLabel(boldPrefix: String, text: String) -> some View {
         (Text(boldPrefix).font(.system(size: 16, weight: .bold))
             + Text(text).font(.system(size: 16)))
             .foregroundStyle(Color("charcoalGrayColor"))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, alignment: .center)
     }
 
     // MARK: - Toolbar (matches UIKit header: back, device info, side menu)
