@@ -588,10 +588,21 @@ struct SignUpView: View {
                         if colorScheme == .dark {
                             Group {
                                 if UIDevice.current.userInterfaceIdiom == .pad {
+                                    // QA fix (iPad Mini landscape): reduce
+                                    // the inline dark cocktail artwork
+                                    // height when on iPad Mini in landscape
+                                    // (744pt total screen height) — the
+                                    // standard 440pt is too tall and pushes
+                                    // the sign-up form card below the fold.
+                                    // Use 220pt on iPad Mini landscape so
+                                    // the form remains visible. Other iPad
+                                    // size-classes (iPad 9th gen +, iPad
+                                    // Air, iPad Pro) and orientations keep
+                                    // the original 440pt unchanged.
                                     Image("signUpBackgroundImageDark")
                                         .resizable()
                                         .aspectRatio(contentMode: .fill)
-                                        .frame(height: 440)
+                                        .frame(height: isIPadMiniLandscape(proxy: proxy) ? 220 : 440)
                                         .frame(maxWidth: 640)
                                         .clipped()
                                 } else {
