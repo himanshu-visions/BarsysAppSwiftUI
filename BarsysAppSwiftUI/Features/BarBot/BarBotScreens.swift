@@ -3848,20 +3848,22 @@ struct BarBotCraftView: View {
             // BarBotRecipeElement and push RecipePage directly (no API
             // fetch, no waiting popup). Upsert into storage so the
             // route-by-id handler can resolve the recipe.
+            //
+            // QA refinement (Barsys-cached recipes from BarBot
+            // chat): these recipes carry a real Barsys catalog id +
+            // image + ingredients — the user should be able to add
+            // them to Favourites via the standard heart toggle. We
+            // therefore do NOT mark them as BarBot context, so
+            // `RecipeDetailView.favouriteButtonState` resolves to
+            // `.addToFavourites` (the normal heart) for them.
+            // Although UIKit's `MainBarBotCell+CollectionView.swift`
+            // L168 sets `currentContext = .barBotRecipe` for both
+            // Barsys-cached AND AI recipes, the user wants the
+            // SwiftUI port to diverge here so cached recipes get
+            // the heart button. Only the AI fetch path (below)
+            // continues to mark the context.
             let fullRecipe = buildRecipeFromBarsysCached(recipe)
             env.storage.upsert(recipe: fullRecipe)
-            // QA fix (BarBot chat recipe → Recipe Page): mark the
-            // recipe as having BarBot context BEFORE the push so
-            // `RecipeDetailView.favouriteButtonState` resolves to
-            // `.addToMyDrinks` (Save to My Drinks button) instead of
-            // `.addToFavourites`. 1:1 with UIKit
-            // `MainBarBotCell+CollectionView.swift` L168:
-            //   `recipePageVc.currentContext = .barBotRecipe`
-            // set before `pushViewController`. UIKit's
-            // `RecipePageViewModel.shouldShowAddToMyDrinks` checks
-            // `currentContext == .barBotRecipe` to hide the Add to
-            // Favourites button — we mirror that via this set.
-            router.markRecipeAsBarBotContext(fullRecipe.id)
             router.push(.recipeDetail(fullRecipe.id), in: .barBot)
             return
         }

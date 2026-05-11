@@ -29,7 +29,20 @@ enum NumericConstants {
     static let maxPhoneNumCharacterCount = 15
     /// 24 hours expressed in seconds
     static let perishableInterval: TimeInterval = 86400.0
+    /// 1:1 port of UIKit `NumericConstants.numberOfRepeats` — the
+    /// SelectQuantity picker repeats its data arrays this many times
+    /// in each component so the wheel feels infinite. UIKit's value
+    /// is 1000; matching exactly keeps the picker scrolling behaviour
+    /// (initial selection lands at `count * 1000 / 2 + defValueIndex`)
+    /// identical between the two ports.
+    static let numberOfRepeats: Int = 1000
 }
+
+/// Ounce conversion factor used throughout the SelectQuantity
+/// screen — matches UIKit's free-floating `ounceValue` constant
+/// (Helpers/Constants/Constants.swift L14):
+///     `let ounceValue: CGFloat = NumericConstants.ounceConversionFactor`
+let ounceValue: Double = Double(NumericConstants.ounceConversionFactor)
 
 enum Constants {
     static let testPhoneNumber = "+917042199800"
@@ -96,6 +109,21 @@ enum Constants {
     static let maximumVolume25OZ = "Maximum Volume: 25.36 oz."
     static let maximumVolume50OZ = "Maximum Volume: 50.72 oz."
     static let maximumVolume750 = "Maximum Volume: 750 ml."
+    static let maximumVolume1500 = "Maximum Volume: \(NumericConstants.maximumQuantityIntMLForCoaster) ml."
+
+    /// Alerts surfaced by `SelectQuantityView` when the user enters
+    /// or scrolls to a value above the per-device-per-unit cap.
+    /// Strings match UIKit's `Constants.enterQuantityAlert*` verbatim
+    /// (Helpers/Constants/Constants.swift L161-164).
+    static let enterQuantityAlert750Ml = "The total volume for an ingredient cannot exceed \(NumericConstants.maximumQuantityIntMLFor360) ml. We've adjusted the quantity to fit within this limit."
+    static let enterQuantityAlert1500Ml = "The total volume for an ingredient cannot exceed \(NumericConstants.maximumQuantityIntMLForCoaster) ml. We've adjusted the quantity to fit within this limit."
+    static let enterQuantityAlert25OZ = "The total volume for an ingredient cannot exceed 25.36 oz. We've adjusted the quantity to fit within this limit."
+    static let enterQuantityAlert50OZ = "The total volume for an ingredient cannot exceed 50.72 oz. We've adjusted the quantity to fit within this limit."
+
+    /// Format string for two-decimal-place numbers used inside
+    /// `Quantity.convertValueAccordingUnitForMixlist` and friends.
+    /// 1:1 with UIKit `Constants.percentTwoF`.
+    static let percentTwoF = "%.2f"
 
     static let pleaseSelectAnOption = "Please select an option"
     static let mixlistsTitle = "Mixlists"

@@ -2220,7 +2220,9 @@ struct RouteView: View {
                 stationName: router.pendingStationUpdate?.stationName,
                 isPerishable: router.pendingStationUpdate?.isPerishable ?? false,
                 primaryCategory: router.pendingStationUpdate?.primaryCategory,
-                secondaryCategory: router.pendingStationUpdate?.secondaryCategory
+                secondaryCategory: router.pendingStationUpdate?.secondaryCategory,
+                isAddingNewIngredient: router.pendingStationUpdate?.isAddingNewIngredient ?? false,
+                defaultValueMl: router.pendingStationUpdate?.quantityMl ?? 0
             )
         case .pairDevice: PairDeviceView()
         case .deviceList: DeviceListView()
