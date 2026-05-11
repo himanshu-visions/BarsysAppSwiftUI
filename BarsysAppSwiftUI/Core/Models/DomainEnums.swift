@@ -108,6 +108,10 @@ enum RecipeSource: String, Codable, Hashable {
 // MARK: - Analytics events (ports TrackEventName)
 
 enum TrackEventName: String {
+    // SpeakEasy
+    case onDeviceConnectSpeakEasy = "speakeasy_connected"
+    case onDeviceDisconnectSpeakEasy = "speakeasy_disconnected"
+
     // Auth
     case tapLoginGetOTP = "login_get_otp"
     case tapLoginResend = "login_resend_OTP"
@@ -186,6 +190,19 @@ enum TrackEventName: String {
     case viewBarBotConnectDeviceScreenViewed = "view_barbot_connect_device_screen"
     case barBotStationSetUpBegin = "barbot_station_setup_begin"
     case barBotCleanStationBegin = "barbot_clean_station_begin"
+
+    // Data Sync
+    case dataDownloadSuccessfullEvent = "data_download_successful"
+    case dataUpdatedSuccessfullEvent = "data_update_successful"
+    case dataDownloadUnSuccessfullEvent = "data_download_unsuccessful"
+    case dataUpdatedUnSuccessfullEvent = "data_update_unsuccessful"
+
+    // Side Menu / Info
+    case faqViewed = "faq"
+    case contactUsViewed = "contact_us"
+    case privacyPolicyViewed = "privacy_policy"
+    case termsOfServiceViewed = "terms_of_service"
+    case aboutUsViewed = "about_us"
 
     // Profile / settings
     case editProfileEvent = "edit_profile"

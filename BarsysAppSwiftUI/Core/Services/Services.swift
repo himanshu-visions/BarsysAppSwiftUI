@@ -2212,6 +2212,80 @@ final class AnalyticsService {
     }
 }
 
+// MARK: - Analytics property builders (1:1 UIKit parity)
+//
+// Helpers that build the property dictionaries used by Braze custom
+// events — ports of UIKit `CraftingViewModel.buildIngredientDicts(...)`
+// (CraftingViewModel+Analytics.swift L29-45) and the analogous
+// `BarBotCraftingViewModel.buildIngredientDicts(...)`. The UIKit code
+// inlines these dictionary literals at every call site so the SwiftUI
+// port exposes one shared helper to keep the property shape identical
+// across `craftBegin`, `craftCompleted`, `craftCancelled`,
+// `viewRecipe`, `editRecipeBegin`, `editRecipeSuccessful`, etc.
+//
+// Keys exactly match UIKit's strings — Braze segments / canvases
+// already in production depend on these names:
+//   • "ingredient_name"
+//   • "primary_ingredient_type"
+//   • "secondary_ingredient_type"
+//   • "perishable"
+//   • "quantity"
+//   • "unit_of_measurement"  ("ml" / "oz")
+//   • "poured_ingredients"   (only when `includePouredStatus == true`)
+
+extension AnalyticsService {
+
+    /// 1:1 port of UIKit `buildIngredientDicts(includePouredStatus:)`.
+    /// Pass the unit picked in PreferencesService so the
+    /// `unit_of_measurement` key matches what UIKit emits for the
+    /// same recipe state.
+    static func buildIngredientProperties(
+        from ingredients: [Ingredient],
+        unit: String = "ml",
+        includePouredStatus: Bool = false,
+        currentPouringIndex: Int = 0,
+        allPoured: Bool = false
+    ) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        for (index, ingredient) in ingredients.enumerated() {
+            var dict: [String: Any] = [:]
+            dict["ingredient_name"] = ingredient.name
+            dict["primary_ingredient_type"] = ingredient.category?.primary ?? ""
+            dict["secondary_ingredient_type"] = ingredient.category?.secondary ?? ""
+            dict["perishable"] = ingredient.perishable ?? false
+            dict["quantity"] = ingredient.quantity ?? 0.0
+            dict["unit_of_measurement"] = unit.lowercased()
+            if includePouredStatus {
+                dict["poured_ingredients"] = allPoured ? true : (index < currentPouringIndex)
+            }
+            result.append(dict)
+        }
+        return result
+    }
+
+    /// Builds the (deviceId, deviceType) tuple used as event properties.
+    /// 1:1 port of UIKit `CraftingViewModel.getDeviceInfo()` —
+    /// returns empty strings when no device is connected (UIKit also
+    /// emits `deviceId: ""` / `deviceType: ""` in that branch so the
+    /// Braze property shape is consistent).
+    ///
+    /// `@MainActor` because it reads `AppStateManager.shared.isSpeakEasyCase`
+    /// which is a `@MainActor`-isolated property. All current call sites
+    /// already run on the main actor (SwiftUI views, view model bodies,
+    /// `.onAppear` closures).
+    @MainActor
+    static func deviceInfo(ble: BLEService) -> (name: String, type: String) {
+        if AppStateManager.shared.isSpeakEasyCase {
+            // SpeakEasy is always Barsys 360.
+            return ("", "Barsys 360")
+        }
+        if let connected = ble.connected.first {
+            return (connected.name, connected.kind.displayName)
+        }
+        return ("", "")
+    }
+}
+
 // MARK: - CatalogService
 
 
