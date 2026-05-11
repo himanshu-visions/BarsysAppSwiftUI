@@ -867,6 +867,20 @@ extension View {
 
 import SwiftUI
 
+// MARK: - Ingredient-detected copy (1:1 UIKit storyboard literals)
+
+/// Static labels lifted verbatim from `ControlCenter.storyboard` scene
+/// `8O7-or-5iD` (DeviceDetectedPopUpVc). Kept off the `Constants` enum
+/// because UIKit hardcodes them inside the storyboard XML rather than
+/// referencing any string constant — every change here must match the
+/// XML byte-for-byte.
+enum BarsysIngredientDetectedCopy {
+    static let bottleIdentified = "Bottle Identified"
+    static let quantityHeader = "Quantity"
+    static let tapToUpdate = "Tap to update quantity"
+    static let okayTitle = "Okay"
+}
+
 // MARK: - Popup descriptor
 
 enum BarsysPopup: Equatable, Identifiable {
@@ -925,6 +939,22 @@ enum BarsysPopup: Equatable, Identifiable {
     /// `WaitingRecipePopUpViewController`.
     case waiting(title: String, message: String?)
 
+    /// "Bottle Identified" popup — 1:1 port of UIKit
+    /// `DeviceDetectedPopUpVc` (ControlCenter.storyboard scene
+    /// `8O7-or-5iD`). Shown after ingredient image detection when the
+    /// user picks a name from `.multipleIngredients`. Layout:
+    ///   • Static header "Bottle Identified" (boldSystem 13pt)
+    ///   • Ingredient name (systemLight 13pt, dynamic)
+    ///   • Static "Quantity" header (boldSystem 13pt)
+    ///   • Quantity value e.g. "750ML" / "25.36OZ" (system 12pt)
+    ///   • Static "Tap to update quantity" hint (systemLight 12pt)
+    ///   • Tap hit-area covering the three quantity rows → edit flow
+    ///   • Okay button — brandTanColor, 130×45 pill, posts the refill
+    ///     with `NumericConstants.maximumQuantityDoubleMLFor360` (750ml)
+    ///     and `isAddingNewIngredient = true` (UIKit hardcodes both).
+    ///   • Top-right cross — dismiss only.
+    case ingredientDetected(ingredientName: String, quantityMl: Double)
+
     var id: String {
         switch self {
         case .alert(let t, _, _, _, _):                return "alert-\(t)"
@@ -933,6 +963,7 @@ enum BarsysPopup: Equatable, Identifiable {
         case .multipleIngredients(let t, _):          return "multi-\(t)"
         case .shakerFlatSurface:                      return "shakerFlat"
         case .waiting(let t, _):                      return "waiting-\(t)"
+        case .ingredientDetected(let name, _):        return "detected-\(name)"
         }
     }
 
@@ -942,6 +973,10 @@ enum BarsysPopup: Equatable, Identifiable {
         case .manualSpinning, .waiting:         return true   // user must wait
         case .shakerFlatSurface:                return true
         case .confirm, .multipleIngredients:    return true
+        // UIKit `DeviceDetectedPopUpVc` storyboard's backdrop button
+        // (`WQy-rc-oD1`) has NO action wired — tapping outside the card
+        // does nothing; user must press Cross / Okay / edit hit-area.
+        case .ingredientDetected:               return true
         }
     }
 
@@ -968,6 +1003,10 @@ enum BarsysPopup: Equatable, Identifiable {
         case .manualSpinning:                                 return false
         case .multipleIngredients:                            return true
         case .shakerFlatSurface, .waiting:                    return true
+        // UIKit `DeviceDetectedPopUpVc` storyboard `Uph-QM-izR` —
+        // 50×50 crossIcon button pinned top-right of glass card. Always
+        // shown.
+        case .ingredientDetected:                             return false
         }
     }
 }
@@ -983,13 +1022,15 @@ extension View {
         _ binding: Binding<BarsysPopup?>,
         onPrimary: @escaping () -> Void = {},
         onSecondary: @escaping () -> Void = {},
-        onPickIngredient: @escaping (String) -> Void = { _ in }
+        onPickIngredient: @escaping (String) -> Void = { _ in },
+        onEditQuantity: @escaping () -> Void = {}
     ) -> some View {
         modifier(BarsysPopupModifier(
             popup: binding,
             onPrimary: onPrimary,
             onSecondary: onSecondary,
-            onPickIngredient: onPickIngredient
+            onPickIngredient: onPickIngredient,
+            onEditQuantity: onEditQuantity
         ))
     }
 }
@@ -999,6 +1040,7 @@ private struct BarsysPopupModifier: ViewModifier {
     let onPrimary: () -> Void
     let onSecondary: () -> Void
     let onPickIngredient: (String) -> Void
+    let onEditQuantity: () -> Void
 
     func body(content: Content) -> some View {
         content
@@ -1019,6 +1061,7 @@ private struct BarsysPopupModifier: ViewModifier {
                                 popup = nil
                                 onPickIngredient(name)
                             },
+                            onEditQuantity: { popup = nil; onEditQuantity() },
                             // UIKit `crossButtonClicked(_:)` for every popup
                             // (AlertPopUpViewController / Horizontal stack /
                             // ManualStartSpining / MultipleIngredients): just
@@ -1061,6 +1104,10 @@ private struct BarsysPopupCard: View {
     let onPrimary: () -> Void
     let onSecondary: () -> Void
     let onPickIngredient: (String) -> Void
+    /// 1:1 with UIKit `DeviceDetectedPopUpVc.quantityEditButtonClicked` —
+    /// the invisible tap button (`jii-ff-xau`) overlaid on the three
+    /// quantity rows. Fires only for the `.ingredientDetected` case.
+    let onEditQuantity: () -> Void
     /// Top-right X button — fires when the user explicitly closes.
     /// 1:1 with UIKit `crossButtonClicked(_:)` IBAction across
     /// `AlertPopUpViewController`, `AlertPopUpHorizontalStackController`,
@@ -1082,7 +1129,21 @@ private struct BarsysPopupCard: View {
     // the pill (matched by `.padding(.horizontal, 10)` on the button
     // label text itself — see `alertBorderedButton` /
     // `alertPrimaryFilledButton`).
-    private let cardWidth: CGFloat = 307
+    //
+    // iPad bumps to 360pt to mirror UIKit's adaptive iPad sizing —
+    // UIKit storyboards present every popup at the iPhone-native
+    // 277pt size on iPad too, but in practice the iPad-bound builds
+    // (BarsysApp/Helpers/UIView+Padding.swift L37-49) inflate alert
+    // cards via the `isPad` branch in `alertPopUpBackgroundStyle`. The
+    // SwiftUI port previously baked the iPhone width across both idioms
+    // which made the "Bottle Identified" popup look squeezed against
+    // the empty iPad backdrop — the cross button visually overlapped
+    // the ingredient name on iPad Mini landscape, and the Okay button
+    // had only ~70pt of breathing room on each side. 360pt restores
+    // the visual rhythm without bleeding into the safe-area gutter.
+    private var cardWidth: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 360 : 307
+    }
 
     var body: some View {
         // 1:1 port of UIKit `AlertPopUpHorizontalStackController` storyboard
@@ -1211,6 +1272,9 @@ private struct BarsysPopupCard: View {
                     .padding(.vertical, 8)
                     .padding(.top, 23)
                     .padding(.bottom, 14)
+
+            case .ingredientDetected(let name, let quantityMl):
+                ingredientDetectedBody(name: name, quantityMl: quantityMl)
             }
         }
         // UIKit card inner content is inset 24pt from the card edges on
@@ -1301,6 +1365,125 @@ private struct BarsysPopupCard: View {
                 .fill(isIPadDark
                       ? Theme.Color.surface
                       : SwiftUI.Color.white.opacity(0.95))
+        }
+    }
+
+    // MARK: - Ingredient-detected body
+    //
+    // 1:1 port of UIKit `DeviceDetectedPopUpVc` view tree
+    // (ControlCenter.storyboard scene `8O7-or-5iD`):
+    //
+    //   Glass card (`sqW-X4-McH`)  : 277×225.33, 12pt corner
+    //   Inner content (`krK-fY-kXe`): 229×177.33, 24pt all-side inset
+    //   ├─ "Bottle Identified"      boldSystem 13pt, veryDarkGrayColor
+    //   ├─ 8pt
+    //   ├─ {ingredient name}        systemLight 13pt, veryDarkGrayColor
+    //   ├─ 16pt
+    //   ├─ "Quantity"               boldSystem 13pt, veryDarkGrayColor
+    //   ├─ 8pt
+    //   ├─ {quantity}{unit}         system 12pt, charcoalGrayColor
+    //   ├─ 16pt
+    //   ├─ "Tap to update quantity" systemLight 12pt, grayBorderColor
+    //   ├─ 25pt
+    //   └─ Okay button              brandTanColor, 130×45, corner 12
+    //
+    // The three quantity rows (Quantity header / value / Tap hint) are
+    // covered by an invisible button (`jii-ff-xau`, 0,33,229,89.33) —
+    // tapping anywhere in that region triggers `onEditQuantity`.
+    // SwiftUI parity: wrap the three rows in a Button that uses
+    // PlainButtonStyle so the labels render normally.
+
+    @ViewBuilder
+    private func ingredientDetectedBody(name: String, quantityMl: Double) -> some View {
+        VStack(alignment: .center, spacing: 0) {
+            // Row 1 — "Bottle Identified"
+            Text(BarsysIngredientDetectedCopy.bottleIdentified)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color("veryDarkGrayColor"))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+
+            // Row 2 — ingredient name (8pt below header)
+            Text(name)
+                .font(.system(size: 13, weight: .light))
+                .foregroundStyle(Color("veryDarkGrayColor"))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+
+            // Tappable quantity block — UIKit `jii-ff-xau` invisible
+            // button covering "Quantity" / value / "Tap to update".
+            Button {
+                onEditQuantity()
+            } label: {
+                VStack(alignment: .center, spacing: 0) {
+                    // "Quantity" header (16pt below ingredient name)
+                    Text(BarsysIngredientDetectedCopy.quantityHeader)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color("veryDarkGrayColor"))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+
+                    // Quantity value (8pt below "Quantity")
+                    Text(ingredientDetectedQuantityText(mlValue: quantityMl))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color("charcoalGrayColor"))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+
+                    // "Tap to update quantity" (16pt below value)
+                    Text(BarsysIngredientDetectedCopy.tapToUpdate)
+                        .font(.system(size: 12, weight: .light))
+                        .foregroundStyle(Color("grayBorderColor"))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 16)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 16)
+            .accessibilityLabel("Edit quantity")
+            .accessibilityHint("Opens the quantity picker")
+
+            // Okay button (25pt below "Tap to update")
+            Button {
+                HapticService.light()
+                onPrimary()
+            } label: {
+                Text(BarsysIngredientDetectedCopy.okayTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(SwiftUI.Color.black)
+                    .frame(width: 130, height: 45)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color("brandTanColor"))
+                    )
+            }
+            .buttonStyle(BounceButtonStyle())
+            .padding(.top, 25)
+            .padding(.bottom, 0)
+            .accessibilityLabel(BarsysIngredientDetectedCopy.okayTitle)
+        }
+    }
+
+    /// Renders the quantity label following UIKit
+    /// `DeviceDetectedPopUpVc.viewSetup` logic — ml mode shows the
+    /// integer ml value, oz mode shows the converted oz value. Both
+    /// concatenate the unit string in upper case (UIKit prints the
+    /// raw enum `rawValue` here which yields "ml" / "oz" so we match
+    /// that exactly, NOT the uppercased asset constants).
+    private func ingredientDetectedQuantityText(mlValue: Double) -> String {
+        let unit = UserDefaultsClass.getPreferencesUnit()
+        if unit == .ml {
+            let intMl = Int(mlValue.rounded())
+            return "\(intMl)\(unit.rawValue)"
+        } else {
+            let oz = (mlValue * Double(NumericConstants.ounceConversionFactor) * 100).rounded() / 100
+            return "\(oz)\(unit.rawValue)"
         }
     }
 

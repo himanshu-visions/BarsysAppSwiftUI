@@ -2785,6 +2785,12 @@ struct StationsMenuView: View {
     @State private var detectedIngredients: [IngredientFromImage] = []
     @State private var pickedImage: UIImage?
     @State private var popup: BarsysPopup?
+    /// Holds the most-recently-picked detected ingredient while the
+    /// "Bottle Identified" popup is up so `Okay` / `Edit Quantity` can
+    /// reuse the same `IngredientFromImage` row (category, perishable,
+    /// flavourTags) for both code paths. Cleared when the popup
+    /// dismisses (`onChange(of: popup)`).
+    @State private var pendingDetectedIngredient: IngredientFromImage?
 
     private var deviceIconName: String {
         if ble.isBarsys360Connected() { return "icon_barsys_360" }
@@ -3035,49 +3041,104 @@ struct StationsMenuView: View {
             }
         }
         // Unified glass popup overlay (alerts, confirms, ingredient
-        // chooser, manual-spinning, waiting, shaker-flat warning).
-        .barsysPopup($popup, onPickIngredient: { ingredientName in
-            // 1:1 port of UIKit
-            // `StationsMenuViewController.getStationsNotificationCame`:
-            // after ingredient detection the controller fires a
-            // NotificationCenter post → `updateSingleStation` which
-            // 1. shows glass loader "Updating Station"
-            // 2. PUTs the station config WITH the server-returned
-            //    category (not an empty placeholder)
-            // 3. refetches stations
-            // 4. hides the loader
-            //
-            // We mirror that exactly so the SwiftUI callback has the
-            // same visible feedback AND the same backend persistence
-            // — the previous port threw away the detection category
-            // which meant every station landed with
-            // `category: {primary:"", secondary:""}`, breaking the
-            // Ready-to-Pour allow-list filter downstream.
-            let match = detectedIngredients.first {
-                ($0.name ?? "").lowercased() == ingredientName.lowercased()
-            }
-            let primary = match?.category?.primary ?? ""
-            let secondary = match?.category?.secondary ?? ""
-            let flavourTags = match?.category?.flavourTags ?? []
-            let isPerishable = match?.perishable ?? false
-            Task { @MainActor in
-                await viewModel.persistIngredient(
-                    ingredientName,
-                    quantityMl: 30,
-                    isPerishable: isPerishable,
-                    at: viewModel.selectedStation,
-                    deviceName: ble.getConnectedDeviceName(),
-                    primaryCategory: primary,
-                    secondaryCategory: secondary,
-                    flavourTags: flavourTags,
-                    loadingService: env.loading
+        // chooser, manual-spinning, waiting, shaker-flat warning, and
+        // "Bottle Identified" ingredient-detected popup).
+        //
+        // 1:1 port of UIKit
+        // `StationsMenuViewController.getStationsNotificationCame` —
+        // the UIKit flow is:
+        //   1. user picks from `MultipleIngredientsPopUp`
+        //   2. → `showPopUpImageDetected` presents `DeviceDetectedPopUpVc`
+        //        ("Bottle Identified" / "Tap to update quantity")
+        //   3a. Okay tap → notification posted with quantity=750ml,
+        //                  `isAddingNewIngredient = true` →
+        //                  `updateSingleStation` PUTs the station
+        //   3b. Edit hit-area → dismiss popup + push SelectQuantity
+        //   3c. Cross → dismiss only (no persistence)
+        //
+        // Previously the SwiftUI port collapsed (3a) into the chooser
+        // callback and posted 30ml — skipping the user confirmation
+        // step entirely AND silently changing the persisted quantity.
+        // We now route through the new `.ingredientDetected` popup so
+        // the user sees the same confirm step they see on UIKit, and
+        // the persisted ml value matches UIKit byte-for-byte.
+        .barsysPopup(
+            $popup,
+            onPrimary: {
+                // `.ingredientDetected` Okay → 1:1 UIKit `okAction`
+                // (DeviceDetectedPopUpVc L57-64). Notification payload
+                // is hardcoded:
+                //   • quantity = NumericConstants.maximumQuantityDoubleMLFor360 (750)
+                //   • unit = "ML" uppercase
+                //   • isAddingNewIngredient = true
+                guard let detected = pendingDetectedIngredient else { return }
+                pendingDetectedIngredient = nil
+                let ingredientName = detected.name ?? ""
+                guard !ingredientName.isEmpty else { return }
+                let primary = detected.category?.primary ?? ""
+                let secondary = detected.category?.secondary ?? ""
+                let flavourTags = detected.category?.flavourTags ?? []
+                let isPerishable = detected.perishable ?? false
+                Task { @MainActor in
+                    await viewModel.persistIngredient(
+                        ingredientName,
+                        quantityMl: NumericConstants.maximumQuantityDoubleMLFor360,
+                        isPerishable: isPerishable,
+                        at: viewModel.selectedStation,
+                        deviceName: ble.getConnectedDeviceName(),
+                        primaryCategory: primary,
+                        secondaryCategory: secondary,
+                        flavourTags: flavourTags,
+                        loadingService: env.loading
+                    )
+                    env.alerts.show(
+                        title: "Ingredient added",
+                        message: "\(ingredientName) added to Station \(viewModel.selectedStation.rawValue)."
+                    )
+                }
+            },
+            onPickIngredient: { ingredientName in
+                // 1:1 port of UIKit
+                // `MultipleIngredientsPopUpViewController.didSelectItemAt`:
+                // user picked a name → dismiss chooser → show the
+                // "Bottle Identified" confirmation popup. The category
+                // / perishable / flavour-tag fields are pinned in
+                // `pendingDetectedIngredient` so `Okay` and `Edit` can
+                // both reuse them without re-searching `detectedIngredients`.
+                let match = detectedIngredients.first {
+                    ($0.name ?? "").lowercased() == ingredientName.lowercased()
+                }
+                guard let match else { return }
+                pendingDetectedIngredient = match
+                popup = .ingredientDetected(
+                    ingredientName: ingredientName,
+                    quantityMl: NumericConstants.maximumQuantityDoubleMLFor360
                 )
-                env.alerts.show(
-                    title: "Ingredient added",
-                    message: "\(ingredientName) added to Station \(viewModel.selectedStation.rawValue)."
+            },
+            onEditQuantity: {
+                // 1:1 port of UIKit
+                // `DeviceDetectedPopUpVc.quantityEditButtonClicked` —
+                // dismiss the popup and push SelectQuantity with the
+                // detected ingredient pre-seeded. We thread context
+                // through `AppRouter.pendingStationUpdate` so the
+                // SelectQuantity screen can read station/category/
+                // perishable just like the UIKit `flowToAdd` does.
+                guard let detected = pendingDetectedIngredient else { return }
+                pendingDetectedIngredient = nil
+                let ingredientName = detected.name ?? ""
+                guard !ingredientName.isEmpty else { return }
+                router.pendingStationUpdate = AppRouter.PendingStationUpdate(
+                    ingredientName: ingredientName,
+                    quantityMl: NumericConstants.maximumQuantityDoubleMLFor360,
+                    primaryCategory: detected.category?.primary,
+                    secondaryCategory: detected.category?.secondary,
+                    isPerishable: detected.perishable ?? false,
+                    isAddingNewIngredient: true,
+                    stationName: viewModel.selectedStation.rawValue
                 )
+                router.push(.selectQuantity(ingredientName))
             }
-        })
+        )
     }
 
     // Mirrors UIKit's progressMessageButton text (caption1, lightGray).
