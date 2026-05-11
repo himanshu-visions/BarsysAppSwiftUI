@@ -1160,6 +1160,21 @@ struct MainTabView: View {
 
     private static weak var observedTabBar: UITabBar?
     private static var tabBarBoundsObserver: NSKeyValueObservation?
+    /// Notification token for `UIDevice.orientationDidChangeNotification`.
+    /// Kept as a `static` so the observer survives `MainTabView`
+    /// re-evaluations (SwiftUI rebuilds the view struct on every body
+    /// update). Used by the iPad-rotation fix to schedule a delayed
+    /// reposition that fires AFTER the rotation animation has
+    /// completed — the bounds KVO above fires mid-animation when
+    /// `_UITabBarButton` frames are still in flight, so a single
+    /// reposition during rotation can't reliably land on the final
+    /// button positions. iOS 26+ never installs this observer.
+    private static var orientationObserverToken: NSObjectProtocol?
+    /// Pending delayed-reposition work item — cancelled and reissued
+    /// when a new orientation change fires. Prevents stale closures
+    /// from older rotations clobbering the latest pill position when
+    /// the user rotates the device several times in quick succession.
+    private static var pendingPostRotationReposition: DispatchWorkItem?
 
     /// Source-of-truth pill index — updated EVERY TIME we explicitly
     /// reposition the pill, and consulted by anything that needs to
@@ -1428,6 +1443,58 @@ struct MainTabView: View {
             tabBar.transform = .identity
         }
 
+        // QA fix (iPad rotation, iOS < 26): NotificationCenter observer
+        // for `UIDevice.orientationDidChangeNotification`. Fires
+        // whenever the device's physical orientation flips (portrait
+        // → landscape or vice versa). The bounds KVO below fires
+        // mid-rotation when `_UITabBarButton` frames are still
+        // animating — so we ALSO schedule a delayed reposition here
+        // that runs AFTER iPad's ~0.5s rotation animation has fully
+        // settled. This guarantees the pill lands on the correct
+        // post-rotation tab position without requiring the user to
+        // manually tap a tab (the previous workaround). Installed
+        // once per tab-bar lifetime — see the `observedTabBar` guard
+        // below — and torn down via the same guard on next attach.
+        if Self.orientationObserverToken == nil {
+            // Activating accelerometer-driven orientation events is a
+            // requirement for `orientationDidChangeNotification` to
+            // fire. Balanced by `endGeneratingDeviceOrientationNotifications()`
+            // in the teardown path if we ever wire one — for app
+            // lifetime the cost is negligible.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
+            Self.orientationObserverToken = NotificationCenter.default.addObserver(
+                forName: UIDevice.orientationDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                guard let observedBar = Self.observedTabBar else { return }
+                // Cancel any pending post-rotation reposition so the
+                // newest rotation wins (user can rotate back-to-back).
+                Self.pendingPostRotationReposition?.cancel()
+                let work = DispatchWorkItem { [weak observedBar] in
+                    guard let bar = observedBar else { return }
+                    // Force a final layout pass and then snap the pill
+                    // to the correct tab. By 0.55s the iPad rotation
+                    // animation has fully completed and the button
+                    // frames are at their final post-rotation values.
+                    bar.setNeedsLayout()
+                    bar.layoutIfNeeded()
+                    Self.positionSelectionView(in: bar,
+                                               atIndex: Self.lastKnownSelectedIndex,
+                                               animated: false)
+                }
+                Self.pendingPostRotationReposition = work
+                // 0.55s is empirically the soonest the iPad pre-26
+                // rotation animation has finished AND `_UITabBarButton`
+                // frames have settled at their post-rotation values.
+                // Anything shorter (0.3-0.4s) occasionally reads
+                // intermediate frames; longer would feel sluggish.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+            }
+        }
+
         // Bounds KVO — re-positions the pill on rotation, split-view
         // resize, and safe-area changes. UIKit got this for free
         // via `viewDidLayoutSubviews`. We tear down + re-attach if the
@@ -1438,6 +1505,26 @@ struct MainTabView: View {
             Self.tabBarBoundsObserver = tabBar.observe(\.bounds, options: [.new]) { obs, _ in
                 DispatchQueue.main.async { [weak obs] in
                     guard let obs else { return }
+                    // QA fix (iPad rotation, iOS < 26): force the tab
+                    // bar to complete its layout pass BEFORE we read
+                    // button frames. KVO fires the instant `bounds`
+                    // changes, but UIKit hasn't yet relaid-out the
+                    // tab-bar buttons for the new orientation — so
+                    // `tabItemContentBounds(in: buttons[index])`
+                    // returns the STALE landscape (or portrait)
+                    // frames and the pill snaps to the wrong tab
+                    // position after rotation. `layoutIfNeeded()`
+                    // synchronously runs `layoutSubviews()` on the
+                    // tab bar and all its descendants, so the button
+                    // frames reflect the post-rotation orientation
+                    // before our reposition reads them. The user's
+                    // workaround of "tap another tab and the pill
+                    // jumps to the right place" was hitting this
+                    // path AFTER the layout had naturally completed
+                    // in the next runloop tick — now we just force
+                    // that ordering up-front.
+                    obs.setNeedsLayout()
+                    obs.layoutIfNeeded()
                     // Use the CACHED last-known-selected index instead
                     // of `tabBarController.selectedIndex`. The
                     // controller's index can drift out of sync with
@@ -1452,6 +1539,27 @@ struct MainTabView: View {
                     Self.positionSelectionView(in: obs,
                                                atIndex: Self.lastKnownSelectedIndex,
                                                animated: false)
+                    // QA fix (iPad rotation, iOS < 26): re-run the
+                    // reposition ONE MORE TIME on the next runloop
+                    // tick. Some iPad orientations land the bar's
+                    // bounds change BEFORE the UITabBar finishes
+                    // promoting iPad's inline icon+title layout to
+                    // the new orientation — `layoutIfNeeded()` above
+                    // forces a layout pass but the internal
+                    // `_UITabBarButton` subviews on iPad pre-26
+                    // animate their frames over one extra runloop
+                    // tick. Scheduling a second reposition picks up
+                    // the final button frames so the pill never
+                    // sticks in the pre-rotation slot. iPhone is
+                    // unaffected — its stacked layout settles inside
+                    // the same `layoutIfNeeded()` and the second pass
+                    // is a no-op against an identical frame.
+                    DispatchQueue.main.async { [weak obs] in
+                        guard let obs else { return }
+                        Self.positionSelectionView(in: obs,
+                                                   atIndex: Self.lastKnownSelectedIndex,
+                                                   animated: false)
+                    }
                     // Tab bar lift is now SwiftUI-managed via
                     // `applyIOSLessThan26TabBarLift()` — no transform
                     // to re-apply here on bounds changes. Defensively
