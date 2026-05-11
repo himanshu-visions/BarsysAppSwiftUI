@@ -2638,6 +2638,28 @@ final class StationsMenuViewModel: ObservableObject {
         flavourTags: [String] = [],
         loadingService: LoadingState
     ) async {
+        // 1:1 with UIKit
+        // `StationsMenuViewModel+Helpers.trackStationUpdate(...)`
+        // (StationsMenuViewModel+Helpers.swift L14-29). UIKit
+        // determines `isAddingNewIngredient` based on whether the
+        // station was empty before the update — same logic here.
+        let existingSlot = stations.first(where: { $0.station == station })
+        let isAddingNewIngredient = (existingSlot?.ingredientName ?? "").isEmpty
+        let trackingProps: [String: Any] = [
+            "station": station.rawValue,
+            "ingredient_name": name,
+            "primary_ingredient_type": primaryCategory ?? "",
+            "secondary_ingredient_type": secondaryCategory ?? "",
+            "quantity": quantityMl,
+            "perishable": isPerishable
+        ]
+        BrazeService.shared.track(
+            event: isAddingNewIngredient
+                ? TrackEventName.addedIngredientToStation.rawValue
+                : TrackEventName.refillStation.rawValue,
+            properties: trackingProps
+        )
+
         // Build the category object locally too so
         // `stations[idx].category` reflects the PATCH body — otherwise
         // a subsequent tap on a different station would read the stale

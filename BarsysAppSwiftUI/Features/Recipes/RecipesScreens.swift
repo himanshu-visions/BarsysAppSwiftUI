@@ -3582,8 +3582,45 @@ final class MakeMyOwnViewModel: ObservableObject {
     @Published var items: [Ingredient] = []
     @Published var showPicker = false
 
-    func addIngredient(_ i: Ingredient) { items.append(i) }
-    func remove(_ i: Ingredient) { items.removeAll { $0.id == i.id } }
+    func addIngredient(_ i: Ingredient, ble: BLEService? = nil) {
+        items.append(i)
+        // 1:1 with UIKit
+        // `MakeMyOwnViewModel+Filters.trackInsertIngredient(...)`
+        // (MakeMyOwnViewModel+Filters.swift L84-109). UIKit packs
+        // ingredient_name / primary_ingredient_type / secondary_ingredient_type
+        // / perishable / quantity / unit_of_measurement into a nested
+        // dict keyed by "ingredients", plus deviceType / deviceId when
+        // a Barsys device is connected.
+        let ingredientDict: [String: Any] = [
+            "ingredient_name": i.name,
+            "primary_ingredient_type": i.category?.primary ?? "",
+            "secondary_ingredient_type": i.category?.secondary ?? "",
+            "perishable": i.perishable ?? false,
+            "quantity": i.quantity ?? 0.0,
+            "unit_of_measurement": UserDefaultsClass.getPreferencesUnit().rawValue
+        ]
+        var props: [String: Any] = [
+            "ingredients": ingredientDict
+        ]
+        if let ble, let connected = ble.connected.first {
+            props["deviceType"] = connected.kind.displayName
+            props["deviceId"] = connected.name
+        }
+        BrazeService.shared.track(
+            event: TrackEventName.insertIngredientMakeMyOwn.rawValue,
+            properties: props
+        )
+    }
+
+    func remove(_ i: Ingredient) {
+        items.removeAll { $0.id == i.id }
+        // 1:1 with UIKit `MakeMyOwnViewModel.deleteIngredient(at:)`
+        // (MakeMyOwnViewModel.swift L179-184) — Braze event with NO
+        // properties.
+        BrazeService.shared.track(
+            event: TrackEventName.deleteIngredientMakeMyOwn.rawValue
+        )
+    }
 
     /// Ports UIKit MakeMyOwnViewController+Actions.saveRecipeAfterAll() →
     /// FavoriteRecipeApiService.saveRecipe_Or_UpdateRecipe(mode: .create).
@@ -3596,6 +3633,13 @@ final class MakeMyOwnViewModel: ObservableObject {
                             tags: ["Custom"],
                             isMyDrinkFavourite: true)
         storage.upsert(recipe: recipe)
+        // 1:1 with UIKit
+        // `MakeMyOwnViewModel+Filters.trackSaveRecipeEvent()`
+        // (MakeMyOwnViewModel+Filters.swift L80-82) — Braze event
+        // fires with NO properties.
+        BrazeService.shared.track(
+            event: TrackEventName.saveRecipeMakeMyOwn.rawValue
+        )
         // Fire-and-forget API call (UIKit: saveRecipeAfterAll → saveRecipe_Or_UpdateRecipe)
         let recipeToSend = recipe
         Task {
