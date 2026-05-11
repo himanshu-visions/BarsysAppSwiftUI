@@ -613,6 +613,16 @@ struct MyBarView: View {
             )
         }
         Task { @MainActor in
+            // Same UIKit offline guard as `confirmDelete` — UIKit
+            // MyBarViewController L350-355 calls
+            // `showCustomAlert(... title: internetConnectionMessage)`
+            // before opening the upload pipe; the SwiftUI port has
+            // already cleared the chooser when we reach this point so
+            // we run the guard here to gate the POST itself.
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(message: Constants.internetConnectionMessage)
+                return
+            }
             env.loading.show(Constants.savingIngredientsMessage)
             defer { env.loading.hide() }
             do {
@@ -1119,6 +1129,16 @@ struct MyBarView: View {
         pendingDelete = nil
         let categoryType = myBarCategoryType(for: ingredient)
         Task { @MainActor in
+            // UIKit MyBarViewModel L88-91 + ViewController L350-355 —
+            // every API path guards on `ConnectionMonitor.shared.isConnected`
+            // and surfaces `Constants.internetConnectionMessage` if
+            // offline. Skipping this guard caused the URLSession to
+            // throw a low-level "The Internet connection appears to be
+            // offline" message that didn't match UIKit's branded copy.
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(message: Constants.internetConnectionMessage)
+                return
+            }
             env.loading.show(Constants.deletingIngredientMessage)
             defer { env.loading.hide() }
             do {
