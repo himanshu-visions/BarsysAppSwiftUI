@@ -95,6 +95,19 @@ struct HomeView: View {
     /// iPhone landscape and pushes the Speakeasy card off-screen).
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
+    /// QA fix (iPad landscape Connect-Device side-by-side layout):
+    /// reactive token whose value bumps every time the device
+    /// rotates. SwiftUI doesn't change `verticalSizeClass` across
+    /// iPad full-screen orientations (both stay `.regular`), so to
+    /// trigger body re-evaluation on rotation we observe
+    /// `UIDevice.orientationDidChangeNotification` and bump this
+    /// counter — the actual landscape check then reads
+    /// `UIScreen.main.bounds`, which always returns the current
+    /// orientation's dimensions. iPhone keeps
+    /// `verticalSizeClass == .compact` as its primary signal —
+    /// `isLandscapeSideBySide` combines both paths.
+    @State private var orientationBumpTick: Int = 0
+
     // Ports `isReconnectingStarted` local flag from UIKit.
     @State private var isReconnectingStarted: Bool = false
 
@@ -195,19 +208,30 @@ struct HomeView: View {
                 // expands to fill that same height. In portrait /
                 // iPad we keep the original vertical layout (mainCard
                 // here, speakeasy pinned via safeAreaInset below).
-                if isPhoneLandscape {
-                    // ~65 / 35 split — cap the Speakeasy column at
-                    // 240pt so it stays a slim action card, and let
-                    // the Connect Device column expand to fill the
-                    // rest. On a typical iPhone landscape (content
-                    // area ≈ 700-770pt after the 19pt outer padding +
-                    // 12pt HStack spacing) this lands at roughly
-                    // 65:35 in favour of the main card.
+                if isLandscapeSideBySide {
+                    // ~65 / 35 split — cap the Speakeasy column so it
+                    // stays a slim action card, and let the Connect
+                    // Device column expand to fill the rest. iPhone
+                    // landscape and iPad landscape both use this
+                    // arrangement so the Connect Device card sits on
+                    // the LEFT and the Speakeasy card sits on the RIGHT
+                    // (QA: "make the UI for iPad also similar like it
+                    // comes on iPhone — Connect Device option and
+                    // image on left, Speakeasy on right").
+                    //
+                    // iPad bumps the Speakeasy cap to 360pt because the
+                    // iPad landscape canvas is much wider (~1133pt on
+                    // iPad Mini, more on Air / Pro) — a 240pt cap there
+                    // makes the column read as a thin sliver. iPhone
+                    // unchanged at 240pt (bit-identical to the prior
+                    // iPhone-only branch).
+                    let speakeasyCap: CGFloat =
+                        UIDevice.current.userInterfaceIdiom == .pad ? 360 : 240
                     HStack(alignment: .top, spacing: 12) {
                         mainCard
                             .frame(maxWidth: .infinity)
                         speakeasyCard
-                            .frame(maxWidth: 240, maxHeight: .infinity)
+                            .frame(maxWidth: speakeasyCap, maxHeight: .infinity)
                     }
                     .padding(.horizontal, 19)
                     .padding(.top, 16)
@@ -233,16 +257,37 @@ struct HomeView: View {
             //     the custom tab bar is itself a glass pill)
             //   • iOS <26 → 45pt bottom inset
             //
-            // In iPhone landscape the speakeasy card moves inline next
-            // to the main card (see HStack above), so the bottom inset
-            // renders nothing.
-            if !isPhoneLandscape {
+            // In ANY landscape (iPhone or iPad) the speakeasy card
+            // moves inline next to the main card (see HStack above),
+            // so the bottom inset renders nothing. Portrait on either
+            // idiom still pins the speakeasy card to the bottom safe
+            // area exactly as before.
+            if !isLandscapeSideBySide {
                 speakeasyCard
                     .padding(.horizontal, 24)
                     .padding(.bottom, speakeasyCardBottomInset)
             }
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
+        // QA fix (iPad landscape side-by-side): listen to
+        // `UIDevice.orientationDidChangeNotification` and bump
+        // `orientationBumpTick` on every fire so SwiftUI
+        // re-evaluates the body. iPad's `verticalSizeClass` and
+        // `horizontalSizeClass` are both `.regular` in portrait
+        // AND landscape, so neither environment value flips on
+        // rotation — without an explicit observer the side-by-side
+        // branch wouldn't engage when the user rotates iPad from
+        // portrait to landscape. iPhone is unaffected; its
+        // `verticalSizeClass` already flips between `.regular` /
+        // `.compact` on rotation and the body re-evaluates without
+        // any help.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            orientationBumpTick &+= 1
+        }
         // System toolbar — 1:1 with PairYourDevice
         // (DeviceScreens.swift:68-95). iOS 26 auto-wraps each item in
         // its native Liquid Glass capsule/circle, which is exactly the
@@ -364,6 +409,16 @@ struct HomeView: View {
             )
         }
         .onAppear {
+            // QA fix (iPad landscape side-by-side): activate
+            // accelerometer-driven orientation events so
+            // `UIDevice.orientationDidChangeNotification` actually
+            // fires on rotation. UIKit reference-counts this call
+            // internally, so other `begin…` calls elsewhere in the
+            // app (e.g. `MainTabView`'s tab-bar pill rotation
+            // observer) compose correctly with this one.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
             // viewDidLoad:
             //   AppStateManager.shared.setSpeakEasyCaseState(false)
             //   reconnectNowIfPreviouslyConnected()
@@ -410,6 +465,34 @@ struct HomeView: View {
     private var isPhoneLandscape: Bool {
         verticalSizeClass == .compact
             && UIDevice.current.userInterfaceIdiom != .pad
+    }
+
+    /// True when on iPad in landscape orientation. iPad size classes
+    /// don't differ between portrait and landscape (both `regular`),
+    /// so we read `UIScreen.main.bounds` directly — which always
+    /// returns the current orientation's dimensions. The
+    /// `orientationBumpTick` @State binding above triggers body
+    /// re-evaluation on rotation via
+    /// `UIDevice.orientationDidChangeNotification` so this computed
+    /// property is re-resolved every time the device rotates.
+    /// `_ = orientationBumpTick` keeps the compiler from inlining
+    /// the tick out of the dependency graph.
+    private var isIPadLandscape: Bool {
+        _ = orientationBumpTick  // dependency on rotation signal
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let bounds = UIScreen.main.bounds
+        return bounds.width > bounds.height
+    }
+
+    /// QA fix (ticket "make connect-device home screen UI in landscape
+    /// look the same on iPhone AND iPad — Connect Device card on the
+    /// left, Speakeasy card on the right"). Combines iPhone landscape
+    /// AND iPad landscape into a single "side-by-side cards" signal so
+    /// every landscape layout — regardless of device idiom — renders
+    /// the same horizontal-pair arrangement. Portrait on every device
+    /// keeps the original stacked vertical layout.
+    private var isLandscapeSideBySide: Bool {
+        isPhoneLandscape || isIPadLandscape
     }
 
     // MARK: - Main card (outer + inner 5pt inset + header + hero)
@@ -482,6 +565,21 @@ struct HomeView: View {
                     // overflow. The GeometryReader hands the Image a
                     // CONCRETE frame that `.clipped()` can bind to,
                     // guaranteeing no overflow on any iPad size.
+                    //
+                    // iPad LANDSCAPE side-by-side: the Connect Device
+                    // card sits at ~65% of viewport width with the
+                    // Speakeasy card beside it. A 1.15:1 hero on that
+                    // narrower card would render ~600pt tall and push
+                    // the Make Drink button below the fold. Switch to
+                    // the same 3:1 ratio iPhone landscape uses so the
+                    // hero stays a wide-but-short banner that hugs
+                    // the card header. iPad portrait keeps the
+                    // original 1.15:1 ratio — bit-identical to before.
+                    // Read iPad landscape via the same computed
+                    // signal the layout-decision branches use, so the
+                    // hero aspect ratio flips in sync with the
+                    // side-by-side layout switch.
+                    let iPadAspect: CGFloat = isIPadLandscape ? 3 : 1.15
                     GeometryReader { geo in
                         Image("chooseOptionsBarsysImage")
                             .resizable()
@@ -490,7 +588,7 @@ struct HomeView: View {
                                    height: geo.size.height)
                             .clipped()
                     }
-                    .aspectRatio(1.15, contentMode: .fit)
+                    .aspectRatio(iPadAspect, contentMode: .fit)
                     .accessibilityHidden(true)
                 } else if verticalSizeClass == .compact {
                     // iPhone landscape: render the hero with a
@@ -627,12 +725,16 @@ struct HomeView: View {
         let isIPad = UIDevice.current.userInterfaceIdiom == .pad
         return Button(action: speakeasyTapped) {
             Group {
-                if isPhoneLandscape {
-                    // iPhone landscape: stack the title, description,
-                    // and "Check in" vertically and center them inside
-                    // the card so the narrow speakeasy column reads as
-                    // a focused call-to-action that matches the height
-                    // of the Connect Device card beside it.
+                if isLandscapeSideBySide {
+                    // Any landscape (iPhone or iPad): stack the title,
+                    // description, and "Check in" vertically and center
+                    // them inside the card so the narrower speakeasy
+                    // column reads as a focused call-to-action that
+                    // matches the height of the Connect Device card
+                    // beside it. iPad landscape uses the same vertical
+                    // layout — QA requested the iPad landscape Connect
+                    // Device + Speakeasy arrangement mirror iPhone
+                    // landscape exactly.
                     VStack(spacing: 6) {
                         Text("Barsys Speakeasy")
                             .font(.system(size: 20))
