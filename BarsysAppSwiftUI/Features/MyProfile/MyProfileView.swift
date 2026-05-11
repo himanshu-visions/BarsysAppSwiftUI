@@ -1077,7 +1077,24 @@ struct MyProfileView: View {
                           field: .name)
             },
                        showPencil: true,
-                       onEdit: { focusedField = .name })
+                       // Defer the focus assignment one runloop tick so
+                       // it lands AFTER `viewModel.isEdit = true` (set in
+                       // `profileRow`'s pencil tap closure) has propagated
+                       // through SwiftUI's diff and the parent re-render
+                       // has settled. Setting `focusedField` synchronously
+                       // in the same tick as a `@Published` mutation can
+                       // race the rebuild — iOS sees focus on a stale
+                       // TextField identity and silently drops it (QA:
+                       // "cursor doesn't appear on edit field when user
+                       // taps the edit icon"). The async hop guarantees
+                       // the TextField identity is stable when
+                       // `@FocusState` is mutated, so the caret reliably
+                       // appears and the keyboard rises on every tap.
+                       onEdit: {
+                           DispatchQueue.main.async {
+                               focusedField = .name
+                           }
+                       })
 
             // Row 2 — Phone No. (lightGrayColor label)
             profileRow(label: "Phone No.",
@@ -1100,7 +1117,15 @@ struct MyProfileView: View {
                           field: .email)
             },
                        showPencil: true,
-                       onEdit: { focusedField = .email })
+                       // Same async-defer pattern as the Name row — see
+                       // comment above. Without the hop the email field's
+                       // first tap on the pencil consistently fails to
+                       // raise the keyboard / show the caret.
+                       onEdit: {
+                           DispatchQueue.main.async {
+                               focusedField = .email
+                           }
+                       })
 
             // Row 4 — DoB
             profileRow(label: "DoB",
@@ -1203,6 +1228,16 @@ struct MyProfileView: View {
             .keyboardType(keyboard)
             .textContentType(keyboard == .emailAddress ? .emailAddress : .name)
             .autocapitalization(keyboard == .emailAddress ? .none : .words)
+            // QA fix (edit pencil → cursor not visible): pin the caret
+            // colour to `appBlackColor` (adaptive: dark in light mode,
+            // light in dark mode). Without this `.tint` the SwiftUI
+            // TextField inherits the app accent and the blinking cursor
+            // is essentially invisible against the form surface, so QA
+            // reported "cursor should appear on edit field when user
+            // tapped the edit icon" — the focus was actually engaged
+            // but the user could not see the caret. Mirrors the same
+            // fix applied to SignUpView's `UnderlinedField` L1152.
+            .tint(Color("appBlackColor"))
             .focused($focusedField, equals: field)
             .onChange(of: text.wrappedValue) { _ in
                 // HYDRATION GATE — 1:1 parity with UIKit
