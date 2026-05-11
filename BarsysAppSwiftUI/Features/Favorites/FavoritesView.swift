@@ -1183,6 +1183,20 @@ struct FavoritesView: View {
     /// Pull-to-refresh handler.
     /// UIKit: refresh(_ sender:) → selectedTabIndex == 1 ? refreshMyDrinks : getMyFavouritesDataToShow
     private func refresh() async {
+        // QA fix: dismiss the per-row Edit/Delete "more" popup the
+        // instant pull-to-refresh starts. UIKit's
+        // `FavouritesRecipesAndDrinksViewController.refresh(_:)`
+        // implicitly closes the popover because the entire table
+        // reloads — the SwiftUI port keeps `showMoreMenuFor` alive
+        // across the reload, so the popup would still be hovering
+        // over a row that just got removed/refreshed (QA: "Edit and
+        // delete pop up should gets closed if user refreshed the My
+        // drinks by pulling down"). Clearing the menu state at the
+        // start of every refresh restores UIKit-parity behaviour for
+        // both tabs (My Drinks and Barsys Recipes).
+        if showMoreMenuFor != nil {
+            showMoreMenuFor = nil
+        }
         if selectedTab == .myDrinks {
             // Reset and reload My Drinks from API
             myDrinksResponseModel = nil
