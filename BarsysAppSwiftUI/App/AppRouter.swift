@@ -440,6 +440,35 @@ final class AppRouter: ObservableObject {
     /// `.onChange(of:)` and re-runs `loadStations`.
     @Published var stationsRefreshAfterCleaningTick: Int = 0
 
+    /// Set of recipe IDs that were last opened in BarBot's chat
+    /// context (`.barBotRecipe` in UIKit `RecipePageContext`). This
+    /// covers BOTH:
+    ///   • Barsys-cached recipes returned inline in the BarBot chat
+    ///     payload (`MainBarBotCell+CollectionView.swift` L168 in
+    ///     UIKit sets `currentContext = .barBotRecipe` before push).
+    ///   • AI-generated recipes returned via `getFullRecipeApi`
+    ///     (`WaitingRecipePopUpViewController.swift` L87 sets the
+    ///     same context).
+    ///
+    /// `RecipeDetailView.favouriteButtonState` consults this set to
+    /// return `.addToMyDrinks` for any recipe opened via the BarBot
+    /// chat flow — mirroring UIKit's
+    /// `RecipePageViewModel.shouldShowAddToMyDrinks` which is true
+    /// when `currentContext == .barBotRecipe || .barBotMixlist`.
+    /// The Recipe Page then hides the standard "Add to Favourites"
+    /// button and surfaces "Save to My Drinks" instead (QA fix:
+    /// "AI recipe from barbot can have the save to my drinks
+    /// button only").
+    @Published var barBotRecipeIDs: Set<RecipeID> = []
+
+    /// Records that a recipe should be presented in BarBot context
+    /// when its detail screen opens next. Called by every BarBot
+    /// recipe push site (Barsys-cached + AI). Idempotent; calling
+    /// multiple times for the same id is a no-op after the first.
+    func markRecipeAsBarBotContext(_ id: RecipeID) {
+        barBotRecipeIDs.insert(id)
+    }
+
     /// Payload sent alongside `getStationsRefillTick`. Ports the
     /// `name / quantity / category / perishable / isAddingNewIngredient /
     /// stationName` userInfo dict that UIKit's `getStationsDataNotif`

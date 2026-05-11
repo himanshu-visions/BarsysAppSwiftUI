@@ -2457,7 +2457,37 @@ struct RecipeDetailView: View {
     private enum FavouriteButtonState { case addToMyDrinks, addToFavourites, unfavourite }
 
     private func favouriteButtonState(for recipe: Recipe) -> FavouriteButtonState {
-        if hasUnsavedChanges { return .addToMyDrinks }
+        // QA fix: AI recipes (and any recipe opened from BarBot
+        // chat) should ALWAYS surface "Save to My Drinks" instead
+        // of "Add to Favourites" — they aren't part of the Barsys
+        // catalog and can't be liked/unliked via the standard
+        // favourites endpoint.
+        //
+        // 1:1 with UIKit
+        // `RecipePageViewModel.shouldShowAddToMyDrinks`
+        // (RecipePageViewModel.swift L156-158):
+        //
+        //   var shouldShowAddToMyDrinks: Bool {
+        //       isUserUpdatedQuantity
+        //         || currentContext == .barBotMixlist
+        //         || currentContext == .barBotRecipe
+        //         || recipe?.id.isEmpty == true
+        //   }
+        //
+        // SwiftUI mapping:
+        //   • isUserUpdatedQuantity  → `hasUnsavedChanges`
+        //   • currentContext == .barBotRecipe / .barBotMixlist
+        //     → `router.barBotRecipeIDs.contains(recipe.id)`
+        //       (set by every BarBot recipe push site:
+        //        Barsys-cached chat row + AI getFullRecipeApi)
+        //   • recipe?.id.isEmpty == true
+        //     → `recipe.id.value.isEmpty` — covers brand-new /
+        //       AI-generated recipes that haven't been saved yet
+        let isBarBotContext = router.barBotRecipeIDs.contains(recipe.id)
+        let isUnsavedNewRecipe = recipe.id.value.isEmpty
+        if hasUnsavedChanges || isBarBotContext || isUnsavedNewRecipe {
+            return .addToMyDrinks
+        }
         // Read from local @State so SwiftUI re-renders immediately on tap.
         // `recipe.isFavourite` comes from env.storage which is NOT observable.
         return localIsFavourite ? .unfavourite : .addToFavourites

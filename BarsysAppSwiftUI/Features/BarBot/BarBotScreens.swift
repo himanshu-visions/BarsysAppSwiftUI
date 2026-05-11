@@ -3147,6 +3147,20 @@ struct BarBotCraftView: View {
                     )
                 }
                 env.storage.upsert(recipe: stored)
+                // QA fix (AI recipe from BarBot → Recipe Page): mark
+                // the recipe as having BarBot context BEFORE the push
+                // so `RecipeDetailView.favouriteButtonState` resolves
+                // to `.addToMyDrinks` (Save to My Drinks button) and
+                // the standard Add to Favourites button never renders.
+                // 1:1 with UIKit
+                // `WaitingRecipePopUpViewController.swift` L87:
+                //   `recipePageVc.currentContext = .barBotRecipe`
+                // set after the `/getFullRecipe` response lands. UIKit's
+                // `RecipePageViewModel.shouldShowAddToMyDrinks` is true
+                // for `.barBotRecipe` context — we mirror that via this
+                // tracking set so the SwiftUI Recipe Page behaves the
+                // same on every AI recipe tap.
+                router.markRecipeAsBarBotContext(stored.id)
                 router.push(.recipeDetail(stored.id), in: .barBot)
             }
         }
@@ -3836,6 +3850,18 @@ struct BarBotCraftView: View {
             // route-by-id handler can resolve the recipe.
             let fullRecipe = buildRecipeFromBarsysCached(recipe)
             env.storage.upsert(recipe: fullRecipe)
+            // QA fix (BarBot chat recipe → Recipe Page): mark the
+            // recipe as having BarBot context BEFORE the push so
+            // `RecipeDetailView.favouriteButtonState` resolves to
+            // `.addToMyDrinks` (Save to My Drinks button) instead of
+            // `.addToFavourites`. 1:1 with UIKit
+            // `MainBarBotCell+CollectionView.swift` L168:
+            //   `recipePageVc.currentContext = .barBotRecipe`
+            // set before `pushViewController`. UIKit's
+            // `RecipePageViewModel.shouldShowAddToMyDrinks` checks
+            // `currentContext == .barBotRecipe` to hide the Add to
+            // Favourites button — we mirror that via this set.
+            router.markRecipeAsBarBotContext(fullRecipe.id)
             router.push(.recipeDetail(fullRecipe.id), in: .barBot)
             return
         }
