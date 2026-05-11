@@ -1414,6 +1414,20 @@ struct CraftingView: View {
         // glass-card popup (replaces native .alert which lacks glass styling).
         .barsysPopup($cancelDrinkPopup, onPrimary: {
             HapticService.medium()
+            // 1:1 with UIKit `CraftingViewModel.trackEventCraftCancelled()`
+            // (CraftingViewModel+Analytics.swift L114-172). When the
+            // user confirms cancellation, UIKit fires `craft_cancelled`
+            // with the full property bag (recipe + ingredient array
+            // marked with `poured_ingredients` reflecting WHICH rows
+            // had been dispensed at the moment of cancellation).
+            if let recipe = env.storage.recipe(by: recipeID) {
+                env.analytics.track(
+                    TrackEventName.craftCancelled.rawValue,
+                    properties: craftEventProperties(recipe: recipe,
+                                                     includePouredStatus: true,
+                                                     allPoured: false)
+                )
+            }
             viewModel.cancel(ble: ble)
         }, onSecondary: {
             // "No" — dismiss popup, continue crafting
@@ -1424,7 +1438,18 @@ struct CraftingView: View {
             HapticService.medium()
             didResolvePourConfirm = true
             guard let recipe = env.storage.recipe(by: recipeID) else { return }
-            env.analytics.track(TrackEventName.craftBegin.rawValue)
+            // 1:1 with UIKit `CraftingViewModel.trackEventCraftBegin()`
+            // (CraftingViewModel+Analytics.swift L47-90). The Braze
+            // `craft_begin` event carries the full recipe metadata
+            // (id / name / image / ingredient list) plus the device
+            // info and `source` so Braze can segment crafts by recipe
+            // type AND surface make-again recommendations.
+            env.analytics.track(
+                TrackEventName.craftBegin.rawValue,
+                properties: craftEventProperties(recipe: recipe,
+                                                 includePouredStatus: false,
+                                                 allPoured: false)
+            )
             Task { await viewModel.start(recipe: recipe, ble: ble) }
         }, onSecondary: {
             didResolvePourConfirm = true
@@ -1566,7 +1591,14 @@ struct CraftingView: View {
             || appState.isSpeakEasyCase
             || bypassViaMakeItAgain {
             didResolvePourConfirm = true
-            env.analytics.track(TrackEventName.craftBegin.rawValue)
+            // 1:1 with UIKit `CraftingViewModel.trackEventCraftBegin()`
+            // — full property payload (recipe + ingredients + device).
+            env.analytics.track(
+                TrackEventName.craftBegin.rawValue,
+                properties: craftEventProperties(recipe: recipe,
+                                                 includePouredStatus: false,
+                                                 allPoured: false)
+            )
             // Medium haptic on the implicit "Start Pouring" —
             // matches the haptic the user would have felt if they'd
             // manually confirmed (UIKit fires `HapticService.medium()`
@@ -1592,6 +1624,59 @@ struct CraftingView: View {
                 primaryFillColor: "segmentSelectionColor"
             )
         }
+    }
+
+    /// Builds the property dictionary for `craft_begin` / `craft_completed`
+    /// / `craft_cancelled` Braze events.
+    ///
+    /// 1:1 with UIKit `CraftingViewModel.trackEventCraftBegin()` /
+    /// `trackEventCraftCompleted()` / `trackEventCraftCancelled()`
+    /// (CraftingViewModel+Analytics.swift L47-172). UIKit always passes
+    /// the full property bag — recipe id / name / image, source, device
+    /// info, parent event id, and the ingredient array (with poured
+    /// status on the completed / cancelled variants).
+    ///
+    /// `source` mirrors UIKit's `craftSource`: `"user"` for
+    /// user-created recipes, `"barsys"` otherwise. The "ai" source is
+    /// only emitted by the BarBot flow which has its own helper.
+    private func craftEventProperties(
+        recipe: Recipe,
+        includePouredStatus: Bool,
+        allPoured: Bool
+    ) -> [String: Any] {
+        let name = recipe.name?.isEmpty == true ? "Custom Drink" : (recipe.name ?? "Custom Drink")
+        let image = recipe.image?.url ?? ""
+        let source: String = {
+            let uid = recipe.userId ?? ""
+            return uid.isEmpty ? "barsys" : "user"
+        }()
+        let device = AnalyticsService.deviceInfo(ble: ble)
+        // Filter to pourable ingredients only (excludes garnish /
+        // additional / additionals) so the Braze event matches what
+        // UIKit's `buildIngredientDicts` emits — UIKit pulls from
+        // `recipeIngredientsArr` which is already filtered to base+mixer.
+        let pourableIngredients = (recipe.ingredients ?? []).filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional" && p != "additionals"
+        }
+        let ingredients = AnalyticsService.buildIngredientProperties(
+            from: pourableIngredients,
+            unit: UserDefaultsClass.getPreferencesUnit().rawValue,
+            includePouredStatus: includePouredStatus,
+            currentPouringIndex: viewModel.currentIngredient,
+            allPoured: allPoured
+        )
+        var props: [String: Any] = [
+            "parent_event_id": "",
+            "deviceType": device.type,
+            "deviceId": device.name,
+            "recipe_id": recipe.id.value,
+            "recipe_name": name,
+            "recipe_image": image,
+            "source": source,
+            "ingredients": ingredients
+        ]
+        return props
     }
 
     /// Fallback display when `glassStatusText` is empty — keeps the UI
@@ -2006,6 +2091,62 @@ struct DrinkCompleteView: View {
         return raw.getImageUrl()
     }
 
+    /// Builds the `craft_completed` Braze event property dictionary.
+    /// 1:1 with UIKit `DrinkCompleteViewModel.trackCraftCompleted(...)`
+    /// (DrinkCompleteViewModel.swift L207-239). Ingredients are
+    /// emitted with `poured_ingredients: true` for ALL rows because
+    /// the craft has finished by the time this fires (UIKit calls
+    /// `buildIngredientDictArray(...isPoured: true)`).
+    private func craftCompletedProperties(recipe: Recipe) -> [String: Any] {
+        let name = recipe.name?.isEmpty == true ? "Custom Drink" : (recipe.name ?? "Custom Drink")
+        let image = recipe.image?.url ?? ""
+        let source: String = {
+            let uid = recipe.userId ?? ""
+            return uid.isEmpty ? "barsys" : "user"
+        }()
+        let device = AnalyticsService.deviceInfo(ble: ble)
+        let pourableIngredients = (recipe.ingredients ?? []).filter { ing in
+            let p = (ing.category?.primary ?? "").lowercased()
+            return p != "garnish" && p != "additional" && p != "additionals"
+        }
+        let ingredients = AnalyticsService.buildIngredientProperties(
+            from: pourableIngredients,
+            unit: UserDefaultsClass.getPreferencesUnit().rawValue,
+            includePouredStatus: true,
+            currentPouringIndex: pourableIngredients.count,
+            allPoured: true
+        )
+        return [
+            "parent_event_id": "",
+            "deviceType": device.type,
+            "deviceId": device.name,
+            "recipe_id": recipe.id.value,
+            "recipe_name": name,
+            "recipe_image": image,
+            "source": source,
+            "ingredients": ingredients
+        ]
+    }
+
+    /// Builds the `craft_customise` Braze event property dictionary.
+    /// 1:1 with UIKit `DrinkCompleteViewModel.trackCustomize()`
+    /// (DrinkCompleteViewModel.swift L255-272). UIKit emits only
+    /// `parent_event_id`, `deviceType`, `deviceId` and `source` for
+    /// the customise tap — NOT the ingredient array or recipe id.
+    private func craftCustomiseProperties(recipe: Recipe) -> [String: Any] {
+        let source: String = {
+            let uid = recipe.userId ?? ""
+            return uid.isEmpty ? "barsys" : "user"
+        }()
+        let device = AnalyticsService.deviceInfo(ble: ble)
+        return [
+            "parent_event_id": "",
+            "deviceType": device.type,
+            "deviceId": device.name,
+            "source": source
+        ]
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let recipe = env.storage.recipe(by: recipeID) {
@@ -2121,7 +2262,19 @@ struct DrinkCompleteView: View {
                             // UIKit: customizeButton, identical styling
                             Button {
                                 HapticService.light()
-                                env.analytics.track(TrackEventName.craftCustomise.rawValue)
+                                // 1:1 with UIKit
+                                // `DrinkCompleteViewModel.trackCustomize()`
+                                // — Braze `craft_customise` carries
+                                // `parent_event_id` / device info /
+                                // `source` (NOT ingredients or recipe id).
+                                if let recipe = env.storage.recipe(by: recipeID) {
+                                    env.analytics.track(
+                                        TrackEventName.craftCustomise.rawValue,
+                                        properties: craftCustomiseProperties(recipe: recipe)
+                                    )
+                                } else {
+                                    env.analytics.track(TrackEventName.craftCustomise.rawValue)
+                                }
                                 router.popToRoot()
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                     router.push(.recipeDetail(recipeID))
@@ -2189,7 +2342,18 @@ struct DrinkCompleteView: View {
         .toolbar { drinkCompleteToolbar }
         .chooseOptionsStyleNavBar()
         .onAppear {
-            env.analytics.track(TrackEventName.craftCompleted.rawValue)
+            // 1:1 with UIKit `DrinkCompleteViewModel.trackCraftCompleted(...)`
+            // (DrinkCompleteViewModel.swift L207-239) — `craft_completed`
+            // Braze event carries the full recipe + device + ingredient
+            // metadata with `poured_ingredients: true` for every row.
+            if let recipe = env.storage.recipe(by: recipeID) {
+                env.analytics.track(
+                    TrackEventName.craftCompleted.rawValue,
+                    properties: craftCompletedProperties(recipe: recipe)
+                )
+            } else {
+                env.analytics.track(TrackEventName.craftCompleted.rawValue)
+            }
 
             // 1:1 port of UIKit DrinkCompleteViewController viewDidLoad L126-134:
             // Rating prompt shown on a 24-hour interval (perishableInterval = 86400s).

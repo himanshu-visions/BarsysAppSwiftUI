@@ -817,18 +817,24 @@ struct MyProfileView: View {
             if !viewModel.isProfileChanged {
                 Task { await viewModel.fetchProfile() }
             }
-            // 1:1 with UIKit `MyProfileViewController` L130 —
-            //   TrackEventsClass().addBrazeCustomEventWithEventName(
-            //       eventName: TrackEventName.viewProfile.rawValue,
-            //       properties: ["user_id": ..., "date": Date()])
-            // UIKit always sends `user_id` + `date` and adds `deviceId`
-            // when a BLE device is connected. Mirroring all three so
-            // Braze can segment "profile viewers in last N days" and
-            // tie the event to a user even when the SDK has not yet
-            // finished a `changeUser(...)` round-trip.
+            // 1:1 with UIKit `MyProfileViewController.viewDidLoad`
+            // L115-130 — the `profile_viewed` Braze event sends the
+            // FULL profile snapshot at view time so Braze audiences
+            // can be segmented by country, platform, device, etc.
+            // Properties shape (UIKit MyProfileViewController.swift
+            // L115-130):
+            //   "date", "country", "device_model", "email", "name",
+            //   "phone", "platform", "user_id",
+            //   "deviceId" (only when a BLE device is connected)
             var props: [String: Any] = [
-                "user_id": UserDefaultsClass.getUserId() ?? "",
-                "date": Date()
+                "date": Date(),
+                "country": UserDefaultsClass.getCountryName() ?? "",
+                "device_model": UIDevice.current.model,
+                "email": UserDefaultsClass.getEmail() ?? "",
+                "name": UserDefaultsClass.getName() ?? "",
+                "phone": UserDefaultsClass.getPhone() ?? "",
+                "platform": "iOS",
+                "user_id": UserDefaultsClass.getUserId() ?? ""
             ]
             if let connected = env.ble.connected.first {
                 props["deviceId"] = connected.name

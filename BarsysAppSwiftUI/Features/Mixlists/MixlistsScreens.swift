@@ -325,22 +325,10 @@ struct MixlistListView: View {
         .onAppear {
             // 1:1 with UIKit `MixlistViewController` L73 —
             //   TrackEventsClass().addBrazeCustomEventWithEventName(
-            //       eventName: TrackEventName.viewMixlistsListing.rawValue,
-            //       properties: ["user_id": ..., "date": Date()])
-            // Fires every time the Cocktail Kits / Mixlists tab
-            // becomes visible so Braze can track content-discovery
-            // sessions and trigger IAMs accordingly. Properties match
-            // the screen-view baseline used by FavoritesView L299
-            // (`user_id` + `date`) so Braze can attribute the event
-            // to a user and segment "viewed Cocktail Kits in last
-            // N days".
-            env.analytics.track(
-                TrackEventName.viewMixlistsListing.rawValue,
-                properties: [
-                    "user_id": UserDefaultsClass.getUserId() ?? "",
-                    "date": Date()
-                ]
-            )
+            //       eventName: TrackEventName.viewMixlistsListing.rawValue)
+            // UIKit fires this event with NO properties — match exactly
+            // so Braze sees the same minimal payload from both apps.
+            env.analytics.track(TrackEventName.viewMixlistsListing.rawValue)
         }
         .toolbar {
             // Leading: back chevron — Cocktail Kits is pushed onto the
@@ -1922,18 +1910,28 @@ struct MixlistDetailView: View {
             _ = try? await env.api.likeUnlike(
                 recipeId: recipe.id.value, isLike: willBeFav)
         }
-        // 1:1 with UIKit `FavoriteRecipeApiService.swift` Braze event —
-        // carries `recipe_id` + `recipe_name` so the same audience the
-        // RecipesScreens path produces is generated from the Mixlist
-        // recipes-list path too.
-        env.analytics.track(
-            (willBeFav ? TrackEventName.favouriteRecipeAdded
-                       : TrackEventName.favouriteRecipeRemoved).rawValue,
-            properties: [
+        // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
+        // (FavoriteRecipeApiService.swift L300-332) — Braze event
+        // packs parent_event_id, recipe_id, recipe_name, ingredients
+        // and conditional deviceType/deviceId (only when a device is
+        // connected). Same payload as RecipesScreens / FavoritesView.
+        do {
+            var props: [String: Any] = [
+                "parent_event_id": "",
                 "recipe_id": recipe.id.value,
-                "recipe_name": recipe.displayName
+                "recipe_name": recipe.displayName,
+                "ingredients": recipe.ingredients ?? []
             ]
-        )
+            if let connected = ble.connected.first {
+                props["deviceType"] = connected.kind.displayName
+                props["deviceId"] = connected.name
+            }
+            env.analytics.track(
+                (willBeFav ? TrackEventName.favouriteRecipeAdded
+                           : TrackEventName.favouriteRecipeRemoved).rawValue,
+                properties: props
+            )
+        }
         env.alerts.show(message: wasFav ? Constants.unlikeSuccessMessage : Constants.likeSuccessMessage)
     }
 }

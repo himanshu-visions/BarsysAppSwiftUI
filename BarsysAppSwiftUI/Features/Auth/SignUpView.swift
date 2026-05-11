@@ -312,20 +312,23 @@ final class SignUpViewModel: ObservableObject {
             } else {
                 try await api.sendOtp(phone: formattedPhone)
             }
-            // 1:1 with UIKit `SignUpViewModel` — Braze events for signup
-            // OTP requests carry `phone_number` (digits, prefixed with the
-            // country dial code via `formattedPhone`) and `country_code`
-            // (the user-picked dial code, e.g. "1" for US, "91" for IN)
-            // so audiences can be segmented by country / phone in Braze
-            // without re-deriving from the raw string.
-            let signupProps: [String: Any] = [
-                "phone_number": formattedPhone,
-                "country_code": selectedCountry?.dial_code ?? ""
-            ]
+            // 1:1 with UIKit `SignUpViewModel.trackGetOtpSuccess(...)`
+            // (BarsysApp/Controllers/SignUp/SignUpViewModel.swift L230-242):
+            //   properties = [full_name, email, date_of_birth, phone_number]
+            // UIKit sends the user's full name, email, DOB and phone with the
+            // `signup_get_otp` / `signup_successful` events so Braze audiences
+            // built from those events can be hydrated with profile traits.
+            // The OTP-resend / OTP-fail variants fire with NO properties in
+            // UIKit (L244-256) — match that exactly.
             if isResend {
-                analytics.track(TrackEventName.tapSignupResend.rawValue,
-                                properties: signupProps)
+                analytics.track(TrackEventName.tapSignupResend.rawValue)
             } else {
+                let signupProps: [String: Any] = [
+                    "full_name": fullName,
+                    "email": email,
+                    "date_of_birth": dobYearMonthDay,
+                    "phone_number": formattedPhone
+                ]
                 analytics.track(TrackEventName.tapSignupGetOTP.rawValue,
                                 properties: signupProps)
             }
@@ -333,18 +336,10 @@ final class SignUpViewModel: ObservableObject {
             startTimer()
             alerts.show(message: Constants.otpSentSuccessfully)
         } catch let appErr as AppError {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
-                            properties: [
-                                "phone_number": formattedPhone,
-                                "country_code": selectedCountry?.dial_code ?? ""
-                            ])
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
             alerts.show(message: appErr.errorDescription ?? Constants.signUpError)
         } catch {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
-                            properties: [
-                                "phone_number": formattedPhone,
-                                "country_code": selectedCountry?.dial_code ?? ""
-                            ])
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
             alerts.show(message: error.localizedDescription)
         }
     }
@@ -414,31 +409,28 @@ final class SignUpViewModel: ObservableObject {
                                       phone: formattedPhone,
                                       dob: dob)
             }
-            // 1:1 with UIKit signup-success Braze event — carries
-            // `phone_number` + `country_code` so a `signup_successful`
-            // event in Braze can be tied to the same audience as the
-            // upstream `signup_get_otp` / `signup_resend_otp` events.
+            // 1:1 with UIKit `SignUpViewModel.trackRegisterSuccess(...)`
+            // (BarsysApp/Controllers/SignUp/SignUpViewModel.swift L258-270):
+            //   properties = [full_name, email, date_of_birth, phone_number]
+            // signup_successful sends the same property set as signup_get_otp
+            // so Braze can attribute a completed signup back to the OTP
+            // request event and hydrate audiences with profile traits.
             analytics.track(TrackEventName.tapSignupRegister.rawValue,
                             properties: [
-                                "phone_number": formattedPhone,
-                                "country_code": selectedCountry?.dial_code ?? ""
+                                "full_name": fullName,
+                                "email": email,
+                                "date_of_birth": dobYearMonthDay,
+                                "phone_number": formattedPhone
                             ])
             stopTimerInternal()
             onSuccess()
         } catch let appErr as AppError {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
-                            properties: [
-                                "phone_number": formattedPhone,
-                                "country_code": selectedCountry?.dial_code ?? ""
-                            ])
+            // UIKit fires `signup_fail` with NO properties (UIKit L251-256).
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
             otp = ""
             alerts.show(message: appErr.errorDescription ?? Constants.signUpError)
         } catch {
-            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue,
-                            properties: [
-                                "phone_number": formattedPhone,
-                                "country_code": selectedCountry?.dial_code ?? ""
-                            ])
+            analytics.track(TrackEventName.signupUnsuccessfulOTP.rawValue)
             otp = ""
             alerts.show(message: error.localizedDescription)
         }
@@ -684,6 +676,16 @@ struct SignUpView: View {
                 showDatePicker = false
             }
             .presentationDetents([.height(340)])
+        }
+        // 1:1 with UIKit `SignUpViewController.viewDidLoad` L123:
+        //   signUpViewModel.trackSignupBegin()
+        // Fires `signup_begin` Braze event (no properties) when the
+        // SignUp screen first becomes visible — mirrors UIKit's
+        // viewDidLoad behavior. Note: UIKit also fires `signup_begin`
+        // when the user taps "Create one" on Login (LoginViewModel
+        // L322-324) — that path is preserved in LoginView L648.
+        .onAppear {
+            env.analytics.track(TrackEventName.tapLoginCreateAccount.rawValue)
         }
     }
 

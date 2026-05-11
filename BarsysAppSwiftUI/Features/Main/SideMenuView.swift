@@ -1173,13 +1173,16 @@ private struct SideMenuPanel: View {
             }
         }()
 
-        // Matching analytics events from SideMenuViewController:
+        // 1:1 with UIKit `SideMenuViewController` L300-320 — every
+        // side-menu navigation row fires its corresponding Braze event
+        // with NO properties. Using the TrackEventName enum values so
+        // the wiring stays in sync if the underlying string ever changes.
         switch name {
-        case "faqs":            env.analytics.track("faq")
-        case "contact us":      env.analytics.track("contact_us")
-        case "privacy policy":  env.analytics.track("privacy_policy")
-        case "terms of service":env.analytics.track("terms_of_service")
-        case "about us":        env.analytics.track("about_us")
+        case "faqs":            env.analytics.track(TrackEventName.faqViewed.rawValue)
+        case "contact us":      env.analytics.track(TrackEventName.contactUsViewed.rawValue)
+        case "privacy policy":  env.analytics.track(TrackEventName.privacyPolicyViewed.rawValue)
+        case "terms of service":env.analytics.track(TrackEventName.termsOfServiceViewed.rawValue)
+        case "about us":        env.analytics.track(TrackEventName.aboutUsViewed.rawValue)
         default: break
         }
 

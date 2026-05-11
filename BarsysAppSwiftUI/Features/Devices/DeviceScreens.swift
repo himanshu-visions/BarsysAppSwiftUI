@@ -155,20 +155,13 @@ struct PairDeviceView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .onAppear {
-            // 1:1 with UIKit `ChooseOptionsDashboardViewController`
-            // `deviceAvailableListViewed` analytics call — fires each
-            // time the Pair Your Device listing screen becomes
-            // visible so Braze can track "started pairing" sessions.
-            // Properties match the screen-view baseline used by
-            // FavoritesView L299 (`user_id` + `date`) so the event
-            // can be attributed to a user even before any pairing
-            // succeeds.
+            // 1:1 with UIKit `PairYourDeviceViewController.viewWillAppear`
+            // L209 — `view_barbot_connect_device_screen` fires each
+            // time the Pair Your Device screen becomes visible so
+            // Braze can track "started pairing" sessions. UIKit
+            // sends NO properties for this event.
             env.analytics.track(
-                TrackEventName.deviceAvailableListViewed.rawValue,
-                properties: [
-                    "user_id": UserDefaultsClass.getUserId() ?? "",
-                    "date": Date()
-                ]
+                TrackEventName.viewBarBotConnectDeviceScreenViewed.rawValue
             )
         }
         .toolbar {
@@ -271,6 +264,25 @@ struct PairDeviceView: View {
         // Clear previous scan results before starting a new filtered scan
         // (UIKit creates a fresh peripheralsDetectedArray each time DeviceList opens)
         ble.clearDiscovered()
+
+        // 1:1 with UIKit `DeviceListViewController.viewDidLoad` L102 —
+        //   TrackEventsClass().addBrazeCustomEventWithEventName(
+        //       eventName: TrackEventName.deviceAvailableListViewed.rawValue,
+        //       properties: ["device_type": deviceType])
+        // UIKit passes the human-readable device title ("Barsys 360" /
+        // "Barsys Coaster" / "Barsys Shaker") so Braze segments can
+        // be split by device family.
+        let deviceTypeTitle: String = {
+            switch kind {
+            case .barsys360: return Constants.barsys360NameTitle
+            case .coaster: return Constants.barsysCoasterTitle
+            case .shaker: return Constants.barsysShakerTitle
+            }
+        }()
+        env.analytics.track(
+            TrackEventName.deviceAvailableListViewed.rawValue,
+            properties: ["device_type": deviceTypeTitle]
+        )
 
         // Start scanning filtered by the selected device kind
         // (ports the filtering in bleDidDiscoverDevice that checks selectedDeviceType)

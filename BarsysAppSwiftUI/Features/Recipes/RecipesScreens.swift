@@ -610,16 +610,26 @@ struct ExploreRecipesView: View {
                         let willBeFav = !env.storage.favorites().contains(recipe.id)
                         catalog.toggleFavourite(recipeId: recipe.id)
                         favouritesRefreshTick &+= 1
-                        // 1:1 with UIKit `FavoriteRecipeApiService.swift`
-                        // — Braze event carries `recipe_id` + `recipe_name`
-                        // for both the add and remove side of the toggle.
+                        // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
+                        // (FavoriteRecipeApiService.swift L300-332). UIKit
+                        // packs parent_event_id, recipe_id, recipe_name,
+                        // ingredients and conditionally deviceType/deviceId
+                        // (only when a device is connected) so the Braze
+                        // event matches the upstream `craft_begin` payload.
+                        var props: [String: Any] = [
+                            "parent_event_id": "",
+                            "recipe_id": recipe.id.value,
+                            "recipe_name": recipe.displayName,
+                            "ingredients": recipe.ingredients ?? []
+                        ]
+                        if let connected = ble.connected.first {
+                            props["deviceType"] = connected.kind.displayName
+                            props["deviceId"] = connected.name
+                        }
                         env.analytics.track(
                             (willBeFav ? TrackEventName.favouriteRecipeAdded
                                        : TrackEventName.favouriteRecipeRemoved).rawValue,
-                            properties: [
-                                "recipe_id": recipe.id.value,
-                                "recipe_name": recipe.displayName
-                            ]
+                            properties: props
                         )
                         env.alerts.show(message: willBeFav
                                         ? Constants.likeSuccessMessage
@@ -718,19 +728,11 @@ struct ExploreRecipesView: View {
         .onAppear {
             // 1:1 with UIKit `ExploreRecipesViewController` L62 —
             //   TrackEventsClass().addBrazeCustomEventWithEventName(
-            //       eventName: TrackEventName.viewRecipesListing.rawValue,
-            //       properties: ["user_id": ..., "date": Date()])
-            // Fires every time the All Recipes tab becomes visible.
-            // Properties match the screen-view baseline used by
-            // FavoritesView L299 (`user_id` + `date`) so Braze can
-            // attribute the event to a user and segment "All Recipes
-            // viewers" cohorts.
+            //       eventName: TrackEventName.viewRecipesListing.rawValue)
+            // UIKit fires this event with NO properties — match exactly
+            // so Braze sees the same minimal payload from both apps.
             env.analytics.track(
-                TrackEventName.viewRecipesListing.rawValue,
-                properties: [
-                    "user_id": UserDefaultsClass.getUserId() ?? "",
-                    "date": Date()
-                ]
+                TrackEventName.viewRecipesListing.rawValue
             )
             // Re-project favourites from storage on every appear so a
             // RecipeDetail toggle (popped back via the nav stack)
@@ -2517,17 +2519,30 @@ struct RecipeDetailView: View {
                             await MainActor.run { env.catalog.reloadRecipesFromStorage() }
                         }
                     }
-                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
-                    // Braze event — `favorite_recipe_added` carries
-                    // `recipe_id` + `recipe_name` so audiences can be
-                    // segmented by individual recipe in dashboards.
-                    env.analytics.track(
-                        TrackEventName.favouriteRecipeAdded.rawValue,
-                        properties: [
+                    // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
+                    // (FavoriteRecipeApiService.swift L300-332) — Braze
+                    // event packs parent_event_id, recipe_id, recipe_name,
+                    // ingredients and conditional deviceType/deviceId
+                    // (only when a device is connected). UIKit also adds
+                    // `parent_event_id = Device.shared.craftBeginEventID`
+                    // but that is empty here since no craft has begun;
+                    // emitting "" matches UIKit's pre-craft state.
+                    do {
+                        var props: [String: Any] = [
+                            "parent_event_id": "",
                             "recipe_id": recipe.id.value,
-                            "recipe_name": recipe.displayName
+                            "recipe_name": recipe.displayName,
+                            "ingredients": recipe.ingredients ?? []
                         ]
-                    )
+                        if let connected = ble.connected.first {
+                            props["deviceType"] = connected.kind.displayName
+                            props["deviceId"] = connected.name
+                        }
+                        env.analytics.track(
+                            TrackEventName.favouriteRecipeAdded.rawValue,
+                            properties: props
+                        )
+                    }
                     env.alerts.show(message: Constants.likeSuccessMessage)
                 case .unfavourite:
                     localIsFavourite = false
@@ -2575,16 +2590,25 @@ struct RecipeDetailView: View {
                             await MainActor.run { env.catalog.reloadRecipesFromStorage() }
                         }
                     }
-                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
-                    // Braze event — `favorite_recipe_removed` carries
-                    // `recipe_id` + `recipe_name` to mirror the add event.
-                    env.analytics.track(
-                        TrackEventName.favouriteRecipeRemoved.rawValue,
-                        properties: [
+                    // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
+                    // (FavoriteRecipeApiService.swift L300-332). Same
+                    // property bag as the `favorite_recipe_added` path.
+                    do {
+                        var props: [String: Any] = [
+                            "parent_event_id": "",
                             "recipe_id": recipe.id.value,
-                            "recipe_name": recipe.displayName
+                            "recipe_name": recipe.displayName,
+                            "ingredients": recipe.ingredients ?? []
                         ]
-                    )
+                        if let connected = ble.connected.first {
+                            props["deviceType"] = connected.kind.displayName
+                            props["deviceId"] = connected.name
+                        }
+                        env.analytics.track(
+                            TrackEventName.favouriteRecipeRemoved.rawValue,
+                            properties: props
+                        )
+                    }
                     env.alerts.show(message: Constants.unlikeSuccessMessage)
                 }
             } label: {
@@ -4326,8 +4350,28 @@ struct EditRecipeView: View {
                    let url = urlString.getImageUrl() {
                     remoteImageURL = url
                 }
+
+                // 1:1 with UIKit `EditViewModel.addEventForBeginEditRecipe()`
+                // (EditViewModel+Analytics.swift L14-38) — Braze event
+                // carries recipe_id, recipe_name, ingredients (the INITIAL
+                // ingredient list before any user edits) and conditional
+                // deviceType/deviceId (only when a device is connected).
+                var props: [String: Any] = [
+                    "recipe_id": recipe.id.value,
+                    "recipe_name": recipe.name ?? "",
+                    "ingredients": recipe.ingredients ?? []
+                ]
+                if let connected = ble.connected.first {
+                    props["deviceType"] = connected.kind.displayName
+                    props["deviceId"] = connected.name
+                }
+                env.analytics.track(
+                    TrackEventName.editRecipeBegin.rawValue,
+                    properties: props
+                )
+            } else {
+                env.analytics.track(TrackEventName.editRecipeBegin.rawValue)
             }
-            env.analytics.track(TrackEventName.editRecipeBegin.rawValue)
         }
     }
 
@@ -4423,6 +4467,12 @@ struct EditRecipeView: View {
             Spacer()
             Button {
                 HapticService.light()
+                // 1:1 with UIKit `EditViewController` L210:
+                //   TrackEventsClass().addBrazeCustomEventWithEventName(
+                //       eventName: TrackEventName.editRecipeCancel.rawValue)
+                // Fires when the user dismisses the Edit screen via
+                // the X button. UIKit sends NO properties for this event.
+                env.analytics.track(TrackEventName.editRecipeCancel.rawValue)
                 dismiss()
             } label: {
                 // UIKit storyboard (EditViewController scene ub5-ev-1ng):
@@ -5374,7 +5424,26 @@ struct EditRecipeView: View {
                 // UIKit's `hideGlassLoader()` call inside the success
                 // closure at EditViewController.swift L268).
                 env.loading.hide()
-                env.analytics.track(TrackEventName.editRecipeSuccessful.rawValue)
+                // 1:1 with UIKit `EditViewModel.addEventForSaveEditRecipeSuccessful(...)`
+                // (EditViewModel+Analytics.swift L40-66) — Braze event
+                // carries the SAVED recipe state (recipe_id, recipe_name,
+                // ingredients reflecting the user's edits) plus conditional
+                // deviceType/deviceId.
+                do {
+                    var props: [String: Any] = [
+                        "recipe_id": recipeToSave.id.value,
+                        "recipe_name": trimmed,
+                        "ingredients": recipeToSave.ingredients ?? []
+                    ]
+                    if let connected = ble.connected.first {
+                        props["deviceType"] = connected.kind.displayName
+                        props["deviceId"] = connected.name
+                    }
+                    env.analytics.track(
+                        TrackEventName.editRecipeSuccessful.rawValue,
+                        properties: props
+                    )
+                }
                 // UIKit: isCustomizingRecipe || .create → recipeAddMessage,
                 //        .update → recipeUpdateMessage (EditViewModel+API L53-55)
                 let successMsg = isCustomizing

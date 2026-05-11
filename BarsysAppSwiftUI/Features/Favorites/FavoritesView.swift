@@ -840,16 +840,26 @@ struct FavoritesView: View {
             Task { @MainActor in
                 do {
                     _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: false)
-                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
-                    // Braze event — `recipe_id` + `recipe_name` so the
-                    // event can be segmented per-recipe in dashboards.
-                    env.analytics.track(
-                        TrackEventName.favouriteRecipeRemoved.rawValue,
-                        properties: [
+                    // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
+                    // (FavoriteRecipeApiService.swift L300-332) — Braze
+                    // event packs parent_event_id, recipe_id, recipe_name,
+                    // ingredients and conditional deviceType/deviceId.
+                    do {
+                        var props: [String: Any] = [
+                            "parent_event_id": "",
                             "recipe_id": recipe.id.value,
-                            "recipe_name": recipe.displayName
+                            "recipe_name": recipe.displayName,
+                            "ingredients": recipe.ingredients ?? []
                         ]
-                    )
+                        if let connected = ble.connected.first {
+                            props["deviceType"] = connected.kind.displayName
+                            props["deviceId"] = connected.name
+                        }
+                        env.analytics.track(
+                            TrackEventName.favouriteRecipeRemoved.rawValue,
+                            properties: props
+                        )
+                    }
                     // UIKit: showDefaultAlert(message: responseMessage,
                     //                         okTitle: "OK") { okAction in ... }
                     env.alerts.show(message: Constants.unlikeSuccessMessage) {
@@ -885,18 +895,26 @@ struct FavoritesView: View {
             Task { @MainActor in
                 do {
                     _ = try await env.api.likeUnlike(recipeId: recipe.id.value, isLike: willBeFav)
-                    // 1:1 with UIKit `FavoriteRecipeApiService.swift`
-                    // Braze event — `recipe_id` + `recipe_name` for both
-                    // sides of the toggle (consistent with the Tab 0
-                    // unlike branch above and the listing screens).
-                    env.analytics.track(
-                        (willBeFav ? TrackEventName.favouriteRecipeAdded
-                                   : TrackEventName.favouriteRecipeRemoved).rawValue,
-                        properties: [
+                    // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
+                    // (FavoriteRecipeApiService.swift L300-332). Same
+                    // property bag for both sides of the toggle.
+                    do {
+                        var props: [String: Any] = [
+                            "parent_event_id": "",
                             "recipe_id": recipe.id.value,
-                            "recipe_name": recipe.displayName
+                            "recipe_name": recipe.displayName,
+                            "ingredients": recipe.ingredients ?? []
                         ]
-                    )
+                        if let connected = ble.connected.first {
+                            props["deviceType"] = connected.kind.displayName
+                            props["deviceId"] = connected.name
+                        }
+                        env.analytics.track(
+                            (willBeFav ? TrackEventName.favouriteRecipeAdded
+                                       : TrackEventName.favouriteRecipeRemoved).rawValue,
+                            properties: props
+                        )
+                    }
                     env.alerts.show(message: willBeFav
                                     ? Constants.likeSuccessMessage
                                     : Constants.unlikeSuccessMessage) {
