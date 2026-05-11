@@ -3713,6 +3713,15 @@ struct MakeMyOwnView: View {
         .sheet(isPresented: $viewModel.showPicker) {
             IngredientPicker { viewModel.addIngredient($0); viewModel.showPicker = false }
         }
+        // 1:1 with UIKit `TabBarViewController` L309 —
+        //   TrackEventsClass().addBrazeCustomEventWithEventName(
+        //       eventName: TrackEventName.makeMyOwnScreenViewed.rawValue)
+        // UIKit fires this event with NO properties when the Make My
+        // Own tab becomes selected. We mirror it via `.onAppear` so
+        // the event fires every time the screen surfaces.
+        .onAppear {
+            env.analytics.track(TrackEventName.makeMyOwnScreenViewed.rawValue)
+        }
     }
 }
 
