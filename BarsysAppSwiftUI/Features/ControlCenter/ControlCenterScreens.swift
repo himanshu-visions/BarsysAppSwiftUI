@@ -3012,28 +3012,129 @@ struct StationsMenuView: View {
                     )
                     return
                 }
-                env.loading.show("Detecting ingredient…")
+                env.loading.show("Adding ingredients")
                 defer { env.loading.hide() }
                 do {
                     let detected = try await env.api.uploadIngredientImage(data)
-                    // Mirror UIKit `baseAndMixerIngredientsArrayFiltered`
-                    // (StationsMenuViewController+IngredientDetection
-                    // L72-78) — drop garnish / additional ingredients so
-                    // the user can't assign a lemon wedge or mint leaf
-                    // to a pump station.
-                    let filtered = detected.filter {
-                        let p = ($0.category?.primary ?? "").lowercased()
-                        return !p.isEmpty && p != "garnish" && p != "additional"
-                    }
-                    self.detectedIngredients = filtered
-                    let names = filtered.compactMap { $0.name }.filter { !$0.isEmpty }
-                    guard !names.isEmpty else {
-                        env.alerts.show(message: "No valid ingredients detected.")
+                    // 1:1 port of UIKit
+                    // `StationsMenuViewController+IngredientDetection.didSelectImagesFromPhotos`
+                    // (L14-95).
+                    //
+                    // UIKit's branching tree, in order:
+                    //   1. Detection returned empty / nil → ingredientCannotBeUsedHere.
+                    //   2. Filter to base/mixer (drop garnish/additional).
+                    //      If the filtered list is empty BUT the raw list
+                    //      had garnish/additional rows → still
+                    //      ingredientCannotBeUsedHere.
+                    //   3. If filtered count > 1 → moreThanOneIngredientIdentified.
+                    //   4. If first.category is nil → ingredientCannotBeUsedHere.
+                    //   5. If first.category.primary or .secondary is
+                    //      empty/nil → ingredientCannotBeUsedHere.
+                    //   6. Otherwise build a config and route directly
+                    //      into `updateStationFromImageResponse(config:)`
+                    //      which shows the DeviceDetectedPopUpVc.
+                    //
+                    // Previously the SwiftUI port:
+                    //   • showed a `.multipleIngredients` picker even
+                    //     when a single ingredient was returned (UIKit
+                    //     NEVER shows a picker — single → direct popup,
+                    //     >1 → error alert),
+                    //   • skipped the duplicate-station guard
+                    //     (`checkIngredientExistsInOtherStation` /
+                    //     `hasSameIngredientInStation`),
+                    //   • used a generic "No valid ingredients detected"
+                    //     message instead of `ingredientCannotBeUsedHere`,
+                    //   • didn't surface `moreThanOneIngredientIdentified`.
+                    //
+                    // Restoring the UIKit guard cascade so the user sees
+                    // the same alerts UIKit shows, and only single valid
+                    // ingredients ever reach the "Bottle Identified" popup.
+
+                    // Guard 1 — raw detection empty.
+                    guard !detected.isEmpty else {
+                        env.alerts.show(
+                            title: Constants.ingredientCannotBeUsedHere,
+                            message: "",
+                            primary: Constants.okButtonTitle
+                        )
                         return
                     }
-                    popup = .multipleIngredients(
-                        title: "Pick the detected ingredient",
-                        ingredients: names
+
+                    let filtered = detected.filter {
+                        let p = ($0.category?.primary ?? "").lowercased()
+                        return p != "garnish" && p != "additional" && p != "additionals"
+                    }
+
+                    // Guard 2 — only garnish/additional in raw response
+                    // (or empty after filter for any reason).
+                    guard !filtered.isEmpty else {
+                        env.alerts.show(
+                            title: Constants.ingredientCannotBeUsedHere,
+                            message: "",
+                            primary: Constants.okButtonTitle
+                        )
+                        return
+                    }
+
+                    // Guard 3 — UIKit L45-51: more than one ingredient
+                    // in frame → instruct the user to scan one at a time.
+                    if filtered.count > 1 {
+                        env.alerts.show(
+                            title: Constants.moreThanOneIngredientIdentified,
+                            message: "",
+                            primary: Constants.okButtonTitle
+                        )
+                        return
+                    }
+
+                    // Guard 4 + 5 — UIKit L55-76: validate the single
+                    // detected ingredient has a complete category.
+                    guard let candidate = filtered.first,
+                          let category = candidate.category,
+                          let primary = category.primary, !primary.isEmpty,
+                          let secondary = category.secondary, !secondary.isEmpty,
+                          let ingredientName = candidate.name, !ingredientName.isEmpty
+                    else {
+                        env.alerts.show(
+                            title: Constants.ingredientCannotBeUsedHere,
+                            message: "",
+                            primary: Constants.okButtonTitle
+                        )
+                        return
+                    }
+
+                    // 1:1 port of UIKit
+                    // `updateStationFromImageResponse(config:)` —
+                    // `StationsMenuViewModel.checkIngredientExistsInOtherStation`
+                    // returns true when the same primary+secondary
+                    // category lives in ANOTHER station; UIKit blocks
+                    // the add and surfaces `hasSameIngredientInStation`.
+                    let existsElsewhere = viewModel.stations.contains { slot in
+                        slot.station != viewModel.selectedStation
+                            && (slot.category?.primary ?? "").lowercased() == primary.lowercased()
+                            && (slot.category?.secondary ?? "").lowercased() == secondary.lowercased()
+                    }
+                    if existsElsewhere {
+                        env.alerts.show(
+                            title: Constants.hasSameIngredientInStation,
+                            message: "",
+                            primary: Constants.okButtonTitle
+                        )
+                        return
+                    }
+
+                    // Cache the single match so `Okay` / `Edit Quantity`
+                    // can reuse it. UIKit threads `flowToAdd` through
+                    // `DeviceDetectedPopUpVc` for the same purpose.
+                    self.detectedIngredients = [candidate]
+                    pendingDetectedIngredient = candidate
+
+                    // Single valid ingredient → straight to the "Bottle
+                    // Identified" popup (UIKit L79-90 +
+                    // `showPopUpImageDetected`). NO chooser screen.
+                    popup = .ingredientDetected(
+                        ingredientName: ingredientName,
+                        quantityMl: NumericConstants.maximumQuantityDoubleMLFor360
                     )
                 } catch {
                     env.alerts.show(message: error.localizedDescription)
@@ -3066,8 +3167,21 @@ struct StationsMenuView: View {
             $popup,
             onPrimary: {
                 // `.ingredientDetected` Okay → 1:1 UIKit `okAction`
-                // (DeviceDetectedPopUpVc L57-64). Notification payload
-                // is hardcoded:
+                // (DeviceDetectedPopUpVc L57-64) → notification posted →
+                // `StationsMenuViewController.getStationsNotificationCame`
+                // → `viewModel.updateSingleStation(...)` which silently
+                // PUTs the station and refreshes the table. UIKit shows
+                // NO success alert here — the persisted ingredient
+                // simply appears in the row, the user sees the row text
+                // change, and the screen state is the confirmation.
+                //
+                // Previously this branch ALSO showed an
+                // `env.alerts.show(title: "Ingredient added", …)` toast
+                // after `persistIngredient` finished. UIKit never shows
+                // that alert, so it was the user-reported "ingredient
+                // added pop up comes wrongly there" bug.
+                //
+                // Notification payload UIKit hardcodes:
                 //   • quantity = NumericConstants.maximumQuantityDoubleMLFor360 (750)
                 //   • unit = "ML" uppercase
                 //   • isAddingNewIngredient = true
@@ -3091,20 +3205,19 @@ struct StationsMenuView: View {
                         flavourTags: flavourTags,
                         loadingService: env.loading
                     )
-                    env.alerts.show(
-                        title: "Ingredient added",
-                        message: "\(ingredientName) added to Station \(viewModel.selectedStation.rawValue)."
-                    )
                 }
             },
             onPickIngredient: { ingredientName in
-                // 1:1 port of UIKit
-                // `MultipleIngredientsPopUpViewController.didSelectItemAt`:
-                // user picked a name → dismiss chooser → show the
-                // "Bottle Identified" confirmation popup. The category
-                // / perishable / flavour-tag fields are pinned in
-                // `pendingDetectedIngredient` so `Okay` and `Edit` can
-                // both reuse them without re-searching `detectedIngredients`.
+                // 1:1 port of UIKit `MultipleIngredientsPopUpViewController.didSelectItemAt`.
+                //
+                // The image-detection pipeline now hands a SINGLE valid
+                // ingredient straight to `.ingredientDetected` (matching
+                // UIKit's direct `showPopUpImageDetected` route), so the
+                // `.multipleIngredients` chooser is unreachable from the
+                // station-menu add flow today. This handler is left in
+                // place for forward-compatibility (e.g. a future
+                // recipe-edit flow that elects to keep the chooser) and
+                // delegates back to the same "Bottle Identified" popup.
                 let match = detectedIngredients.first {
                     ($0.name ?? "").lowercased() == ingredientName.lowercased()
                 }
