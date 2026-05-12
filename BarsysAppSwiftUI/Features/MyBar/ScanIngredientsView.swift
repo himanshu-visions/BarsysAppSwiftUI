@@ -1369,15 +1369,35 @@ struct ScanIngredientsView: View {
             } catch {
                 env.loading.hide()
                 // UIKit L316-318 failure branch: alert only, no pop,
-                // no local mutation. The captured image and the
-                // ScanIngredientsView state remain so the user can
-                // hit Retake / Reupload to try a fresh capture.
-                env.alerts.show(
-                    title: "",
-                    message: error.localizedDescription.isEmpty
-                        ? Constants.ingredientScanError
-                        : error.localizedDescription
-                )
+                // no local mutation.
+                //
+                // SwiftUI extension (matches the same UX pattern
+                // `submitCapturedImage` already uses for every
+                // upload-side failure): route through
+                // `failAndRetake(message:)` so the camera is reset
+                // back to the live-preview (retake) state in the
+                // same body pass that surfaces the alert. Per the
+                // user request: "when error comes on submit, camera
+                // and labels should be resettled to take photo
+                // mode". `camera.reset()` clears `capturedImage`,
+                // which flips `hasCapturedImage` to false — that in
+                // turn:
+                //   • swaps the bottom controls from
+                //     Retake/Submit back to the shutter button
+                //     (`bottomControlsContainer`)
+                //   • re-shows the description label in
+                //     `titleAndSubtitleLandscape` (gated by
+                //     `if !hasCapturedImage`)
+                //   • brings back the live preview behind the
+                //     shutter (`cameraOrCapturedImageView` reads
+                //     `camera.capturedImage`)
+                // — all in a single re-render, so the user lands on
+                // a fresh take-photo state the moment they dismiss
+                // the alert.
+                let message = error.localizedDescription.isEmpty
+                    ? Constants.ingredientScanError
+                    : error.localizedDescription
+                failAndRetake(message: message)
             }
         }
     }
