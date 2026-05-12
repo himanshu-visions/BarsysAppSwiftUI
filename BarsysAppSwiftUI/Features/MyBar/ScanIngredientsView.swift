@@ -1278,22 +1278,108 @@ struct ScanIngredientsView: View {
         return (result, nil)
     }
 
-    /// 1:1 with `MyBarView.proceedWithSelectedIngredients` and UIKit
-    /// `addingredientPopUpShow.onRightAction` callback at
+    /// 1:1 with UIKit `addingredientPopUpShow.onRightAction` at
     /// ScanIngredientsViewController.swift L306-321:
-    ///   • Append confirmed ingredients to MyBar storage
-    ///   • Pop the screen
+    ///
+    /// ```swift
+    /// self.myBarApiService.addIngredientToMyBar(...) { success, errorMessage in
+    ///     DispatchQueue.main.async {
+    ///         self.hideGlassLoader()
+    ///         if success {
+    ///             self.onIngredientScannedForMyBar?(arrayOfSelections)
+    ///             self.navigationController?.popViewController(...)
+    ///         } else {
+    ///             topVC.showDefaultAlert(message: errorMessage ?? Constants.ingredientScanError, ...)
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// PREVIOUS SwiftUI port skipped the API entirely and only
+    /// mutated `env.storage.toggleMyBar` locally — same anti-pattern
+    /// as the QA-flagged "ingredient comes back on refresh" delete
+    /// bug fixed in `confirmDelete()`. Without the POST, the new
+    /// ingredient existed only in the local cache and disappeared
+    /// the next time the user pulled `loadMyBarFromServer()` (which
+    /// `replaceMyBar`s wholesale).
+    ///
+    /// Now mirrors UIKit exactly:
+    ///   1. Dismiss the popup (UIKit's
+    ///      `showMultipleIngredientsPopUpForMyBar` dismisses on
+    ///      right-button tap, BEFORE the API resolves)
+    ///   2. Offline guard (matches `confirmDelete` and the MyBar
+    ///      `proceedWithSelectedIngredients` — UIKit's
+    ///      `MyBarApiService` surfaces a generic error instead, but
+    ///      we keep the branded `internetConnectionMessage` for
+    ///      consistency with every other API path in this file)
+    ///   3. Show "Adding Ingredients" loader
+    ///   4. POST `/my/bar` with the selected ingredients
+    ///   5. SUCCESS → toggle each ingredient into the LocalCache
+    ///      (which is `@Published`, so the MyBar screen shows the
+    ///      new rows the moment we dismiss back to it — equivalent
+    ///      to UIKit's `onIngredientScannedForMyBar?` callback +
+    ///      `appendConfirmedIngredients`) THEN dismiss
+    ///   6. FAILURE → show the same default alert UIKit shows and
+    ///      STAY on the scan screen so the user can retake / reupload
+    ///      from the same captured frame. Storage is NOT mutated,
+    ///      so the MyBar screen behind us still shows the same data
+    ///      it had before the failed add — fixes QA-reported "data
+    ///      not shown on MyBar screen when add ingredient API gives
+    ///      error" by guaranteeing we never optimistically write a
+    ///      to-be-failed ingredient into LocalCache.
     private func proceedWithSelectedIngredients() {
         let selections = detectedIngredients.filter { $0.isSelected && !$0.isExisting }
         guard !selections.isEmpty else { return }
         HapticService.success()
         showIngredientsFoundPopup = false
-        for detected in selections {
-            env.storage.toggleMyBar(detected.ingredient)
+
+        let payload: [MyBarAddIngredient] = selections.map { detected in
+            MyBarAddIngredient(
+                name: detected.ingredient.name,
+                category: detected.ingredient.category,
+                // UIKit `MyBarApiService.addIngredientToMyBar`
+                // L111 falls back to `?? 0.0` when confidence is
+                // missing — we don't surface confidence through
+                // `DetectedMyBarIngredient`, so default to the
+                // same 0.0. Backend tolerates this.
+                confidence: 0.0,
+                perishable: detected.ingredient.perishable ?? false,
+                substitutes: detected.ingredient.substitutes ?? []
+            )
         }
-        detectedIngredients = []
-        // UIKit L315 `popViewController` after the API succeeds.
-        dismiss()
+
+        Task { @MainActor in
+            guard await ConnectionMonitor.shared.isConnected else {
+                env.alerts.show(message: Constants.internetConnectionMessage)
+                return
+            }
+            env.loading.show(Constants.savingIngredientsMessage)
+            do {
+                try await env.api.addMyBarIngredients(payload)
+                env.loading.hide()
+                // UIKit L313-315 success branch: append to local
+                // arrays via the parent callback, then pop. SwiftUI
+                // mirror: write directly to the shared `@Published`
+                // LocalCache so MyBar shows the new rows on dismiss.
+                for detected in selections {
+                    env.storage.toggleMyBar(detected.ingredient)
+                }
+                detectedIngredients = []
+                dismiss()
+            } catch {
+                env.loading.hide()
+                // UIKit L316-318 failure branch: alert only, no pop,
+                // no local mutation. The captured image and the
+                // ScanIngredientsView state remain so the user can
+                // hit Retake / Reupload to try a fresh capture.
+                env.alerts.show(
+                    title: "",
+                    message: error.localizedDescription.isEmpty
+                        ? Constants.ingredientScanError
+                        : error.localizedDescription
+                )
+            }
+        }
     }
 
     private func closeIngredientsFoundPopup() {
