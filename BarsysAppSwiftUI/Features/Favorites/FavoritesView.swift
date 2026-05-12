@@ -134,9 +134,27 @@ struct FavoritesView: View {
     }
 
     /// Grid column count when `useGridLayout` is true.
-    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    ///
+    /// - iPhone portrait: NOT reached (`useGridLayout == false`,
+    ///   falls through to the single-column `LazyVStack` path).
+    /// - iPhone landscape: 3 columns — UNCHANGED from prior behaviour.
+    /// - iPad PORTRAIT: 2 columns (QA).
+    /// - iPad LANDSCAPE: 3 columns (QA).
+    ///
+    /// iPad orientation detection: reads `UIScreen.main.bounds`
+    /// directly (size classes stay `regular/regular` on iPad in
+    /// both orientations). `_ = orientationTick` registers a
+    /// SwiftUI dependency on the rotation observer bound to the
+    /// body; the observer wraps its bump in `withAnimation`, so the
+    /// 2 ⇄ 3 column reflow tweens smoothly with the system
+    /// rotation animation instead of snapping.
     private var gridColumnCount: Int {
-        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+        _ = orientationTick
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let bounds = UIScreen.main.bounds
+            return bounds.width > bounds.height ? 3 : 2
+        }
+        return 3  // iPhone landscape — unchanged from prior behaviour
     }
 
     private var gridColumns: [GridItem] {
@@ -154,6 +172,14 @@ struct FavoritesView: View {
     /// favourites array after the success alert is dismissed; this
     /// trigger plays the same role for the SwiftUI port.
     @State private var favouritesRefreshTick: Int = 0
+
+    /// Bumped on every `UIDevice.orientationDidChangeNotification`
+    /// so `gridColumnCount` re-evaluates against the latest
+    /// `UIScreen.main.bounds`. iPad keeps `regular/regular` size
+    /// classes in both orientations, so SwiftUI doesn't auto-re-run
+    /// the property on iPad rotation — this `@State` is the
+    /// explicit dependency that makes it.
+    @State private var orientationTick: Int = 0
 
     // MARK: - My Drinks Pagination State
     // 1:1 port of UIKit FavouritesRecipesAndDrinksViewModel pagination:
@@ -283,12 +309,31 @@ struct FavoritesView: View {
         // Flat `primaryBackgroundColor` nav bar so the top-right glass
         // pill matches HomeView / ChooseOptions exactly.
         .chooseOptionsStyleNavBar()
+        // iPad rotation handler: bump `orientationTick` inside a
+        // `withAnimation` so the `LazyVGrid`'s 2 ⇄ 3 column reflow
+        // tweens smoothly with the system rotation animation rather
+        // than snapping. iPhone is unaffected — its `gridColumnCount`
+        // short-circuits to `3` and ignores the tick.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                orientationTick &+= 1
+            }
+        }
         // Publish "we're on Favourites" so the side menu can skip a
         // duplicate `router.push(.favorites)` when the user taps the
         // Favourites row while this screen is already on-screen.
         .onAppear { router.isShowingFavorites = true }
         .onDisappear { router.isShowingFavorites = false }
         .onAppear {
+            // Arm device orientation notifications so
+            // `orientationDidChangeNotification` fires on rotation.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
             if !didTrackView {
                 didTrackView = true
                 // 1:1 with UIKit `FavouritesRecipesAndDrinksViewController`

@@ -305,39 +305,34 @@ struct HomeView: View {
         // identically to DevicePairedView.
         .navigationBarBackButtonHidden(true)
         .toolbar {
-            // QA fix (ticket 0062256 "The position of name on home screen
-            // should be same for iPhone and iPad"): the Explore icon AND
-            // the "Hi {name}" greeting now share a SINGLE
-            // `.topBarLeading` ToolbarItem with an HStack inside, so the
-            // greeting always sits immediately to the right of the
-            // Explore icon on every device.
+            // Toolbar layout differs by OS version because iOS 26's
+            // auto-glass treats each ToolbarItem as its OWN capsule.
             //
-            // Previously the greeting lived in the `.principal` slot.
-            // SwiftUI lays the principal slot out differently across
-            // idioms:
-            //   • iPad — principal slot stretches across the available
-            //     space between the leading and trailing items, and
-            //     `.frame(maxWidth: .infinity, alignment: .leading)`
-            //     parks the text at the leading edge — RIGHT NEXT TO
-            //     the Explore icon. iPad QA was passing.
-            //   • iPhone — principal slot is auto-centered (system
-            //     navigation title behaviour) and ignores the leading
-            //     `.frame` alignment hint, so the greeting drifted to
-            //     the middle of the toolbar instead of hugging the
-            //     leading icon. That's the QA-reported drift on iPhone.
+            // QA report ("previously in iOS 26 'Hi {name}' was NOT
+            // stacked with the top-left Explore button — it should
+            // come after ~10pt of trailing space and NOT share the
+            // explore button's glass capsule"):
             //
-            // Hosting both items in the same leading slot makes the
-            // layout deterministic: HStack with explicit spacing places
-            // them side-by-side on every idiom. iPad's existing visual
-            // (text right of icon) is preserved bit-identically; iPhone
-            // now matches.
+            //   • iOS 26 needs the Explore button and the greeting
+            //     to be SEPARATE ToolbarItems so iOS draws the
+            //     auto-glass circle around the button ONLY, leaving
+            //     the greeting as plain text beside it. Wrapping
+            //     both in a single HStack/ToolbarItem makes the
+            //     system render ONE glass capsule that encloses
+            //     BOTH children — the regression QA is reporting.
             //
-            // iOS 26 still auto-wraps the Explore button in a Liquid
-            // Glass circle because it's a `Button` — the sibling Text
-            // is a plain label so it stays glass-free, identical to the
-            // previous behaviour.
-            ToolbarItem(placement: .topBarLeading) {
-                HStack(spacing: 10) {
+            //   • iOS < 26 has no auto-glass, so keeping the older
+            //     HStack-inside-single-ToolbarItem layout there is
+            //     fine and preserves the bit-identical visual the
+            //     legacy fix (ticket 0062256, "name position should
+            //     match across iPhone & iPad") landed.
+            //
+            // 10pt leading inset on the iOS-26 greeting reproduces
+            // the spacing the older HStack achieved via
+            // `spacing: 10` — without it the two ToolbarItems sit
+            // flush against each other.
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
                         HapticService.light()
                         router.selectedTab = .explore
@@ -354,23 +349,48 @@ struct HomeView: View {
                             .foregroundStyle(Color("appBlackColor"))
                     }
                     .accessibilityLabel("Explore")
-
-                    // 1:1 with UIKit `lblHiUserName` (`lUD-VJ-a4r`) —
-                    // system 17pt greeting positioned next to the
-                    // Explore icon (UIKit storyboard
-                    // ChooseOptionsDashboardViewController L88-91 places
-                    // `lblHiUserName` in the same horizontal HStack as
-                    // `imgExploreSmall`). `.lineLimit(1...3)` +
-                    // `.fixedSize(horizontal: false, vertical: true)`
-                    // lets the label wrap up to 3 lines for long names
-                    // without truncating.
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    // Separate ToolbarItem so iOS 26 auto-glass
+                    // doesn't enclose this text in the Explore
+                    // button's capsule. Plain Text → no glass.
                     Text("Hi \(displayName)")
                         .font(.system(size: 17))
                         .foregroundStyle(Color("appBlackColor"))
-                        .lineLimit(1...3)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .minimumScaleFactor(0.8)
+                        .padding(.leading, 10)
                         .accessibilityAddTraits(.isHeader)
+                }
+            } else {
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 10) {
+                        Button {
+                            HapticService.light()
+                            router.selectedTab = .explore
+                        } label: {
+                            Image("imgExploreSmall")
+                                .renderingMode(.template)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: UIDevice.current.userInterfaceIdiom == .pad ? 26 : 18,
+                                       height: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 22)
+                                .foregroundStyle(Color("appBlackColor"))
+                        }
+                        .accessibilityLabel("Explore")
+
+                        // 1:1 with UIKit `lblHiUserName` — single
+                        // line, scale-to-fit. See the iOS 26 branch
+                        // above for why this is gated.
+                        Text("Hi \(displayName)")
+                            .font(.system(size: 17))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .minimumScaleFactor(0.8)
+                            .accessibilityAddTraits(.isHeader)
+                    }
                 }
             }
 

@@ -338,9 +338,35 @@ struct ExploreRecipesView: View {
     }
 
     /// Grid column count when `useGridLayout` is true.
-    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    ///
+    /// QA-scoped change: ONLY iPad values are touched here. iPhone
+    /// branch returns the same `3` the original `isIPad ? 2 : 3`
+    /// ternary did — zero impact on iPhone UI / design / functionality.
+    ///
+    /// - iPhone portrait: NOT reached (`useGridLayout == false`,
+    ///   falls through to the single-column `LazyVStack` path).
+    /// - iPhone landscape: 3 columns — UNCHANGED.
+    /// - iPad PORTRAIT: 2 columns (QA).
+    /// - iPad LANDSCAPE: 3 columns (QA).
+    ///
+    /// iPad orientation detection: iPad keeps `regular/regular` size
+    /// classes in BOTH orientations, so we read
+    /// `UIScreen.main.bounds` directly. Re-evaluation is driven by
+    /// `_ = orientationTick`, a `@State` that the
+    /// `UIDevice.orientationDidChangeNotification` observer attached
+    /// to the body bumps on every rotation — without that dependency
+    /// SwiftUI wouldn't re-run this property when iPad rotates,
+    /// which is the "sometimes takes time to update" bug QA reported.
+    /// The observer wraps its bump in `withAnimation`, so the
+    /// `LazyVGrid` reflow from 2 ⇄ 3 columns rides the system
+    /// rotation animation smoothly instead of snapping.
     private var gridColumnCount: Int {
-        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+        _ = orientationTick
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let bounds = UIScreen.main.bounds
+            return bounds.width > bounds.height ? 3 : 2
+        }
+        return 3  // iPhone landscape — unchanged from prior behaviour
     }
 
     private var gridColumns: [GridItem] {
@@ -369,6 +395,14 @@ struct ExploreRecipesView: View {
     /// reflect the latest `isFavourite` flags. Mirrors UIKit's
     /// `viewWillAppear` → `tableView.reloadData()` pattern.
     @State private var favouritesRefreshTick: Int = 0
+
+    /// Bumped on every `UIDevice.orientationDidChangeNotification`
+    /// so `gridColumnCount` re-evaluates against the latest
+    /// `UIScreen.main.bounds`. iPad keeps `regular/regular` size
+    /// classes in both orientations, so SwiftUI doesn't auto-re-run
+    /// the property on iPad rotation — this `@State` is the
+    /// explicit dependency that makes it.
+    @State private var orientationTick: Int = 0
 
     private var isConnected: Bool { ble.isAnyDeviceConnected }
 
@@ -795,6 +829,30 @@ struct ExploreRecipesView: View {
             // SwiftUI to re-evaluate `exploreRecipes` (which reads
             // `favouritesRefreshTick` to register a dependency).
             favouritesRefreshTick &+= 1
+            // Arm device orientation notifications so
+            // `orientationDidChangeNotification` fires on rotation —
+            // UIKit reference-counts this call, so it composes with
+            // every other `begin…` site in the app. Drives the
+            // iPad 2 ⇄ 3 column reflow via `orientationTick` (see
+            // `gridColumnCount`).
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
+        }
+        // iPad rotation handler: bump `orientationTick` inside a
+        // `withAnimation` so the `LazyVGrid`'s 2 ⇄ 3 column reflow
+        // tweens smoothly with the system rotation animation rather
+        // than snapping at the end. iPhone is unaffected — its
+        // `gridColumnCount` short-circuits to `3` and ignores the
+        // tick.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                orientationTick &+= 1
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)

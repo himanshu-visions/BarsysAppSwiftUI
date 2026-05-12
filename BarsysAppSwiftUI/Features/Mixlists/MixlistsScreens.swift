@@ -41,6 +41,14 @@ struct MixlistListView: View {
     /// when the keyboard dismisses.
     @State private var isKeyboardOpen: Bool = false
 
+    /// Bumped on every `UIDevice.orientationDidChangeNotification`
+    /// so `gridColumnCount` re-evaluates against the latest
+    /// `UIScreen.main.bounds`. iPad keeps `regular/regular` size
+    /// classes in both orientations, so SwiftUI doesn't auto-re-run
+    /// the property on iPad rotation — this `@State` is the
+    /// explicit dependency that makes it.
+    @State private var orientationTick: Int = 0
+
     private var isConnected: Bool { ble.isAnyDeviceConnected }
 
     /// Layout selector for the Cocktail Kits listing.
@@ -54,9 +62,27 @@ struct MixlistListView: View {
     }
 
     /// Grid column count when `useGridLayout` is true.
-    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    ///
+    /// - iPhone portrait: NOT reached (`useGridLayout == false`,
+    ///   falls through to the single-column `LazyVStack` path).
+    /// - iPhone landscape: 3 columns — UNCHANGED from prior behaviour.
+    /// - iPad PORTRAIT: 2 columns (QA).
+    /// - iPad LANDSCAPE: 3 columns (QA).
+    ///
+    /// iPad orientation detection: reads `UIScreen.main.bounds`
+    /// directly (size classes stay `regular/regular` on iPad in
+    /// both orientations). `_ = orientationTick` registers a
+    /// SwiftUI dependency on the rotation observer bound to the
+    /// body; the observer wraps its bump in `withAnimation`, so the
+    /// 2 ⇄ 3 column reflow tweens smoothly with the system
+    /// rotation animation instead of snapping.
     private var gridColumnCount: Int {
-        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+        _ = orientationTick
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let bounds = UIScreen.main.bounds
+            return bounds.width > bounds.height ? 3 : 2
+        }
+        return 3  // iPhone landscape — unchanged from prior behaviour
     }
 
     private var gridColumns: [GridItem] {
@@ -365,7 +391,29 @@ struct MixlistListView: View {
                 await catalog.refreshIfStale()
             }
         }
+        // iPad rotation handler: bump `orientationTick` inside a
+        // `withAnimation` so the `LazyVGrid`'s 2 ⇄ 3 column reflow
+        // tweens smoothly with the system rotation animation rather
+        // than snapping. iPhone is unaffected — its
+        // `gridColumnCount` short-circuits to `3` and ignores the
+        // tick.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                orientationTick &+= 1
+            }
+        }
         .onAppear {
+            // Arm device orientation notifications so
+            // `orientationDidChangeNotification` fires on rotation.
+            // UIKit reference-counts the call so it composes safely
+            // with every other `begin…` site in the app.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
             // 1:1 with UIKit `MixlistViewController` L73 —
             //   TrackEventsClass().addBrazeCustomEventWithEventName(
             //       eventName: TrackEventName.viewMixlistsListing.rawValue)
@@ -814,9 +862,27 @@ struct MixlistDetailView: View {
     }
 
     /// Grid column count when `useGridLayout` is true.
-    /// iPad: 2 columns (unchanged). iPhone landscape: 3 columns.
+    ///
+    /// - iPhone portrait: NOT reached (`useGridLayout == false`,
+    ///   falls through to the single-column `LazyVStack` path).
+    /// - iPhone landscape: 3 columns — UNCHANGED from prior behaviour.
+    /// - iPad PORTRAIT: 2 columns (QA).
+    /// - iPad LANDSCAPE: 3 columns (QA).
+    ///
+    /// iPad orientation detection: reads `UIScreen.main.bounds`
+    /// directly (size classes stay `regular/regular` on iPad in
+    /// both orientations). `_ = orientationTick` registers a
+    /// SwiftUI dependency on the rotation observer bound to the
+    /// body; the observer wraps its bump in `withAnimation`, so the
+    /// 2 ⇄ 3 column reflow tweens smoothly with the system
+    /// rotation animation instead of snapping.
     private var gridColumnCount: Int {
-        UIDevice.current.userInterfaceIdiom == .pad ? 2 : 3
+        _ = orientationTick
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let bounds = UIScreen.main.bounds
+            return bounds.width > bounds.height ? 3 : 2
+        }
+        return 3  // iPhone landscape — unchanged from prior behaviour
     }
 
     private var gridColumns: [GridItem] {
@@ -843,6 +909,14 @@ struct MixlistDetailView: View {
     /// `MixlistDetailViewController` re-fetches the recipe array after
     /// the success alert dismisses; this tick plays the same role.
     @State private var favouritesRefreshTick: Int = 0
+
+    /// Bumped on every `UIDevice.orientationDidChangeNotification`
+    /// so `gridColumnCount` re-evaluates against the latest
+    /// `UIScreen.main.bounds`. iPad keeps `regular/regular` size
+    /// classes in both orientations, so SwiftUI doesn't auto-re-run
+    /// the property on iPad rotation — this `@State` is the
+    /// explicit dependency that makes it.
+    @State private var orientationTick: Int = 0
 
     enum MixlistDetailTab: Int, CaseIterable { case recipes, ingredients }
 
@@ -980,7 +1054,25 @@ struct MixlistDetailView: View {
         // the swipe-from-left-edge interactive pop gesture.
         .interactivePopGestureEnabled()
         .toolbar { toolbarContent }
+        // iPad rotation handler: bump `orientationTick` inside a
+        // `withAnimation` so the `LazyVGrid`'s 2 ⇄ 3 column reflow
+        // tweens smoothly with the system rotation animation rather
+        // than snapping. iPhone is unaffected.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                orientationTick &+= 1
+            }
+        }
         .onAppear {
+            // Arm device orientation notifications so
+            // `orientationDidChangeNotification` fires on rotation.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
             // Re-project favourites from storage on every appear so a
             // RecipeDetail toggle (pushed from one of these mixlist
             // rows) refreshes the heart icons when the user pops back.
