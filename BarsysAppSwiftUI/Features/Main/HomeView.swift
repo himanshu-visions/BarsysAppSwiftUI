@@ -368,16 +368,48 @@ struct HomeView: View {
                     .accessibilityLabel("Explore")
                 }
                 ToolbarItem(placement: .principal) {
-                    Text("Hi \(displayName)")
-                        .font(.system(size: 17))
-                        .foregroundStyle(Color("appBlackColor"))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .minimumScaleFactor(0.8)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 10)
-                        .accessibilityAddTraits(.isHeader)
+                    // The `.principal` slot intrinsically centers its
+                    // content — `.frame(maxWidth: .infinity, alignment:
+                    // .leading)` on a bare Text does NOT push it to the
+                    // leading edge (the slot sizes to the text's natural
+                    // width first, then centers that compact frame
+                    // between the leading and trailing toolbar items).
+                    //
+                    // To leading-anchor the greeting without putting it
+                    // in `.topBarLeading` (which triggers the iOS 26
+                    // auto-glass capsule grouping with the Explore
+                    // button) we force the principal content to a
+                    // KNOWN-WIDE frame and place the Text at its leading
+                    // edge with a trailing `Spacer`. The slot still
+                    // centers the whole wide frame, but because the
+                    // frame's width is sized to ≈ the slot's available
+                    // width, its leading edge lands just after the
+                    // Explore button's circle — exactly the "10pt after
+                    // the left button, 10pt before the right pill"
+                    // placement QA asked for.
+                    //
+                    // Width math (per current toolbar layout):
+                    //   leading area  ≈ 60pt (Explore circle + insets)
+                    //   trailing area ≈ 120pt (heart+profile pill + insets)
+                    //   forced width  = screenWidth − 180
+                    // Plain `Text` (non-interactive) so iOS 26 auto-glass
+                    // does NOT wrap it in a capsule — clear background,
+                    // same top-view Y, only the X position changes.
+                    HStack(spacing: 0) {
+                        Text("Hi \(displayName)")
+                            .font(.system(size: 17))
+                            .foregroundStyle(Color("appBlackColor"))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .minimumScaleFactor(0.8)
+                            .multilineTextAlignment(.leading)
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 10)
+                    }
+                    .frame(
+                        width: max(0, UIScreen.main.bounds.width - 180),
+                        alignment: .leading
+                    )
                 }
             } else {
                 ToolbarItem(placement: .topBarLeading) {
