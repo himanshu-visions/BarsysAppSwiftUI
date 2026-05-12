@@ -206,9 +206,86 @@ final class ScanCameraController: NSObject, ObservableObject {
         guard let output = photoOutput else { return }
         isCapturing = true
         let settings = AVCapturePhotoSettings()
+
+        // QA fix ("after capture in landscape, the image comes out
+        // portrait"): the PHOTO OUTPUT has its own
+        // `AVCaptureConnection`, separate from the preview layer's
+        // connection that `ScanCameraPreview.PreviewView` keeps in
+        // sync. Without setting the photo connection's rotation here,
+        // captured frames are encoded against whatever orientation
+        // the connection defaulted to (typically portrait) and the
+        // resulting JPEG carries portrait EXIF — so a landscape shot
+        // displays sideways / portrait-shaped on the review screen.
+        //
+        // Read the interface orientation on the main actor (this
+        // function already runs on @MainActor since the class is
+        // @MainActor), then hop to `sessionQueue` to mutate the
+        // connection in the same serial queue used for all other
+        // session config.
+        let interfaceOrientation = currentInterfaceOrientation()
+
         sessionQueue.async { [weak self] in
             guard let self else { return }
+            if let connection = output.connection(with: .video) {
+                Self.applyOrientation(interfaceOrientation, to: connection)
+            }
             output.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    /// Resolve the active `UIInterfaceOrientation`, preferring the
+    /// preview view's own window scene (most accurate during multi-
+    /// scene / split-view) and falling back to the first connected
+    /// window scene. Mirrors `PreviewView.applyVideoOrientationFromInterface`'s
+    /// resolution order so the photo output and the preview layer
+    /// always agree on which way is "up".
+    private func currentInterfaceOrientation() -> UIInterfaceOrientation {
+        if let scene = previewView.window?.windowScene {
+            return scene.interfaceOrientation
+        }
+        return UIApplication.shared
+            .connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.interfaceOrientation ?? .portrait
+    }
+
+    /// Stamp the given interface orientation onto an
+    /// `AVCaptureConnection`. Uses iOS 17's
+    /// `videoRotationAngle` API when available, falls back to the
+    /// (now-deprecated) `videoOrientation` enum for iOS 16.
+    /// Numeric angle mapping mirrors
+    /// `PreviewView.applyVideoOrientationFromInterface` exactly so
+    /// preview and capture stay in lockstep.
+    private static func applyOrientation(
+        _ interfaceOrientation: UIInterfaceOrientation,
+        to connection: AVCaptureConnection
+    ) {
+        if #available(iOS 17.0, *) {
+            let angle: CGFloat
+            switch interfaceOrientation {
+            case .portrait:           angle = 90
+            case .portraitUpsideDown: angle = 270
+            case .landscapeLeft:      angle = 180
+            case .landscapeRight:     angle = 0
+            case .unknown:            angle = 90
+            @unknown default:         angle = 90
+            }
+            if connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
+            }
+        } else {
+            let avOrientation: AVCaptureVideoOrientation
+            switch interfaceOrientation {
+            case .portrait:           avOrientation = .portrait
+            case .portraitUpsideDown: avOrientation = .portraitUpsideDown
+            case .landscapeLeft:      avOrientation = .landscapeLeft
+            case .landscapeRight:     avOrientation = .landscapeRight
+            case .unknown:            avOrientation = .portrait
+            @unknown default:         avOrientation = .portrait
+            }
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = avOrientation
+            }
         }
     }
 
@@ -556,11 +633,25 @@ struct ScanIngredientsView: View {
     //     .orientation`, so the FIRST render pass is already correct.
     //
     // OR'ing them means the layout flips to landscape the moment
-    // either source agrees. iPad is excluded from the landscape
-    // variant entirely so split-view never collapses to the iPhone
-    // side-by-side layout.
+    // either source agrees.
+    //
+    // iPad: previously excluded from the landscape variant entirely
+    // (so split-view never collapsed to the iPhone side-by-side
+    // layout) — but QA reported the camera reads as small / narrow
+    // on iPad landscape because the portrait layout's 3:4 aspect-
+    // fit camera shrinks to the viewport's short side. Now iPad
+    // landscape ALSO uses the side-by-side layout — it has the
+    // horizontal space for it and the camera column gets the
+    // majority of the viewport width. iPad portrait still uses the
+    // tall portrait layout (deviceLandscape false → portraitLayout).
     private var isPhoneLandscape: Bool {
-        guard UIDevice.current.userInterfaceIdiom != .pad else { return false }
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        if isIPad {
+            // iPad: size classes are regular/regular in BOTH
+            // orientations, so the only reliable landscape signal
+            // is the explicit device orientation flag.
+            return deviceLandscape
+        }
         return verticalSizeClass == .compact || deviceLandscape
     }
 
@@ -570,8 +661,12 @@ struct ScanIngredientsView: View {
     /// state), and falls back to `UIDevice.current.orientation`
     /// when the scene's value is unknown (true in the brief window
     /// between view init and the window being attached).
+    ///
+    /// iPad is no longer short-circuited to `false` — the side-by-
+    /// side layout now applies on iPad landscape too (see
+    /// `isPhoneLandscape` above), so the seed needs the real
+    /// orientation on iPad as well.
     private static func resolveLandscapeNow() -> Bool {
-        guard UIDevice.current.userInterfaceIdiom != .pad else { return false }
         let scene = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first
@@ -743,33 +838,68 @@ struct ScanIngredientsView: View {
 
     @ViewBuilder
     private var landscapeLayout: some View {
-        // Sizing notes:
-        //   • Left column has a FIXED 280pt width — wide enough for
-        //     the title + 4-line description on every iPhone, narrow
-        //     enough to leave the majority of the viewport for the
-        //     camera. Hard-coding the width avoids the "stuck on
-        //     rotation" pathology that came from computing widths
-        //     via a `GeometryReader` proxy whose size lags one
-        //     re-layout pass behind the actual rotation.
-        //   • Right column uses `.frame(maxWidth: .infinity)` so it
-        //     soaks up whatever horizontal space remains.
-        //   • Camera frame fills the full right column (maxHeight:
-        //     .infinity) — no longer shares vertical space with a
-        //     controls row, so the live preview is as tall as the
-        //     viewport allows.
+        // Per-idiom sizing for the side-by-side landscape layout.
+        //
+        // iPhone:
+        //   • Left column 200pt, HStack spacing 12pt, outer
+        //     horizontal padding 8pt — tightened across multiple
+        //     QA passes to hand the camera ~554pt of width on
+        //     iPhone 14 Pro landscape (≈ +27% vs the original
+        //     280 / 24 / 20 baseline). Title may wrap to 2 lines
+        //     on the narrowest iPhones; acceptable for the camera
+        //     real estate.
+        //
+        // iPad:
+        //   • Left column 280pt — wide enough for the iPad-bumped
+        //     26pt title to stay on a single line and the 17pt
+        //     description to read at ~3 lines, narrow enough that
+        //     the camera column still gets the OVERWHELMING
+        //     majority of the wide iPad-landscape viewport (QA:
+        //     "increase width of take photo of ingredients view
+        //     on my bar — observe and fix for landscape, increase
+        //     its width on iPad").
+        //   • HStack spacing 24pt + outer horizontal padding 24pt
+        //     — generous breathing room appropriate for the iPad
+        //     canvas.
+        //
+        // Resulting camera widths (approximate, after safe area):
+        //   iPad Mini    landscape (1133pt usable w):
+        //       1133 − 280 − 24 − 48 = 781pt
+        //   iPad 10.9"   landscape (1180pt usable w):
+        //       1180 − 280 − 24 − 48 = 828pt
+        //   iPad Pro 11" landscape (1194pt usable w):
+        //       1194 − 280 − 24 − 48 = 842pt
+        //   iPad Pro 13" landscape (1366pt usable w):
+        //       1366 − 280 − 24 − 48 = 1014pt
+        //
+        // Hard-coding the widths avoids the "stuck on rotation"
+        // pathology that came from computing widths via a
+        // `GeometryReader` proxy whose size lags one re-layout pass
+        // behind the actual rotation.
+        //
+        // Layout shared across idioms:
+        //   • Right column uses `.frame(maxWidth: .infinity)` so
+        //     it soaks up whatever horizontal space remains.
+        //   • Camera frame fills the full right column
+        //     (maxHeight: .infinity) — no longer shares vertical
+        //     space with a controls row, so the live preview is as
+        //     tall as the viewport allows.
         //   • Controls (shutter / retake+submit) are rendered as a
-        //     bottom-anchored `.overlay` ON TOP of the camera so the
-        //     user can see the framing AND the capture button at the
-        //     same time without the camera being pushed up. Anchored
-        //     to the bottom with 16pt inset so they hug the lower
-        //     edge of the camera rectangle.
+        //     bottom-anchored `.overlay` ON TOP of the camera so
+        //     the user can see the framing AND the capture button
+        //     at the same time without the camera being pushed up.
 
-        HStack(alignment: .center, spacing: 24) {
+        let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+        let leftColumnWidth: CGFloat = isIPad ? 280 : 200
+        let hStackSpacing: CGFloat   = isIPad ? 24  : 12
+        let horizontalPadding: CGFloat = isIPad ? 24 : 8
+
+        HStack(alignment: .center, spacing: hStackSpacing) {
 
             // LEFT — title + description, left-aligned, vertically
             // centered.
             titleAndSubtitleLandscape
-                .frame(width: 280)
+                .frame(width: leftColumnWidth)
                 .frame(maxHeight: .infinity)
 
             // RIGHT — camera fills the column, controls overlay on top.
@@ -781,7 +911,7 @@ struct ScanIngredientsView: View {
                         .padding(.bottom, 16)
                 }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
     }
 
