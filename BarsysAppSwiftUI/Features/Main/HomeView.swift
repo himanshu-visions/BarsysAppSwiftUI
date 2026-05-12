@@ -147,15 +147,9 @@ struct HomeView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
 
-                // ─── "Hi {name}" greeting moved to the top-bar (`.toolbar`)
-                // — sits as a plain-text `ToolbarItem` immediately
-                // after the Explore button (10pt leading padding) so it
-                // mirrors UIKit `ChooseOptionsDashboardViewController`'s
-                // top-bar HStack `dbg-mw-KqI` where `lblHiUserName`
-                // (`lUD-VJ-a4r`) sits beside `imgExploreSmall`
-                // (`O3O-bl-vqo`). NO glass capsule wraps the text — only
-                // the existing circular Explore button keeps its
-                // auto-glass treatment.
+                // "Hi {name}" greeting is rendered in the TOP VIEW
+                // (navigation toolbar area), NOT here in the
+                // scroll view. See the `.toolbar { … }` below.
 
                 // ─── 2. "Welcome to Barsys AI," (Jlh-K8-Gez) ───
                 // iPad bumps 12 → 18pt so the welcome greeting reads
@@ -332,6 +326,29 @@ struct HomeView: View {
             // `spacing: 10` — without it the two ToolbarItems sit
             // flush against each other.
             if #available(iOS 26.0, *) {
+                // iOS 26 — TWO toolbar slots, each independent:
+                //
+                //   1. `.topBarLeading` → ONLY the Explore button.
+                //      iOS 26 auto-glass wraps the single-icon
+                //      Button in its own circular Liquid Glass
+                //      capsule (untouched, Control-Center style).
+                //
+                //   2. `.principal` → "Hi {name}" plain Text. The
+                //      principal slot is a SEPARATE toolbar
+                //      placement from `.topBarLeading`, so iOS 26
+                //      auto-glass does NOT group it with the
+                //      Explore button. Wrapped in an HStack with
+                //      `.frame(maxWidth: .infinity, alignment:
+                //      .leading)` so the label parks at the
+                //      LEADING edge of the principal slot — which
+                //      stretches across the available space
+                //      between the leading and trailing toolbar
+                //      items, so the leading-aligned text lands
+                //      right after the Explore button's circle.
+                //      Plain Text is non-interactive, so iOS 26
+                //      auto-glass does NOT wrap it in a capsule
+                //      either — clear background, top view area,
+                //      outside the Explore button's glass.
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         HapticService.light()
@@ -350,16 +367,14 @@ struct HomeView: View {
                     }
                     .accessibilityLabel("Explore")
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    // Separate ToolbarItem so iOS 26 auto-glass
-                    // doesn't enclose this text in the Explore
-                    // button's capsule. Plain Text → no glass.
+                ToolbarItem(placement: .principal) {
                     Text("Hi \(displayName)")
                         .font(.system(size: 17))
                         .foregroundStyle(Color("appBlackColor"))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, 10)
                         .accessibilityAddTraits(.isHeader)
                 }
