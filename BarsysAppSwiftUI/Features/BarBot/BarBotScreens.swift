@@ -5471,23 +5471,44 @@ struct BarBotCraftingView: View {
                     .frame(height: 210)
 
                 // collectionViewProgress — 10pt horizontal segment bar.
-                // UIKit `updateIngredientsUI` (BarBotCraftingViewController L223-242)
-                // hides the bar when `hasStartedDispensing == false` (pre-pour:
-                // .idle / .waitingForGlass). UIKit `updateDrinkCompletedUI`
-                // (L253) hides it again once the drink is fully completed.
-                // Mid-pour states (.dispensing, .glassLifted, .awaitingGlassRemoval,
-                // and any cancel-related state which transitions in after dispensing
-                // began) keep the bar visible. Reserve the 10pt slot with
-                // `Color.clear` so the sheet height (452pt) and the surrounding
-                // VStack spacing don't reflow when the bar toggles.
-                Group {
-                    if shouldShowProgressBar {
-                        progressBar
-                    } else {
-                        Color.clear
-                    }
-                }
-                .frame(height: 10)
+                //
+                // 1:1 port of UIKit
+                // `BarBotCraftingViewController.updateIngredientsUI`
+                // (L223-242) + `updateDrinkCompletedUI` (L253):
+                //
+                //   hasStartedDispensing == false                 → hidden
+                //   hasStartedDispensing == true
+                //     AND state == .completed                     → hidden
+                //   hasStartedDispensing == true
+                //     AND state != .completed                     → visible
+                //
+                // Reserve the 10pt slot unconditionally (`.frame(height: 10)`)
+                // and toggle visibility with `.opacity` so the sheet height
+                // (452pt) and the surrounding VStack spacing don't reflow
+                // when the bar appears / disappears. UIKit's hidden-collection-
+                // view leaves the auto-layout slot in place too — this
+                // matches that exactly. `.allowsHitTesting(false)` +
+                // `.accessibilityHidden(!shouldShowProgressBar)` keep the
+                // hidden segment unreachable to taps and VoiceOver, the
+                // same way UIKit's `isHidden = true` skips accessibility +
+                // hit-testing.
+                //
+                // QA bug ("Progress bar shows on the Drink Completed screen
+                // when crafting from BarBot"): the previous `if/else` Group
+                // swap let SwiftUI's `.animation(.easeInOut, value: state)`
+                // fade-out cross-render the bar against `Color.clear` on
+                // the `.awaitingGlassRemoval` → `.completed` transition.
+                // Switching to `.opacity` collapses the swap to a property
+                // animation on a single view, so the bar fades cleanly to
+                // 0 instead of cross-fading with a placeholder. The opacity
+                // is computed off both `state` AND `hasStartedDispensing`
+                // (mirroring UIKit's full guard) so a glitchy mid-state
+                // can't leak the bar through.
+                progressBar
+                    .frame(height: 10)
+                    .opacity(shouldShowProgressBar ? 1 : 0)
+                    .allowsHitTesting(shouldShowProgressBar)
+                    .accessibilityHidden(!shouldShowProgressBar)
             }
             .padding(.top, 24)
             .padding(.horizontal, 24)
@@ -5712,20 +5733,32 @@ struct BarBotCraftingView: View {
     }
 
     /// Visibility rule for the segment progress bar — 1:1 port of UIKit
-    /// `BarBotCraftingViewController.updateIngredientsUI` /
-    /// `updateDrinkCompletedUI`. Pre-pour (`.idle`, `.waitingForGlass`)
-    /// the bar is hidden because UIKit checks `hasStartedDispensing`,
-    /// which only flips true on the first transition into `.dispensing`.
-    /// On `.completed` the bar is hidden again. All mid-pour /
-    /// awaiting-removal / cancel states keep it visible — UIKit's
-    /// BleResponse handlers leave the bar shown across those.
+    /// `BarBotCraftingViewController.updateIngredientsUI` (L223-242) +
+    /// `updateDrinkCompletedUI` (L253):
+    ///
+    ///   • `hasStartedDispensing == false` → hidden (pre-pour: .idle /
+    ///     .waitingForGlass — even cancel paths that fire before the first
+    ///     `.dispensingStarted` stay hidden).
+    ///   • `hasStartedDispensing == true && state == .completed` → hidden
+    ///     (`updateDrinkCompletedUI` explicitly sets
+    ///     `collectionViewProgress.isHidden = true` after the BLE
+    ///     `dataFlushed` frame lands on Barsys 360 / Coaster / Shaker).
+    ///   • `hasStartedDispensing == true && state != .completed` → visible
+    ///     (mid-pour states: `.dispensing`, `.glassLifted`,
+    ///     `.awaitingGlassRemoval`, and any cancel-related state that
+    ///     transitioned in AFTER dispensing began).
+    ///
+    /// QA bug fix: gating on `hasStartedDispensing` AND
+    /// `state != .completed` (instead of just listing `.completed`
+    /// among the hidden states) closes the window where a transitional
+    /// state between `.awaitingGlassRemoval` and `.completed` could
+    /// briefly leave the bar visible on the Drink Completed inline UI —
+    /// the user-reported "Progress bar is showing on the Drink Completed
+    /// screen if the crafting was done from BarBot" regression.
     private var shouldShowProgressBar: Bool {
-        switch viewModel.state {
-        case .idle, .waitingForGlass, .completed:
-            return false
-        default:
-            return true
-        }
+        if !viewModel.hasStartedDispensing { return false }
+        if viewModel.state == .completed { return false }
+        return true
     }
 
     // MARK: - Cross button
