@@ -2773,46 +2773,26 @@ struct RecipeDetailView: View {
 
             // Craft — PrimaryOrangeButton (brand gradient on iOS 26+,
             // flat segmentSelectionColor on pre-26).
+            //
+            // 1:1 with UIKit `RecipePageViewController+Actions.didPressCraftButton`
+            // (lines 56-78): the Craft button DOES NOT gate on
+            // unsaved-quantity changes. UIKit shows the
+            // `unsavedChangesForRecipe` discard popup only on the
+            // BACK arrow (`handleNavigationBack` L293), FAVOURITES nav
+            // (`didPressFavouriteButton` L322), and SIDE MENU
+            // (`sideMenuAction` L361). The Craft path treats the
+            // edited quantities AS the user's intent and feeds them
+            // straight into `RecipeCraftingClass` /
+            // `performBarsys360CraftCheck` — that's the whole reason
+            // the quantity stepper exists on this screen.
+            //
+            // Other validations (device connected, perishable cleaning,
+            // station ingredient match, 5 ml min, insufficient quantity)
+            // are NOT skipped — they run inside `craft(recipe)` which
+            // ports `validateAndPushBarsys360Craft` 1:1.
             Button {
                 HapticService.light()
-                if hasUnsavedChanges {
-                    // 1:1 port of UIKit
-                    // `RecipePageViewController.showUnsavedChangesAlertForBack`
-                    // / `showUnsavedChangesAlertForFavourites` /
-                    // `showUnsavedChangesAlertForSideMenu`
-                    // (RecipePageViewController.swift L301-384):
-                    //
-                    //   showCustomAlertMultipleButtons(
-                    //       title: Constants.unsavedChangesForRecipe,
-                    //       cancelButtonTitle: keepEditingButtonTitle,   ← RIGHT, FILLED
-                    //       continueButtonTitle: discardButtonTitle,     ← LEFT, BORDERED
-                    //       cancelButtonColor: .segmentSelectionColor,   ← orange fill on Keep
-                    //       isCloseButtonHidden: true)
-                    //
-                    // BarsysPopup mapping:
-                    //   primaryTitle   → RIGHT button (UIKit "cancelButton")
-                    //   secondaryTitle → LEFT  button (UIKit "continueButton")
-                    //
-                    // So "Keep Editing" is `primaryTitle` (right-side
-                    // orange-filled pill via default `primaryFillColor =
-                    // "segmentSelectionColor"`) and "Discard" is
-                    // `secondaryTitle` (left-side bordered pill).
-                    // `isDestructive: false` — UIKit NEVER renders the
-                    // Discard button as a red destructive CTA here; it's
-                    // always the neutral bordered capsule.
-                    unsavedPopup = .confirm(
-                        title: Constants.unsavedChangesForRecipe,
-                        message: nil,
-                        primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
-                        secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
-                        isDestructive: false,
-                        // UIKit `EditViewController.swift:353` shows the X
-                        // here (`isCloseButtonHidden: false`).
-                        isCloseHidden: false
-                    )
-                } else {
-                    craft(recipe)
-                }
+                craft(recipe)
             } label: {
                 // UIKit makeOrangeStyle(): iOS 26+ → capsule with brand
                 // gradient (#FAE0CC → #F2C2A1). Pre-26 → flat segmentSelectionColor.
