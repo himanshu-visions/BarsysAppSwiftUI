@@ -374,6 +374,7 @@ struct HomeView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, 10)
                         .accessibilityAddTraits(.isHeader)
