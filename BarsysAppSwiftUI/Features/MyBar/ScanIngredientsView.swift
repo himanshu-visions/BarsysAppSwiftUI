@@ -1349,8 +1349,22 @@ struct ScanIngredientsView: View {
         }
 
         Task { @MainActor in
+            // Offline guard. Previously this just showed an alert
+            // and left the user staring at the captured image with
+            // a now-dismissed popup. Per the user request: "on
+            // proceed button when we got the error, the UI should
+            // update to take photo state — camera and labels
+            // should be resettled". Funnel through
+            // `failAndRetake(...)` so the offline branch is
+            // consistent with every other error branch — camera
+            // resets to live preview, description label re-appears,
+            // bottom controls flip back to the shutter.
             guard await ConnectionMonitor.shared.isConnected else {
-                env.alerts.show(message: Constants.internetConnectionMessage)
+                detectedIngredients = []
+                failAndRetake(
+                    title: Constants.internetConnectionMessage,
+                    message: ""
+                )
                 return
             }
             env.loading.show(Constants.savingIngredientsMessage)
@@ -1368,20 +1382,19 @@ struct ScanIngredientsView: View {
                 dismiss()
             } catch {
                 env.loading.hide()
-                // UIKit L316-318 failure branch: alert only, no pop,
-                // no local mutation.
+                // UIKit L316-318 failure branch: alert only, no
+                // pop, no local mutation. SwiftUI extension to
+                // match the same UX pattern `submitCapturedImage`
+                // already uses for every upload-side failure —
+                // route through `failAndRetake(message:)` so the
+                // camera is reset back to the live-preview
+                // (retake) state in the same body pass that
+                // surfaces the alert. Per the user request: "when
+                // error comes on submit / proceed, camera and
+                // labels should be resettled to take photo mode".
                 //
-                // SwiftUI extension (matches the same UX pattern
-                // `submitCapturedImage` already uses for every
-                // upload-side failure): route through
-                // `failAndRetake(message:)` so the camera is reset
-                // back to the live-preview (retake) state in the
-                // same body pass that surfaces the alert. Per the
-                // user request: "when error comes on submit, camera
-                // and labels should be resettled to take photo
-                // mode". `camera.reset()` clears `capturedImage`,
-                // which flips `hasCapturedImage` to false — that in
-                // turn:
+                // `camera.reset()` clears `capturedImage`, which
+                // flips `hasCapturedImage` to false — that in turn:
                 //   • swaps the bottom controls from
                 //     Retake/Submit back to the shutter button
                 //     (`bottomControlsContainer`)
@@ -1391,9 +1404,15 @@ struct ScanIngredientsView: View {
                 //   • brings back the live preview behind the
                 //     shutter (`cameraOrCapturedImageView` reads
                 //     `camera.capturedImage`)
-                // — all in a single re-render, so the user lands on
-                // a fresh take-photo state the moment they dismiss
-                // the alert.
+                // — all in a single re-render, so the user lands
+                // on a fresh take-photo state the moment they
+                // dismiss the alert.
+                //
+                // `detectedIngredients = []` cleared here too so
+                // the popup state doesn't carry stale entries into
+                // a fresh take-photo attempt — the next successful
+                // upload will repopulate it via `submitCapturedImage`.
+                detectedIngredients = []
                 let message = error.localizedDescription.isEmpty
                     ? Constants.ingredientScanError
                     : error.localizedDescription
