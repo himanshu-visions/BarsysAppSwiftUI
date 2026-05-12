@@ -551,45 +551,109 @@ struct HomeView: View {
                 headerRow
 
                 if isIPad {
-                    // iPad: hard aspect-ratio cap on the hero image so
-                    // its bottom edge stops well above the Speakeasy
+                    // iPad: hard size cap on the hero image so its
+                    // bottom edge stops well above the Speakeasy
                     // region.
                     //
                     // Renders via `GeometryReader` + explicit
                     // `frame(width:height:)` + `.clipped()` because
                     // `.overlay(Image.aspectRatio(.fill))` was letting
                     // the image overflow PAST `.clipped()` on the
-                    // outer `Color.clear` — the user reported the
-                    // image bottom showing behind the Speakeasy card,
-                    // which is the symptom of an unclipped overlay
-                    // overflow. The GeometryReader hands the Image a
-                    // CONCRETE frame that `.clipped()` can bind to,
-                    // guaranteeing no overflow on any iPad size.
+                    // outer `Color.clear`.
                     //
-                    // iPad LANDSCAPE side-by-side: the Connect Device
-                    // card sits at ~65% of viewport width with the
-                    // Speakeasy card beside it. A 1.15:1 hero on that
-                    // narrower card would render ~600pt tall and push
-                    // the Make Drink button below the fold. Switch to
-                    // the same 3:1 ratio iPhone landscape uses so the
-                    // hero stays a wide-but-short banner that hugs
-                    // the card header. iPad portrait keeps the
-                    // original 1.15:1 ratio — bit-identical to before.
-                    // Read iPad landscape via the same computed
-                    // signal the layout-decision branches use, so the
-                    // hero aspect ratio flips in sync with the
-                    // side-by-side layout switch.
-                    let iPadAspect: CGFloat = isIPadLandscape ? 3 : 1.15
-                    GeometryReader { geo in
-                        Image("chooseOptionsBarsysImage")
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: geo.size.width,
-                                   height: geo.size.height)
-                            .clipped()
+                    // iPad LANDSCAPE side-by-side: drive the hero
+                    // height from the SHORT side of the screen
+                    // (`UIScreen.main.bounds.height` in landscape ==
+                    // viewport vertical) so the Connect Device card
+                    // fills most of the available landscape height
+                    // — QA: "increase image size for iPad to cover
+                    // full screen for both Connect Device + image,
+                    // and Speakeasy view height should also increase
+                    // for landscape iPad". The Speakeasy column in
+                    // the parent HStack uses
+                    // `.frame(maxHeight: .infinity)` so it stretches
+                    // to match this taller mainCard height
+                    // automatically — both cards now share the same
+                    // tall height in iPad landscape.
+                    //
+                    // iPad PORTRAIT keeps the original 1.15:1 aspect
+                    // ratio — bit-identical to before.
+                    if isIPadLandscape {
+                        // Drive the hero height from the absolute
+                        // landscape viewport height so the
+                        // (Connect Device card + Speakeasy card)
+                        // pair fills most of the screen yet ALWAYS
+                        // leaves ~10–20pt of breathing room at the
+                        // bottom of the page — QA: "decrease its
+                        // height views, should have 10–20pt bottom
+                        // space in landscape mode".
+                        //
+                        // Math (iPad landscape):
+                        //   shortSide               = viewport H
+                        //   reservedOverhead (215pt) = top safe area
+                        //                              + toolbar
+                        //                              + welcome text
+                        //                              + description
+                        //                              + HStack
+                        //                                top/bottom
+                        //                                paddings
+                        //                              + bottom safe
+                        //                                area
+                        //                              + ~15pt
+                        //                                bottom gap
+                        //   headerRowH (62pt)        = "Connect Device"
+                        //                              header strip
+                        //   imageH = shortSide
+                        //            – reservedOverhead
+                        //            – headerRowH
+                        //
+                        // 380pt floor handles unusually short
+                        // landscape viewports (e.g. multitasking
+                        // split-view) where the formula goes
+                        // negative.
+                        //
+                        // Numbers across iPad models:
+                        //   iPad Mini    (744 short side):
+                        //       744 − 215 − 62 = 467pt image
+                        //   iPad 10.9"   (820 short side):
+                        //       820 − 215 − 62 = 543pt image
+                        //   iPad Pro 11" (834 short side):
+                        //       834 − 215 − 62 = 557pt image
+                        //   iPad Pro 13" (1024 short side):
+                        //       1024 − 215 − 62 = 747pt image
+                        //
+                        // Each leaves a ~15pt gap below the
+                        // Speakeasy card before the bottom safe area.
+                        let shortSide = min(UIScreen.main.bounds.width,
+                                            UIScreen.main.bounds.height)
+                        let reservedOverhead: CGFloat = 215
+                        let headerRowH: CGFloat = 62
+                        let landscapeHeroHeight: CGFloat =
+                            max(shortSide - reservedOverhead - headerRowH,
+                                380)
+                        GeometryReader { geo in
+                            Image("chooseOptionsBarsysImage")
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: geo.size.width,
+                                       height: geo.size.height)
+                                .clipped()
+                        }
+                        .frame(height: landscapeHeroHeight)
+                        .accessibilityHidden(true)
+                    } else {
+                        let iPadAspect: CGFloat = 1.15
+                        GeometryReader { geo in
+                            Image("chooseOptionsBarsysImage")
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: geo.size.width,
+                                       height: geo.size.height)
+                                .clipped()
+                        }
+                        .aspectRatio(iPadAspect, contentMode: .fit)
+                        .accessibilityHidden(true)
                     }
-                    .aspectRatio(iPadAspect, contentMode: .fit)
-                    .accessibilityHidden(true)
                 } else if verticalSizeClass == .compact {
                     // iPhone landscape: render the hero with a
                     // landscape-friendly aspect ratio (3:1) so its
@@ -774,7 +838,26 @@ struct HomeView: View {
                     .frame(height: isIPad ? 78 : 60)
                 }
             }
-            .frame(maxWidth: .infinity)
+            // Outer Group frame.
+            // - maxWidth always infinity (unchanged from before).
+            // - In landscape side-by-side ONLY, also request
+            //   maxHeight: .infinity so the parent HStack's full
+            //   height (driven by the now-much-taller iPad-landscape
+            //   mainCard) propagates down through the Group, and the
+            //   card BACKGROUND (applied just below) fills that full
+            //   matched height — instead of collapsing to the inner
+            //   VStack's intrinsic content size, which left the
+            //   Speakeasy card visibly shorter than the Connect
+            //   Device card.
+            // - In portrait, leaving maxHeight unset preserves the
+            //   bit-identical safeAreaInset(.bottom) sizing — that
+            //   inset uses the content's ideal height, so adding
+            //   maxHeight: .infinity unconditionally would blow up
+            //   the portrait inset to fill the screen.
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: isLandscapeSideBySide ? .infinity : nil
+            )
             // `Theme.Color.surface` is an adaptive asset — light
             // variant is pure white sRGB(1, 1, 1), bit-identical to
             // the previous hard-coded `Color.white`, so light mode
