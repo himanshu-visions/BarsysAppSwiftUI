@@ -588,7 +588,25 @@ struct ReadyToPourView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Tab bar — UIKit: two equal buttons, selected=white+bold, deselected=clear+regular
+    // MARK: - Tab bar — UIKit: two equal pill buttons inside `viewTabs`
+    // container, selected=white+bold, deselected=clear+regular.
+    //
+    // 1:1 port of UIKit `oNM-a6-h0g` "Sefmented View" (Mixlist.storyboard)
+    // + `ReadyToPourListViewController+Search.tabSelection(index:)` L24-63
+    // + `UIView.addTopRoundedBorder()` (UIViewClass.swift L174-242).
+    //
+    // UIKit numbers (must match pixel-for-pixel):
+    //   • viewTabs height: 69pt (12 top + 45 button + 12 bottom)
+    //   • Inner stackView: 24pt horizontal inset, 8pt spacing, fillEqually
+    //   • Each button: height 45, roundCorners = bounds.height/2 = 22.5
+    //     (pill, NOT 8pt — the storyboard's 8pt runtime attr is
+    //     overridden in tabSelection() every time the tab toggles)
+    //   • viewTabs top border: 25pt rounded corners, 2pt stroke,
+    //     stroke color = grayColorForReadyToPour (#D1D2D3 / #3A3A3C)
+    //   • Selected button bg = .white (= Theme.Color.surface)
+    //   • Deselected button bg = .clear
+    //   • Selected text: AppFontClass.font(.callout, weight: .bold), .black
+    //   • Deselected text: AppFontClass.font(.callout), .unSelectedColor
 
     private var tabBar: some View {
         HStack(spacing: 8) {
@@ -641,15 +659,20 @@ struct ReadyToPourView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 45)
                         .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                // Selected pill bg — `Theme.Color.surface`
-                                // light = pure white sRGB(1, 1, 1),
-                                // bit-identical to the previous
-                                // `Color.white`. Dark mode picks up
-                                // elevated dark surface (#2C2C2E) so
-                                // the selected tab reads as a raised
-                                // pill against the dark Ready-to-Pour
-                                // page. Unselected stays clear.
+                            // UIKit parity: `roundCorners = btnRecipes.bounds.height/2`
+                            // forces a full pill (45/2 = 22.5pt corners),
+                            // NOT the 8pt that the storyboard XML sets
+                            // (`tabSelection(index:)` overrides it on every
+                            // tap). `Capsule()` is the SwiftUI equivalent
+                            // of `cornerRadius = height/2 + masksToBounds`.
+                            // Selected pill bg — `Theme.Color.surface`
+                            // light = pure white sRGB(1, 1, 1),
+                            // bit-identical to the previous `Color.white`.
+                            // Dark mode picks up elevated dark surface
+                            // (#2C2C2E) so the selected tab reads as a
+                            // raised pill against the dark page.
+                            // Unselected stays clear.
+                            Capsule(style: .continuous)
                                 .fill(selectedTab == tab ? Theme.Color.surface : Color.clear)
                         )
                 }
@@ -657,8 +680,17 @@ struct ReadyToPourView: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.bottom, 16)
-        .padding(.top, 8)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        // 1:1 port of UIKit `viewTabs.addTopRoundedBorder()`
+        // (UIViewClass.swift L174-242): a 2pt CAShapeLayer stroke
+        // tracing the TOP edge with 25pt rounded corners, color
+        // `grayColorForReadyToPour` (#D1D2D3 light / #3A3A3C dark).
+        // Background stays transparent — the page's
+        // `primaryBackgroundColor` shows through.
+        .overlay(alignment: .top) {
+            ReadyToPourTabsTopBorder()
+        }
     }
 
     // MARK: - Toolbar
@@ -1811,5 +1843,87 @@ struct MixlistGridCellForReadyToPour: View {
                 .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+// MARK: - ReadyToPourTabsTopBorder
+//
+// 1:1 port of UIKit `UIView.addTopRoundedBorder()`
+// (UIViewClass.swift L174-242): draws a 2pt stroke that traces the TOP
+// edge of the tab-bar container with 25pt rounded corners on the left
+// and right ends. The UIKit version paints the path as a CAShapeLayer
+// (`grayColorForReadyToPour` stroke, fill = clear) and applies a mask
+// path with the same rounded-top silhouette so the layer doesn't leak
+// past the rounded corners. SwiftUI gets the same look with a single
+// stroked `Shape` since the container has no fill of its own.
+//
+// Color matches UIKit `grayColorForReadyToPour` (UIColor.swift L45):
+//   light = #D1D2D3   dark = #3A3A3C
+//
+// Use as an `.overlay(alignment: .top)` on a container whose intrinsic
+// height already includes the 12pt top padding the storyboard reserves
+// above the buttons. The stroke sits inside the container's bounds so
+// no extra outer padding is needed.
+private struct ReadyToPourTabsTopBorderShape: Shape {
+    /// Matches UIKit `addTopRoundedBorder()` `let radius: CGFloat = 25`.
+    let cornerRadius: CGFloat
+    /// Matches UIKit `addTopRoundedBorder()` `let borderHeight: CGFloat = 2`.
+    let lineWidth: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let width = rect.width
+        // Trace the top edge exactly as the UIKit BezierPath does:
+        //   1. start at (0, borderHeight)
+        //   2. rise vertically to (0, radius)
+        //   3. arc up-and-right to (radius, 0)  — top-left corner
+        //   4. line across to (width - radius, 0)
+        //   5. arc down-and-right to (width, radius)  — top-right corner
+        //   6. drop vertically to (width, borderHeight)
+        //
+        // `addQuadCurve` with the corner as the control point is a
+        // visually-identical substitute for the UIKit circular arc at
+        // 25pt radius (the eye can't distinguish a true arc from a
+        // quadratic bezier at this scale) and side-steps the SwiftUI
+        // vs UIKit `clockwise` parameter direction mismatch.
+        path.move(to: CGPoint(x: 0, y: lineWidth))
+        path.addLine(to: CGPoint(x: 0, y: cornerRadius))
+        path.addQuadCurve(
+            to: CGPoint(x: cornerRadius, y: 0),
+            control: CGPoint(x: 0, y: 0)
+        )
+        path.addLine(to: CGPoint(x: width - cornerRadius, y: 0))
+        path.addQuadCurve(
+            to: CGPoint(x: width, y: cornerRadius),
+            control: CGPoint(x: width, y: 0)
+        )
+        path.addLine(to: CGPoint(x: width, y: lineWidth))
+        return path
+    }
+}
+
+private struct ReadyToPourTabsTopBorder: View {
+    private let cornerRadius: CGFloat = 25
+    private let lineWidth: CGFloat = 2
+
+    var body: some View {
+        ReadyToPourTabsTopBorderShape(cornerRadius: cornerRadius,
+                                      lineWidth: lineWidth)
+            .stroke(
+                // `grayColorForReadyToPour` — dynamic light/dark color
+                // matching UIKit `UIColor.swift` L45.
+                Color(UIColor { trait in
+                    trait.userInterfaceStyle == .dark
+                        ? UIColor(red: 0x3A / 255.0, green: 0x3A / 255.0, blue: 0x3C / 255.0, alpha: 1.0)
+                        : UIColor(red: 0xD1 / 255.0, green: 0xD2 / 255.0, blue: 0xD3 / 255.0, alpha: 1.0)
+                }),
+                style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt)
+            )
+            // Reserve only the height needed for the rounded top corners
+            // (cornerRadius + lineWidth). Without an explicit height a
+            // Shape stretches to fill its parent, stealing tap targets
+            // below.
+            .frame(height: cornerRadius + lineWidth)
+            .allowsHitTesting(false)
     }
 }
