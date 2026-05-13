@@ -1368,12 +1368,17 @@ struct ReadyToPourRecipeRow: View {
             Button {
                 onFavourite()
             } label: {
+                // Dark-glass + white-content treatment shared with
+                // Favorites / Explore / Mixlist Detail heart icons —
+                // see `favoritesIconCapsule` (QA bug 0062300
+                // follow-up).
                 Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                    .renderingMode(.template)
                     .resizable().aspectRatio(contentMode: .fit)
                     .frame(width: favIconSize, height: favIconSize)
                     .frame(width: favButtonSize, height: favButtonSize)
                     .foregroundStyle(favButtonTint)
-                    .glassButtonIfAvailable(size: favButtonSize)
+                    .favoritesIconCapsule(size: favButtonSize)
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel(isFavourite
@@ -1400,12 +1405,13 @@ struct ReadyToPourRecipeRow: View {
     private var favIconSize: CGFloat {
         isIPad ? 36 : 22
     }
+    /// Heart icon tint — pinned to near-white so the glyph reads
+    /// with high contrast against the dark-tinted glass capsule
+    /// (`favoritesIconCapsule`). Same treatment shared with
+    /// Favorites / Explore / Mixlist Detail cells per QA bug
+    /// 0062300 follow-up.
     private var favButtonTint: Color {
-        if #available(iOS 26.0, *) {
-            return Color.black.opacity(0.3)
-        } else {
-            return Theme.Color.softWhiteText
-        }
+        Color.white.opacity(0.95)
     }
 
     // 1:1 with UIKit `PrimaryOrangeButton.makeOrangeStyle()` applied at
@@ -1641,12 +1647,18 @@ struct ReadyToPourRecipeGridCell: View {
                     .clipped()
                     // Favourite button — top-right overlay. Preserves
                     // the exact toggle handler from the iPhone row.
+                    // Dark-glass + white-content treatment shared
+                    // with Favorites / Explore / Mixlist Detail
+                    // heart icons — see `favoritesIconCapsule`
+                    // (QA bug 0062300 follow-up).
                     Button(action: onFavourite) {
                         Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                            .renderingMode(.template)
                             .resizable().aspectRatio(contentMode: .fit)
                             .frame(width: 36, height: 36)
                             .frame(width: 60, height: 60)
-                            .glassButtonIfAvailable(size: 60)
+                            .foregroundStyle(Color.white.opacity(0.95))
+                            .favoritesIconCapsule(size: 60)
                     }
                     .buttonStyle(BounceButtonStyle())
                     .accessibilityLabel(isFavourite

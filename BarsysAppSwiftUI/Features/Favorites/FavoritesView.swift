@@ -1322,12 +1322,43 @@ struct BarsysRecipeRow: View {
     private var favIconSize: CGFloat {
         UIDevice.current.userInterfaceIdiom == .pad ? 36 : 22
     }
+    /// QA-bug-0062300 follow-up: forces template rendering on every
+    /// iOS so the heart + more icons render as a **white silhouette
+    /// on top of the dark-tinted glass capsule** (`favoritesIconCapsule`).
+    /// The capsule is dark and the icon is light, mirroring the
+    /// system's dark-mode glass-button appearance — applied
+    /// consistently in light AND dark mode so QA see a clearly
+    /// visible icon either way (the previous adaptive-glass +
+    /// black-tint combo blended into the light-mode material and
+    /// QA flagged the icons as "not appearing clearly").
+    ///
+    /// Returning a non-optional `Image.TemplateRenderingMode` lets
+    /// call sites chain `.renderingMode(...).resizable()...` on the
+    /// raw `Image` without any type-inference ambiguity.
+    private var favButtonRenderingMode: Image.TemplateRenderingMode {
+        .template
+    }
+
+    /// Heart / More icon tint.
+    ///
+    /// QA-bug-0062300 follow-up: the icon glyph is pinned to a
+    /// near-white (`.white` at 95% alpha) so it reads with high
+    /// contrast on top of the dark-tinted glass capsule
+    /// (`favoritesIconCapsule` fills the background with a smoky
+    /// black-tinted glass). The 95% alpha keeps a touch of the
+    /// glass material visible through the glyph so it still feels
+    /// like a glass button rather than a flat sticker.
+    ///
+    /// This deliberately diverges from UIKit `tintColor` (which
+    /// resolves to either `.black@0.3` on iOS 26 or `.white` pre-26)
+    /// because UIKit's `prominentGlass()` material is opaque enough
+    /// that black@0.3 reads as a clear silhouette there, but
+    /// SwiftUI's `.glassEffect(.regular...)` is lighter — the user
+    /// wanted the **dark-glass + light-content** look applied
+    /// consistently across both modes, matching how the icons
+    /// already look in dark mode.
     private var favButtonTint: Color {
-        if #available(iOS 26.0, *) {
-            return Color.black.opacity(0.3)
-        } else {
-            return Theme.Color.softWhiteText
-        }
+        Color.white.opacity(0.95)
     }
 
     /// On iPad (every iOS), SwiftUI's hit-test routing swallows nested
@@ -1503,13 +1534,18 @@ struct BarsysRecipeRow: View {
                 Button {
                     onFavourite()
                 } label: {
+                    // Inlined `Image(...).renderingMode(...)` chain so
+                    // `.resizable()` is invoked on a concrete `Image`
+                    // — earlier helper properties wrapped this in
+                    // `some View` and tripped up the modifier chain.
                     Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                        .renderingMode(favButtonRenderingMode)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: favIconSize, height: favIconSize)
                         .frame(width: favButtonSize, height: favButtonSize)
                         .foregroundStyle(favButtonTint)
-                        .glassButtonIfAvailable(size: favButtonSize)
+                        .favoritesIconCapsule(size: favButtonSize)
                 }
                 .buttonStyle(BounceButtonStyle())
                 .accessibilityLabel(isFavourite
@@ -1524,12 +1560,13 @@ struct BarsysRecipeRow: View {
                         onMore()
                     } label: {
                         Image("more")
+                            .renderingMode(favButtonRenderingMode)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: favIconSize, height: favIconSize)
                             .frame(width: favButtonSize, height: favButtonSize)
                             .foregroundStyle(favButtonTint)
-                            .glassButtonIfAvailable(size: favButtonSize)
+                            .favoritesIconCapsule(size: favButtonSize)
                     }
                     .buttonStyle(BounceButtonStyle())
                     .accessibilityLabel("More options for \(recipe.displayName)")
@@ -1732,6 +1769,23 @@ struct BarsysRecipeGridCell: View {
         return recipe.isFavourite ?? false
     }
 
+    /// Rendering mode for the heart / more icons in the iPad grid
+    /// cell. Mirrors `BarsysRecipeRow.favButtonRenderingMode` —
+    /// always `.template` so the white foreground tint paints the
+    /// glyph as a light silhouette on top of the dark-tinted
+    /// `favoritesIconCapsule` glass background (QA bug 0062300).
+    private var gridFavButtonRenderingMode: Image.TemplateRenderingMode {
+        .template
+    }
+
+    /// Tint for the heart / more icons. Mirrors
+    /// `BarsysRecipeRow.favButtonTint` — pinned to near-white so
+    /// the glyph reads with high contrast against the dark-tinted
+    /// `favoritesIconCapsule` background (QA bug 0062300).
+    private var gridFavButtonTint: Color {
+        Color.white.opacity(0.95)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             GeometryReader { geo in
@@ -1760,12 +1814,13 @@ struct BarsysRecipeGridCell: View {
 
                     // Heart — top-right.
                     Button(action: onFavourite) {
-                        Image(isFavourite
-                              ? "favIconRecipeSelected" : "favIconRecipe")
+                        Image(isFavourite ? "favIconRecipeSelected" : "favIconRecipe")
+                            .renderingMode(gridFavButtonRenderingMode)
                             .resizable().aspectRatio(contentMode: .fit)
                             .frame(width: 36, height: 36)
                             .frame(width: 60, height: 60)
-                            .glassButtonIfAvailable(size: 60)
+                            .foregroundStyle(gridFavButtonTint)
+                            .favoritesIconCapsule(size: 60)
                     }
                     .buttonStyle(BounceButtonStyle())
                     .accessibilityLabel(isFavourite
@@ -1784,10 +1839,12 @@ struct BarsysRecipeGridCell: View {
                     if tab == .myDrinks {
                         Button(action: onMore) {
                             Image("more")
+                                .renderingMode(gridFavButtonRenderingMode)
                                 .resizable().aspectRatio(contentMode: .fit)
                                 .frame(width: 36, height: 36)
                                 .frame(width: 60, height: 60)
-                                .glassButtonIfAvailable(size: 60)
+                                .foregroundStyle(gridFavButtonTint)
+                                .favoritesIconCapsule(size: 60)
                         }
                         .buttonStyle(BounceButtonStyle())
                         .accessibilityLabel("More options for \(recipe.displayName)")
@@ -1959,6 +2016,55 @@ extension View {
                             .stroke(Color.white.opacity(0.25), lineWidth: 1)
                     )
                     .frame(width: size, height: size)
+            )
+        }
+    }
+
+    /// Favourites-only "dark-glass" variant of `glassButtonIfAvailable`.
+    ///
+    /// QA bug 0062300 follow-up: the heart + more icons on the
+    /// Favorites cells need to read as **dark blackish translucent
+    /// capsules with white-content icons** — same look the system
+    /// adopts in dark mode — and they need to keep that look in BOTH
+    /// light and dark mode (the regular `.glassEffect(.regular)` runs
+    /// light-on-light in light mode and the icons disappear into the
+    /// glass).
+    ///
+    /// - iOS 26+: `.glassEffect(.regular.tint(.black.opacity(0.35))
+    ///   .interactive(), in: .circle)` — Liquid Glass with a 35%
+    ///   black tint composited into the material, so the capsule
+    ///   reads as a smoky-dark glass that still shows the recipe
+    ///   image faintly through it. `.interactive()` preserves the
+    ///   press refraction / bounce.
+    /// - Pre-iOS 26: `Circle().fill(.thinMaterial)` underneath a
+    ///   `Color.black.opacity(0.35)` overlay — the equivalent
+    ///   stacked-fill recipe SwiftUI uses elsewhere to fake the iOS
+    ///   26 tinted glass on older systems. 0.5pt white stroke keeps
+    ///   the capsule edge crisp against light recipe artwork.
+    ///
+    /// Scoped to the Favorites cells only — `glassButtonIfAvailable`
+    /// keeps its existing light/adaptive look for every other call
+    /// site (Mixlists, ReadyToPour, RecipeDetail, ControlCenter).
+    @ViewBuilder
+    func favoritesIconCapsule(size: CGFloat) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(
+                .regular
+                    .tint(Color.black.opacity(0.35))
+                    .interactive(),
+                in: .circle
+            )
+        } else {
+            self.background(
+                ZStack {
+                    Circle().fill(.thinMaterial)
+                    Circle().fill(Color.black.opacity(0.35))
+                }
+                .overlay(
+                    Circle()
+                        .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
+                )
+                .frame(width: size, height: size)
             )
         }
     }

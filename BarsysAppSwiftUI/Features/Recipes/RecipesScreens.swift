@@ -976,12 +976,20 @@ struct RecipeGridCell: View {
                     .clipped()
 
                     Button(action: onFavourite) {
+                        // Dark-glass + white-content treatment —
+                        // shared with the Favorites cells via
+                        // `favoritesIconCapsule` so the heart icon
+                        // reads with the same high-contrast look
+                        // across Explore / Favorites / Mixlist /
+                        // Ready-to-Pour (QA bug 0062300 follow-up).
                         Image(recipe.isFavourite == true
                               ? "favIconRecipeSelected" : "favIconRecipe")
+                            .renderingMode(.template)
                             .resizable().aspectRatio(contentMode: .fit)
                             .frame(width: 36, height: 36)
                             .frame(width: 60, height: 60)
-                            .glassButtonIfAvailable(size: 60)
+                            .foregroundStyle(Color.white.opacity(0.95))
+                            .favoritesIconCapsule(size: 60)
                     }
                     .buttonStyle(BounceButtonStyle())
                     .accessibilityLabel("Favourite")
@@ -1100,12 +1108,14 @@ struct RecipeRowCell: View {
     private var favIconSize: CGFloat {
         UIDevice.current.userInterfaceIdiom == .pad ? 36 : 22
     }
+    /// Heart icon tint — pinned to near-white so the glyph reads
+    /// with high contrast against the dark-tinted glass capsule
+    /// (`favoritesIconCapsule`). Same treatment applied across the
+    /// Favorites, Explore, Mixlist Detail and Ready-to-Pour cells
+    /// per QA bug 0062300 follow-up: the heart icon needs to look
+    /// like the dark-mode glass-button in both light and dark mode.
     private var favButtonTint: Color {
-        if #available(iOS 26.0, *) {
-            return Color.black.opacity(0.3)
-        } else {
-            return Theme.Color.softWhiteText
-        }
+        Color.white.opacity(0.95)
     }
     /// iPad bumps the row text to a comfortable scale on the wider
     /// canvas. iPhone stays bit-identical to the UIKit storyboard
@@ -1174,13 +1184,18 @@ struct RecipeRowCell: View {
                 HapticService.light()
                 onFavourite()
             } label: {
+                // Dark-glass + white-content treatment shared with
+                // Favorites / Mixlist / Ready-to-Pour heart icons —
+                // see `favoritesIconCapsule` (QA bug 0062300
+                // follow-up).
                 Image(recipe.isFavourite == true ? "favIconRecipeSelected" : "favIconRecipe")
+                    .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: favIconSize, height: favIconSize)
                     .frame(width: favButtonSize, height: favButtonSize)
                     .foregroundStyle(favButtonTint)
-                    .glassButtonIfAvailable(size: favButtonSize)
+                    .favoritesIconCapsule(size: favButtonSize)
             }
             .buttonStyle(BounceButtonStyle())
             .padding(.top, 5)
