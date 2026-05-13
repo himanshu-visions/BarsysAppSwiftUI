@@ -365,32 +365,60 @@ final class AppRouter: ObservableObject {
     /// on appear and clear it when done.
     @Published var setupStationsContext: SetupStationsContext? = nil
 
-    /// Transient hand-off for the user's locally-edited recipe from
-    /// `RecipeDetailView` into the next `CraftingView` push.
+    /// In-memory map of recipes whose quantities the user has
+    /// edited on `RecipeDetailView` but **not yet committed** via
+    /// "Save to My Drinks" or discarded via the unsaved-changes
+    /// alert.
     ///
     /// Why this exists:
-    /// Recipe Detail keeps `editedIngredients` as local `@State`,
-    /// so a `+ / -` tap on a quantity row never reaches
-    /// `env.storage`. The Craft button used to call
-    /// `router.push(.crafting(recipe.id))`, which made `CraftingView`
-    /// re-fetch the recipe from `env.storage.recipe(by: recipeID)`
-    /// — pulling the **catalog** quantities and discarding the
-    /// user's edits. This mirrors UIKit's
-    /// `RecipePageViewController+Actions.didPressCraftButton`
-    /// behaviour ("the Craft path treats the edited quantities AS
-    /// the user's intent and feeds them straight into
-    /// RecipeCraftingClass") which had been broken in the SwiftUI
-    /// port.
+    /// UIKit `RecipePageViewModel` maintains the edits in
+    /// `baseAndMixerIngredientsArrWithUpdatedQuantity` (mutated
+    /// on every `+/-` tap, RecipePageViewModel.swift L225-235). That
+    /// array is the input to every downstream consumer:
+    ///   • `craftCoasterRecipeWithUpdatedQuantity(...)` —
+    ///     RecipePageViewController+Actions.swift L70
+    ///   • `checkBarsys360Craftability(...)` —
+    ///     RecipePageViewModel+CraftAndAnalytics.swift L17-100
+    ///   • `prepareSaveToMyDrinksData()` — same file L117-120
+    ///   • The UIKit storyboard's ingredient table cells (which
+    ///     re-bind on `reloadData()`).
     ///
-    /// Lifecycle:
-    /// - Set by `RecipeDetailView.craft(_:)` right before
-    ///   `push(.crafting(...))` with the recipe already overlaid
-    ///   with `editedIngredients`.
-    /// - Read by `CraftingView` on first appear, then immediately
-    ///   cleared so subsequent crafting pushes (DrinkComplete's
-    ///   "Make It Again", BarBot, etc.) fall through to the
-    ///   storage lookup.
-    @Published var craftRecipeOverride: Recipe? = nil
+    /// Lifetime in UIKit: the array lives as long as the
+    /// `RecipePageViewModel` instance — which means edits persist
+    /// across navigation pushes (Crafting / Favorites / etc.) and
+    /// only reset when the user taps Discard on the unsaved-changes
+    /// alert OR the VC is popped off the nav stack.
+    ///
+    /// SwiftUI port: `RecipeDetailView` is a **struct** and its
+    /// `editedIngredients` lives in `@State`, which is destroyed
+    /// the moment the view leaves the navigation stack. That made
+    /// edits disappear in TWO bug-report-worthy ways:
+    ///   1. The Craft button pushed `.crafting(recipeID)` —
+    ///      `CraftingView` then re-read `env.storage`, getting
+    ///      catalog defaults. Device poured the wrong quantities.
+    ///   2. Coming back from any pushed screen (Crafting,
+    ///      Favorites, even just a side-menu tap) reseeded
+    ///      `editedIngredients` from `env.storage` again —
+    ///      catalog defaults. The user lost their edits.
+    ///
+    /// This dictionary plugs the gap: every `+/-` tap and every
+    /// direct quantity edit writes the merged recipe here.
+    /// `RecipeDetailView.onAppear` reads from here first (falling
+    /// back to `env.storage`) so re-entries keep the edits.
+    /// `CraftingView.resolvedRecipe` does the same so the device
+    /// pours the user-chosen amount.
+    ///
+    /// Clearing rules (1:1 with UIKit semantics):
+    ///   • User taps **Discard** on the unsaved-changes alert →
+    ///     `removeValue(forKey: recipeID)`. Edits gone, recipe
+    ///     reverts to the catalog version.
+    ///   • User taps **Save to My Drinks** and the API call
+    ///     succeeds → `removeValue(forKey: recipeID)` (the saved
+    ///     recipe is its own catalog entry now).
+    /// All other navigation (push to Crafting, swipe-back to
+    /// Explore, app backgrounding) leaves the edits intact, exactly
+    /// like UIKit's viewmodel-scoped array.
+    @Published var pendingRecipeEdits: [RecipeID: Recipe] = [:]
 
     /// Identifies which crafting-adjacent screen is currently visible
     /// (if any). Set by views in `onAppear`, cleared in `onDisappear`.

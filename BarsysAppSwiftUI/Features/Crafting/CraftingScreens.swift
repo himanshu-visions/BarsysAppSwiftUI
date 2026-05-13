@@ -1176,24 +1176,26 @@ struct CraftingView: View {
     }
 
     /// Resolves the recipe to craft, preferring the user's edited
-    /// copy (set by `RecipeDetailView.craft(_:)` via
-    /// `router.craftRecipeOverride`) over the canonical storage
-    /// version. Falls through to `env.storage.recipe(by: recipeID)`
-    /// when no override is set — covering the "Make It Again" path
-    /// from `DrinkCompleteView`, the SpeakEasy socket-driven craft,
-    /// and any other non-Recipe-Detail entry point.
+    /// copy in `router.pendingRecipeEdits[recipeID]` (populated by
+    /// `RecipeDetailView`'s `+/-` handlers and `EditRecipeView`'s
+    /// craft handler) over the canonical `env.storage` version.
     ///
     /// This is the SwiftUI equivalent of UIKit
     /// `CraftingViewController.recipe` being assigned by the caller
-    /// before the segue — UIKit hands `viewModel.recipe` (with all
-    /// `+ / -` edits intact) straight to the next VC, so the device
-    /// pours the user's chosen amount. The SwiftUI router only
-    /// carries the recipe **ID** through the route enum, so we need
-    /// this side-channel to preserve UIKit's edited-quantity
-    /// semantics. Fixes the QA-reported "Craft uses the initial
-    /// quantity, not the changed quantity" bug.
+    /// before the segue with the viewmodel's mutated `recipe`
+    /// (`baseAndMixerIngredientsArrWithUpdatedQuantity` applied —
+    /// see `RecipePageViewModel.swift` L225-235 + L209-211 and
+    /// `EditViewModel.swift` L207-243). UIKit hands the mutated
+    /// recipe straight to `CraftingViewController.recipe` so the
+    /// device pours the user's chosen amount, NOT the catalog
+    /// default. The SwiftUI router only carries the recipe **ID**
+    /// through the route enum, so we need this dictionary
+    /// side-channel to preserve the same semantics. Falls through
+    /// to `env.storage.recipe(by: recipeID)` for any craft entry
+    /// point that doesn't go through Recipe Detail / Edit Recipe
+    /// (DrinkComplete's "Make It Again", BarBot, SpeakEasy socket).
     private var resolvedRecipe: Recipe? {
-        router.craftRecipeOverride ?? env.storage.recipe(by: recipeID)
+        router.pendingRecipeEdits[recipeID] ?? env.storage.recipe(by: recipeID)
     }
 
     var body: some View {
@@ -1402,18 +1404,18 @@ struct CraftingView: View {
             if router.activeCraftingScreen == .crafting {
                 router.activeCraftingScreen = nil
             }
-            // Consume the recipe-override side-channel once the
-            // crafting flow ends so the next `.crafting(...)` push
-            // (e.g. from DrinkComplete's "Make It Again" loop, a
-            // BarBot recipe, or a fresh Recipe Detail entry that
-            // didn't set an override) falls through to the storage
-            // lookup. UIKit's equivalent is implicit: each
-            // `CraftingViewController` is its own VC with its own
-            // `recipe` property — there's no global state to clean
-            // up. SwiftUI's route enum carries only an ID, so we
-            // simulate the per-instance state by clearing the
-            // override when this instance disappears.
-            router.craftRecipeOverride = nil
+            // We deliberately do NOT clear
+            // `router.pendingRecipeEdits[recipeID]` here. The
+            // dictionary is the SwiftUI equivalent of UIKit's
+            // viewmodel-scoped `baseAndMixerIngredientsArr
+            // WithUpdatedQuantity` array, which UIKit only resets
+            // on Discard tap OR successful Save to My Drinks — not
+            // on Crafting view dismissal. Preserving the entry here
+            // means the user can pop back to Recipe Detail after
+            // crafting and still see the quantities they chose,
+            // matching the user's reported expectation: "when user
+            // craft and come back it should retain the updated
+            // quantity".
         }
         // Kept as a fallback for the very-first push of the view —
         // `.onAppear` above handles both first-push and re-appear

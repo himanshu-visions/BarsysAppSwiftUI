@@ -1687,6 +1687,15 @@ struct RecipeDetailView: View {
                 }, onSecondary: {
                     // "Discard" — UIKit
                     // `viewModel.discardQuantityChanges()` + navigate.
+                    // First evict the recipe-level edits cache so
+                    // `loadIngredients(from:)` re-seeds from the
+                    // catalog rather than from the now-stale pending
+                    // edits dict. This is the ONLY place the dict
+                    // gets cleared from the recipe-detail side — UIKit
+                    // mirror: `discardQuantityChanges()` is the only
+                    // path that resets `…WithUpdatedQuantity` back to
+                    // the baseline array.
+                    router.pendingRecipeEdits.removeValue(forKey: recipeID)
                     loadIngredients(from: recipe)
                     switch pendingUnsavedAction {
                     case .navigateToFavorites:
@@ -3276,9 +3285,28 @@ struct RecipeDetailView: View {
     // MARK: - Actions
 
     private func loadIngredients(from recipe: Recipe) {
-        let all = recipe.ingredients ?? []
-        originalIngredients = all
-        editedIngredients = all
+        // `originalIngredients` is the catalog baseline — always
+        // sourced from `env.storage` so it represents the unedited
+        // recipe even after the user has made +/- edits in this
+        // session. The Discard handler uses this to revert.
+        let storageBaseline = recipe.ingredients ?? []
+        originalIngredients = storageBaseline
+
+        // `editedIngredients` is the user's working set. When the
+        // user has pending edits for this recipe (set by a previous
+        // +/- tap before navigating away), restore them so coming
+        // back from a push (Crafting / Favorites / side-menu / etc.)
+        // doesn't silently drop those edits. 1:1 with UIKit
+        // `RecipePageViewModel.baseAndMixerIngredientsArrWithUpdatedQuantity`
+        // which lives on the viewmodel instance and persists across
+        // every nav-stack push until the VC is popped off entirely.
+        // Only Discard clears `router.pendingRecipeEdits[recipeID]`.
+        if let pending = router.pendingRecipeEdits[recipeID]?.ingredients,
+           !pending.isEmpty {
+            editedIngredients = pending
+        } else {
+            editedIngredients = storageBaseline
+        }
     }
 
     /// Build a copy of `recipe` whose ingredient list has the user's
@@ -3349,6 +3377,7 @@ struct RecipeDetailView: View {
         }
         copy.quantity = q
         editedIngredients[idx] = copy
+        publishPendingEdits()
     }
 
     /// Direct text-edit overwrite — clamps to UIKit's
@@ -3358,6 +3387,35 @@ struct RecipeDetailView: View {
         var copy = editedIngredients[idx]
         copy.quantity = max(5.0, min(750.0, ml))
         editedIngredients[idx] = copy
+        publishPendingEdits()
+    }
+
+    /// Reflects the current `editedIngredients` array into the
+    /// app-level `router.pendingRecipeEdits` dictionary so other
+    /// screens — primarily `CraftingView`, but also a re-entry
+    /// to this same `RecipeDetailView` after a push/pop — can read
+    /// the user's in-flight edits.
+    ///
+    /// 1:1 with UIKit `RecipePageViewModel`'s
+    /// `baseAndMixerIngredientsArrWithUpdatedQuantity` array: that
+    /// array is the viewmodel's source of truth for everything
+    /// downstream (Craft button, Save to My Drinks, Favorites swap),
+    /// and it persists as long as the `RecipePageViewModel` instance
+    /// does — which in UIKit's nav-stack model is "until the user
+    /// pops the page off" or "until Discard is tapped". The SwiftUI
+    /// port keeps the equivalent persistence on `router` because
+    /// `RecipeDetailView` is a struct whose `@State` evaporates the
+    /// moment the view leaves the stack, so we can't rely on @State
+    /// alone for cross-push persistence.
+    ///
+    /// Cleared by:
+    ///   • Discard tap on the unsaved-changes alert — see the
+    ///     `barsysPopup` onSecondary handler.
+    ///   • Successful Save to My Drinks — see the EditRecipeView
+    ///     cover-close handler.
+    private func publishPendingEdits() {
+        guard let stored = env.storage.recipe(by: recipeID) else { return }
+        router.pendingRecipeEdits[recipeID] = recipeWithEditedQuantities(stored)
     }
 
     private func craft(_ recipe: Recipe) {
@@ -3370,51 +3428,24 @@ struct RecipeDetailView: View {
             return
         }
 
-        // ─────────────────────────────────────────────────────────
-        // Overlay the user's pending quantity edits onto the recipe
-        // AND commit them to `env.storage` so every downstream
-        // reader — the validation preflight, the CraftingView
-        // ingredient table, the BLE command builder, the
-        // DrinkComplete summary — pulls the live values, not the
-        // catalog defaults.
+        // The `+/-` tap handlers (`adjustQuantity(...)` /
+        // `overwriteQuantity(...)`) already write the merged-edits
+        // recipe into `router.pendingRecipeEdits[recipeID]` on every
+        // change. That dict is what `CraftingView.resolvedRecipe`
+        // reads. We just need to make sure it's flushed here too,
+        // as a belt-and-suspenders for any edge case where the user
+        // edits and immediately presses Craft (the publish from the
+        // +/- handlers is synchronous, but explicit is clearer).
         //
-        // UIKit reference (`RecipePageViewModel.swift`):
-        //   • The viewmodel maintains TWO arrays —
-        //     `baseAndMixerIngredientsArr` (original) and
-        //     `baseAndMixerIngredientsArrWithUpdatedQuantity`
-        //     (mutated on every `+/-` tap, L225-235).
-        //   • `RecipePageViewController+Actions.didPressCraftButton`
-        //     (L56-78) passes the `…WithUpdatedQuantity` array
-        //     straight to `RecipeCraftingClass`
-        //     (`craftCoasterRecipeWithUpdatedQuantity` /
-        //     `craft360RecipeForUpdatedQuantity`), and
-        //     `checkBarsys360Craftability`
-        //     (`RecipePageViewModel+CraftAndAnalytics.swift` L17-100)
-        //     builds the `[StationCleaningFlow]` it hands to
-        //     `CraftingViewController` from that same edited array.
-        //   • The result: UIKit never re-reads the catalog recipe
-        //     between the user's +/- tap and the BLE command. Every
-        //     consumer sees the edited values.
-        //
-        // The SwiftUI port keeps user edits in
-        // `RecipeDetailView.editedIngredients` (@State) — they
-        // never reach `env.storage`, so when the route push hands
-        // off to `CraftingView` and it does
-        // `env.storage.recipe(by: recipeID)`, the lookup returns
-        // the **unedited** catalog copy. Result: device pours
-        // catalog defaults. QA bug: "user changes the quantity on
-        // recipe details → presses Craft → device uses the initial
-        // quantity, not the changed quantity".
-        //
-        // Fix: write the merged-edits recipe back to
-        // `env.storage.upsert(recipe:)` *before* pushing. This is
-        // the SwiftUI equivalent of UIKit mutating the in-memory
-        // viewmodel array — `env.storage` IS our in-memory state.
-        // Every downstream `env.storage.recipe(by: recipeID)` call
-        // now returns the edited recipe, exactly mirroring UIKit's
-        // single-source-of-truth-while-crafting behaviour.
+        // 1:1 with UIKit `RecipePageViewController+Actions
+        // .didPressCraftButton` which hands UIKit's mutated
+        // `baseAndMixerIngredientsArrWithUpdatedQuantity` straight
+        // into `RecipeCraftingClass` (Coaster/Shaker) and
+        // `checkBarsys360Craftability` (360). See the AppRouter
+        // doc-comment on `pendingRecipeEdits` for the full UIKit
+        // mapping.
         let editedRecipe = recipeWithEditedQuantities(recipe)
-        env.storage.upsert(recipe: editedRecipe)
+        router.pendingRecipeEdits[recipeID] = editedRecipe
 
         // 1:1 port of UIKit
         // `RecipePageViewController+Actions.didPressCraftButton` +
@@ -5770,6 +5801,16 @@ struct EditRecipeView: View {
                     updated.isMyDrinkFavourite = true
                     env.storage.upsert(recipe: updated)
                 }
+                // Drop the pending-edits cache for this recipe now
+                // that the edits have been persisted to the server
+                // (and to local storage above). Without this, the
+                // next time the user opens the recipe / pushes
+                // crafting, the cached edits would override the
+                // freshly-saved canonical record. 1:1 with UIKit
+                // `EditViewModel` which simply discards its
+                // `recipeIngredientsArrayToShow` when the VC pops
+                // off the stack on save success.
+                router.pendingRecipeEdits.removeValue(forKey: recipeToSave.id)
                 isSaving = false
                 // Hide the loader BEFORE the success popup is queued so
                 // the loader doesn't sit underneath the alert (matches
@@ -6005,6 +6046,21 @@ struct EditRecipeView: View {
     /// downstream, same as the recipe-page Coaster path.
     private func proceedToCraft() {
         let id = recipeID ?? RecipeID()
+        // Publish the user's edited recipe (with the deleted /
+        // added / quantity-adjusted ingredients applied) into
+        // `router.pendingRecipeEdits` so `CraftingView` reads it
+        // when it resolves its working recipe. 1:1 with UIKit
+        // `EditViewModel.craftOnCoasterOrShaker` / `craftOn360`
+        // (EditViewModel.swift L214-244) which both do
+        // `recipe?.ingredients = recipeIngredientsArrayToShow
+        //   .filter({ $0.quantity ?? 0 > 0 })` BEFORE handing the
+        // recipe to `RecipeCraftingClass` — meaning deleted rows
+        // simply aren't in the array and never reach the device,
+        // and zero-quantity rows are skipped. Without this
+        // publish, the SwiftUI route push only carried the ID, so
+        // `CraftingView` re-read the unchanged storage recipe and
+        // poured the catalog defaults.
+        publishEditedRecipeForCrafting(id: id)
         if ble.isBarsys360Connected() {
             Task { @MainActor in
                 await validateAndPushBarsys360Craft(id: id)
@@ -6012,6 +6068,52 @@ struct EditRecipeView: View {
             return
         }
         pushCrafting(id: id)
+    }
+
+    /// Materialises the user's in-flight edits (quantity changes,
+    /// add / delete) into a single `Recipe` value and stashes it
+    /// in `router.pendingRecipeEdits[id]` so downstream consumers
+    /// (`CraftingView`, validation preflight, analytics) all read
+    /// the same edited set.
+    ///
+    /// 1:1 with UIKit `EditViewModel.prepareCraftData(recipeName:)`
+    /// (EditViewModel.swift L207-212) which:
+    ///   1. trims the recipe name
+    ///   2. filters `recipeIngredientsArrayToShow` to `quantity > 0`
+    ///   3. overwrites `recipe.ingredients` with the filtered array
+    /// SwiftUI port mirrors steps 1-3, plus re-attaches the
+    /// retained garnish + additional rows (the SwiftUI `ingredients`
+    /// @State only holds base + mixer; UIKit's array holds the full
+    /// set, so we have to rebuild the full ingredient list for the
+    /// shared `CraftingViewModel.start(recipe:)` consumer).
+    private func publishEditedRecipeForCrafting(id: RecipeID) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        // Drop zero-quantity rows — UIKit
+        // `EditViewModel.prepareCraftData` L209.
+        let filteredBaseAndMixer = ingredients.filter {
+            ($0.quantity ?? 0) > 0
+        }
+        // Re-assemble the full ingredient list in the same order
+        // `save()` uses (garnish → additional → base+mixer) so the
+        // saved AND crafted lists stay structurally identical.
+        // Deletes are intrinsic: anything the user removed from the
+        // edit screen isn't in `ingredients` anymore, so it never
+        // reaches this array, never reaches the device.
+        var fullIngredients: [Ingredient] = []
+        fullIngredients.append(contentsOf: savedGarnishIngredients)
+        fullIngredients.append(contentsOf: savedAdditionalIngredients)
+        fullIngredients.append(contentsOf: filteredBaseAndMixer)
+
+        // Resolve the source recipe: `existingRecipe` (My Drinks
+        // edit), then `env.storage`, then a fresh recipe shell for
+        // brand-new "Save to My Drinks" flows.
+        let source: Recipe = existingRecipe
+            ?? recipeID.flatMap { env.storage.recipe(by: $0) }
+            ?? Recipe(id: id, name: trimmed)
+        var recipeForCraft = source
+        recipeForCraft.name = trimmed
+        recipeForCraft.ingredients = fullIngredients
+        router.pendingRecipeEdits[id] = recipeForCraft
     }
 
     /// Push the crafting screen onto the appropriate navigation path —
