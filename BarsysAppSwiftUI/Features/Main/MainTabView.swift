@@ -669,6 +669,24 @@ struct MainTabView: View {
         // distinct composites and re-renders correctly when
         // `connected` changes.
         let useComposite: Bool = {
+            // iPad mini bypass: the iOS 26 iPad top-floating tab pill
+            // clamps the per-item icon area to a tiny system-controlled
+            // size, so the pre-rendered `horizontalTabImage` composite
+            // gets SCALED DOWN there regardless of how big we draw it
+            // (44pt+ composites all collapse to the same unreadable
+            // few-pixel block — confirmed by QA screenshot of the iPad
+            // mini top pill). Fall back to native Label rendering on
+            // iPad mini so the system's tab-bar layout takes over and
+            // honours the bumped `titleTextAttributes.font` we set in
+            // `configureAppearance()` — the title then reads at our
+            // chosen 22pt semibold instead of the composite's clamped
+            // visual size.
+            //
+            // iPhone, regular iPad, iPad Air, and iPad Pro keep the
+            // composite path — they don't suffer from the iPad-mini
+            // clamping, and removing the composite there would change
+            // their pixel-identical iOS-26 / iOS-25 visual.
+            if Self.isIPadMini { return false }
             if #available(iOS 26.0, *) {
                 return tab != .homeOrControlCenter
             } else {
@@ -680,6 +698,25 @@ struct MainTabView: View {
            let composite = Self.horizontalTabImage(iconName: imageName, title: title) {
             Image(uiImage: composite)
                 .renderingMode(.template)
+        } else if Self.isIPadMini,
+                  let oversized = Self.resizedTabIcon(named: imageName) {
+            // iPad mini native rendering — `.frame(...)` on a
+            // SwiftUI `Image` inside `.tabItem` is NOT honoured by
+            // SwiftUI's tab-bar bridge (UIKit reads the asset's
+            // intrinsic UIImage size, ignoring SwiftUI sizing
+            // modifiers). To actually grow the icon we pre-render
+            // a UIImage at the iPad-mini target size (32×32) and
+            // hand THAT to `Image(uiImage:)` — UIKit then receives
+            // a 32×32 source instead of the asset's intrinsic ~25pt
+            // and the icon scales up in the top pill. Title font
+            // is driven by the `titleTextAttributes.font` bump in
+            // `configureAppearance`.
+            Label {
+                Text(title)
+            } icon: {
+                Image(uiImage: oversized)
+                    .renderingMode(.template)
+            }
         } else {
             Label {
                 Text(title)
@@ -821,6 +858,28 @@ struct MainTabView: View {
         item.selected.iconColor = selectedColor
         item.selected.titleTextAttributes = [.foregroundColor: selectedColor]
 
+        // iPad mini ONLY — bump the system tab-bar title font to 22pt
+        // semibold so the 4th tab's Label fallback (the brief window
+        // BEFORE `setFourthTabToSearchItem` swaps in the composite,
+        // and the pre-iOS-26 path where there is no .search swap at
+        // all) reads at the same scale as the bigger composite icons
+        // on the first three tabs. Without this, the 4th tab's title
+        // is stuck at UIKit's default ~10pt while the first three
+        // tabs render at iPad-mini-bumped 22pt — visibly mismatched
+        // on the iOS 26 glass pill. iPhone, regular iPad, iPad Air,
+        // and iPad Pro keep the system default — no impact.
+        if Self.isIPadMini {
+            let bumpedFont = UIFont.systemFont(ofSize: 22, weight: .semibold)
+            item.normal.titleTextAttributes = [
+                .foregroundColor: unselectedTitleColor,
+                .font: bumpedFont
+            ]
+            item.selected.titleTextAttributes = [
+                .foregroundColor: selectedColor,
+                .font: bumpedFont
+            ]
+        }
+
         if #available(iOS 26.0, *) {
             // UIKit L130: `shadowColor = UIColor.black.withAlphaComponent(0.4)`.
             // Top hairline under the glass so the tab bar reads against
@@ -922,6 +981,15 @@ struct MainTabView: View {
         // between `homeIcon` and `controlCentreIcon` on BLE
         // connection state changes with NO UIKit override needed.
         guard #available(iOS 26.0, *) else { return }
+        // iPad mini bypass: on iPad mini we render the 4th tab as a
+        // regular `.tabItem { Label }` (no composite, no .search
+        // conversion) so it inherits the bumped system title font
+        // from `configureAppearance` and lands in the same layout as
+        // the other three Label-based tabs above. Converting it to
+        // `.search` would drop the title on iPad mini's top pill
+        // and re-introduce the "no title on 4th tab" QA report.
+        // Other iPads / iPhone keep the search-item conversion.
+        guard !Self.isIPadMini else { return }
         guard let windowScene = UIApplication.shared.connectedScenes
                 .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
               let window = windowScene.windows.first(where: { $0.isKeyWindow }) else { return }
@@ -1843,6 +1911,43 @@ struct MainTabView: View {
     // and reused across re-runs of `setFourthTabToSearchItem`.
     private static var horizontalTabImageCache: [String: UIImage] = [:]
 
+    /// iPad-mini-only tab-icon cache. Pre-renders the asset at 32×32
+    /// so the iPad-mini Label-based tab items get a UIImage whose
+    /// `pointSize` actually equals 32pt — `.tabItem { Image(name).
+    /// resizable().frame(...) }` does NOT pass SwiftUI sizing into
+    /// the UIKit bridge, so the bridge reads the asset's intrinsic
+    /// ~25pt size if we don't pre-render.
+    private static var resizedTabIconCache: [String: UIImage] = [:]
+
+    private static func resizedTabIcon(named iconName: String,
+                                       size: CGSize = CGSize(width: 32, height: 32))
+        -> UIImage? {
+        let key = "\(iconName)|\(Int(size.width))x\(Int(size.height))"
+        if let cached = resizedTabIconCache[key] { return cached }
+        guard let raw = UIImage(named: iconName) else { return nil }
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let resized = renderer.image { _ in
+            raw.draw(in: CGRect(origin: .zero, size: size))
+        }.withRenderingMode(.alwaysTemplate)
+        resizedTabIconCache[key] = resized
+        return resized
+    }
+
+    /// True ONLY on iPad mini (idiom = .pad AND short side ≤ 768pt).
+    /// iPad mini 6 = 744×1133; iPad mini 5 = 768×1024; the next size
+    /// up is iPad regular 10th gen at 810×1180 which falls outside
+    /// this check. iPhone (idiom = .phone) is always excluded.
+    ///
+    /// Scoped narrowly so the iPad-mini-specific tab-bar bumps below
+    /// do NOT touch iPhone, regular iPad, iPad Air, or iPad Pro —
+    /// QA explicitly asked for "for iPad mini only, no impact on
+    /// other screens".
+    private static var isIPadMini: Bool {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let bounds = UIScreen.main.bounds
+        return min(bounds.width, bounds.height) <= 768
+    }
+
     private static func horizontalTabImage(iconName: String,
                                            title: String) -> UIImage? {
         let key = "\(iconName)|\(title)"
@@ -1854,6 +1959,16 @@ struct MainTabView: View {
         // at ~25x25 pt — match UITabBarItem's native stacked-layout
         // icon size so the composite reads at the same visual scale
         // as the current (vertical) layout.
+        //
+        // (iPad mini takes a different path entirely — it bypasses
+        // this composite via the `Self.isIPadMini` early-out in
+        // `tabLabel(_:connected:)` and falls back to native Label
+        // rendering with a pre-resized 32pt icon + bumped 22pt
+        // semibold title font. The iOS 26 iPad top-pill clamps
+        // composite UIImages too aggressively for the composite
+        // path to be readable there. So this 25pt / 10pt sizing
+        // remains bit-identical to the original iPhone / regular-
+        // iPad / iPad Pro behaviour.)
         let iconSize = CGSize(width: 25, height: 25)
         let font = UIFont.systemFont(ofSize: 10, weight: .regular)
         let titleAttrs: [NSAttributedString.Key: Any] = [
