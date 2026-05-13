@@ -1442,7 +1442,7 @@ struct RecipeDetailView: View {
     ///     to the Favorites screen (UIKit `navigateToFavourites()`).
     /// Recording which action triggered the alert lets the shared
     /// `onPrimary` closure route correctly when Discard is tapped.
-    enum PendingUnsavedAction { case craft, navigateToFavorites, back }
+    enum PendingUnsavedAction { case craft, navigateToFavorites, back, sideMenu }
     @State private var pendingUnsavedAction: PendingUnsavedAction = .craft
     /// UIKit `RecipePageViewController.didPressAddToFavoriteButton` in
     /// the "Save to My Drinks" branch adds `editVc` as a CHILD view
@@ -1713,6 +1713,14 @@ struct RecipeDetailView: View {
                         // return to wherever they came from (Explore,
                         // Favorites, BarBot etc.).
                         dismiss()
+                    case .sideMenu:
+                        // UIKit `handleSideMenuDiscard()` L386-392 —
+                        // once the user confirms Discard, open the
+                        // side menu with the same easeOut animation
+                        // the no-unsaved-changes path uses.
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            router.showSideMenu = true
+                        }
                     }
                     pendingUnsavedAction = .craft // reset to default
                 })
@@ -3234,12 +3242,53 @@ struct RecipeDetailView: View {
         ToolbarItemGroup(placement: .topBarTrailing) {
             NavigationRightGlassButtons(
                 onFavorites: { handleFavoritesNavTap() },
-                onProfile: {
-                    withAnimation(.easeInOut(duration: 0.4)) {
-                        router.showSideMenu = true
-                    }
-                }
+                onProfile: { handleSideMenuNavTap() }
             )
+        }
+    }
+
+    /// 1:1 with UIKit `RecipePageViewController.sideMenuAction` +
+    /// `showUnsavedChangesAlertForSideMenu` / `handleSideMenuDiscard`
+    /// (RecipePageViewController.swift L361-392).
+    ///
+    /// UIKit semantics:
+    ///   1. `HapticService.shared.light()`
+    ///   2. `view.endEditing(true)` (SwiftUI handles this automatically
+    ///      when a non-text-field gesture fires).
+    ///   3. If `viewModel.hasUnsavedChanges()` → show the
+    ///      `unsavedChangesForRecipe` alert with Keep Editing /
+    ///      Discard. On Discard → `viewModel.discardQuantityChanges()`
+    ///      + `openSideMenu()`. On Keep Editing → no-op (user stays
+    ///      on the recipe page with their edits intact).
+    ///   4. Else → `openSideMenuWithAnimation()`.
+    ///
+    /// The SwiftUI port previously routed the profile-icon tap
+    /// straight to `router.showSideMenu = true` without consulting
+    /// `hasUnsavedChanges` — so the user's pending +/- edits were
+    /// silently abandoned when the side menu opened. QA bug:
+    /// "when user update the quantity and click on side menu this
+    /// button is not showing unsaved recipe alert with discard
+    /// option in recipe details view".
+    private func handleSideMenuNavTap() {
+        HapticService.light()
+        if hasUnsavedChanges {
+            unsavedPopup = .confirm(
+                title: Constants.unsavedChangesForRecipe,
+                message: nil,
+                primaryTitle: ConstantButtonsTitle.keepEditingButtonTitle,
+                secondaryTitle: ConstantButtonsTitle.discardButtonTitle,
+                isDestructive: false,
+                // UIKit `showUnsavedChangesAlertForSideMenu`
+                // L380: `isCloseButtonHidden: true`. Recipe-page
+                // side-menu variant hides the X; only the back /
+                // favourites variants show it.
+                isCloseHidden: true
+            )
+            pendingUnsavedAction = .sideMenu
+        } else {
+            withAnimation(.easeInOut(duration: 0.4)) {
+                router.showSideMenu = true
+            }
         }
     }
 
@@ -4642,11 +4691,32 @@ struct EditRecipeView: View {
         // (200×150pt card, 20pt corners, BarsysLoader GIF) instead of
         // the previous undersized inline ProgressView card.
         .onAppear {
-            // Prefer the recipe passed in directly. Fallback to storage
-            // lookup so RouteView's id-only `.editRecipe(id)` path keeps
-            // working for Barsys catalog recipes.
+            // Resolve the source recipe in this priority order:
+            //   1. `router.pendingRecipeEdits[id]` — the user's
+            //      in-flight edits (quantity changes, adds, deletes)
+            //      from a previous EditRecipe / RecipeDetail session.
+            //      Reading this first means a Craft → Cancel → back
+            //      to Edit Recipe round-trip preserves the user's
+            //      edits, mirroring UIKit's viewmodel-scoped
+            //      `recipeIngredientsArrayToShow` array which lives
+            //      as long as the `EditViewController` instance
+            //      does — until Save success or explicit Discard.
+            //   2. `existingRecipe` parameter — supplied directly
+            //      by the caller (RecipeDetail's "Save to My Drinks"
+            //      or FavoritesView's My-Drinks Edit button).
+            //   3. `env.storage.recipe(by: id)` — Barsys catalog
+            //      recipes hit through `Route.editRecipe(id)`.
+            //
+            // QA bug: "On edit recipe I delete or update ingredients
+            // and craft the recipe, cancel the crafting, then it
+            // should have the updated recipe details in edit recipe
+            // like quantity and changes should show retained. When I
+            // come back it shows the original recipe not the updated
+            // one on edit recipe."
             let source: Recipe?
-            if let recipe = existingRecipe {
+            if let id = recipeID, let pending = router.pendingRecipeEdits[id] {
+                source = pending
+            } else if let recipe = existingRecipe {
                 source = recipe
             } else if let id = recipeID {
                 source = env.storage.recipe(by: id)
