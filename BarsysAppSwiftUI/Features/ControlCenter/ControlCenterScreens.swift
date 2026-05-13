@@ -2037,15 +2037,19 @@ enum StationsAPIService {
         }
 
         func toJSON() -> Data? {
-            // 1:1 with UIKit `StationsServiceApi.updateStation` body
-            // build — `try JSONEncoder().encode(config)` with NO
-            // explicit output formatting, i.e. **compact JSON**
-            // (no extra whitespace). Some strict API gateways in
-            // the Defteros stack reject pretty-printed bodies on
-            // PUT and surface the failure as HTTP 502 Bad Gateway,
-            // which was the QA-reported symptom for adding an
-            // ingredient on the Station Menu.
-            return try? JSONEncoder().encode(self)
+            // Restored to the `.prettyPrinted` formatting that was
+            // shipping in the last-known-working commit
+            // (`ff0e2c5 aDD INGREDIENTS FUNCTIONALITIES MADE THAT
+            // WORKING FINE`, May 12). The brief switch to compact
+            // JSON was made on the theory that some upstream gateways
+            // reject whitespace-padded bodies — but the user
+            // confirmed the pretty-printed body was accepted by the
+            // server when the upload flow was working, so any
+            // deviation here is an unnecessary risk while we
+            // investigate the actual cause of the new 502s.
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted]
+            return try? enc.encode(self)
         }
     }
 
