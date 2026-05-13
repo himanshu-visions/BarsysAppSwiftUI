@@ -468,6 +468,15 @@ struct SignUpView: View {
     @State private var showDatePicker = false
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Re-entrancy guard for the "Log in" link. Same purpose as
+    /// `LoginView.isNavigatingToSignUp` — the 0.15 s `asyncAfter`
+    /// before `path.removeLast()` leaves a window where a fast
+    /// double tap can queue two pops, jumping the user past the
+    /// Login screen entirely. QA bug: "Sign Up and Login screen is
+    /// open up multiple times if tapped on Create One button and
+    /// Login button…".
+    @State private var isNavigatingToLogin = false
+
     /// Bound to the form's text fields so the keyboard accessory
     /// toolbar (`.keyboardDoneCancelToolbar`) attaches reliably.
     /// Without an explicit `.focused(...)` link SwiftUI sometimes
@@ -712,6 +721,13 @@ struct SignUpView: View {
         // L322-324) — that path is preserved in LoginView L648.
         .onAppear {
             env.analytics.track(TrackEventName.tapLoginCreateAccount.rawValue)
+            // Reset the duplicate-pop guard so the "Log in" link
+            // is tappable again on every fresh appearance of the
+            // SignUp screen. Without this reset the flag would
+            // stay `true` after the first pop and block every
+            // future "Log in" tap if SwiftUI ever reuses the
+            // view instance.
+            isNavigatingToLogin = false
         }
     }
 
@@ -832,6 +848,15 @@ struct SignUpView: View {
                     .font(.system(size: iPadValue(11, 14)))
                     .foregroundStyle(Color("silverGrayColor"))
                 Button {
+                    // Re-entrancy guard — bail if a Login pop is
+                    // already queued. The 0.15 s `asyncAfter`
+                    // before `path.removeLast()` would otherwise
+                    // process every fast-double / triple tap and
+                    // pop multiple entries off the navigation
+                    // path, jumping the user past the Login screen
+                    // entirely.
+                    guard !isNavigatingToLogin else { return }
+                    isNavigatingToLogin = true
                     // Hide keyboard FIRST so the dismiss animation
                     // settles before popping back to Login —
                     // otherwise the keyboard sliding down and the
@@ -850,6 +875,7 @@ struct SignUpView: View {
                         .font(.system(size: iPadValue(11, 14), weight: .semibold))
                         .foregroundStyle(Color("appBlackColor"))
                 }
+                .disabled(isNavigatingToLogin)
                 Spacer()
             }
             .padding(.top, 4)

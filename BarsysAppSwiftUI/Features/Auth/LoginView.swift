@@ -325,6 +325,17 @@ struct LoginView: View {
     @FocusState private var focusedField: FocusField?
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Re-entrancy guard for the "Create one" button. Set to `true`
+    /// on the first tap and reset to `false` on view re-appear. The
+    /// 0.15 s `asyncAfter` delay we insert before the navigation
+    /// push (to let the keyboard finish dismissing) leaves a window
+    /// where a rapid second / third tap can queue duplicate
+    /// `path.append(.signUp)` calls and stack two or three SignUp
+    /// screens on top of each other. QA bug: "Sign Up and Login
+    /// screen is open up multiple times if tapped on Create One
+    /// button…".
+    @State private var isNavigatingToSignUp = false
+
     /// Fields that can hold the keyboard focus — matches the UIKit setupToolbar
     /// outlets (txtPhoneNumber + txtOtp1…6).
     enum FocusField: Hashable {
@@ -572,6 +583,13 @@ struct LoginView: View {
             // stuck `true` after the first expiration and swallow
             // every future 401 until the app is relaunched.
             SessionExpirationHandler.shared.reset()
+
+            // Reset the duplicate-push guard so the "Create one"
+            // button is tappable again after the user pops back
+            // from SignUp. Without this reset the flag would stay
+            // `true` after the first navigation and block every
+            // subsequent attempt to open SignUp.
+            isNavigatingToSignUp = false
         }
     }
 
@@ -695,6 +713,15 @@ struct LoginView: View {
                     .font(.system(size: iPadValue(11, 14)))
                     .foregroundStyle(Color("silverGrayColor"))
                 Button {
+                    // Re-entrancy guard — bail out if a SignUp push
+                    // is already queued (we use a 0.15 s
+                    // `asyncAfter` delay below to let the keyboard
+                    // finish dismissing, and a fast double / triple
+                    // tap would otherwise queue 2-3 `path.append`
+                    // calls and stack duplicate SignUp screens).
+                    // Reset in `.onAppear` when the user pops back.
+                    guard !isNavigatingToSignUp else { return }
+                    isNavigatingToSignUp = true
                     // Hide keyboard FIRST so the dismiss animation
                     // settles before the SignUp screen pushes onto
                     // the navigation stack — otherwise the keyboard
@@ -714,6 +741,7 @@ struct LoginView: View {
                         .font(.system(size: iPadValue(11, 14), weight: .semibold))
                         .foregroundStyle(Color("appBlackColor"))
                 }
+                .disabled(isNavigatingToSignUp)
                 Spacer()
             }
             .padding(.top, 4)
