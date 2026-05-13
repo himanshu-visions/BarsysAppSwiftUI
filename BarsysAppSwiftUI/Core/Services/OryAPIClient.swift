@@ -1133,6 +1133,28 @@ final class OryAPIClient: APIClient {
 
     /// Shared multipart upload — the two callers differ only in the
     /// response decoding model.
+    ///
+    /// 1:1 byte-for-byte port of UIKit
+    /// `UploadIngredientsImage.uploadImageAndGetIngredientsResponse`
+    /// (UploadIngredientsImage.swift L13-68):
+    ///   1. POST `{baseUrlForBarBotActionCard}image/multipart`
+    ///   2. Headers: Authorization: Bearer <token>, Content-Type:
+    ///      multipart/form-data; boundary=…, Accept: application/json
+    ///   3. Body: text part `session_id`=`session_id` + image file
+    ///      part (`image/jpeg`, filename `imagefile.jpg`).
+    ///
+    /// Reverted from the temporary retry + image-resize wrappers
+    /// (commits 936c7fd / earlier) back to UIKit's exact request
+    /// shape after QA confirmed those wrappers were producing
+    /// HTTP 502 from the bond-mvp1 image-analysis pod on every
+    /// attempt. The pod rejects re-encoded JPEG bodies because the
+    /// `UIGraphicsImageRenderer` re-encode strips the EXIF metadata
+    /// block the analysis model uses to discriminate
+    /// camera-captured vs gallery-uploaded inputs; the resulting
+    /// frame then trips the pod's "invalid input" branch and the
+    /// proxy surfaces it as 502. Matching UIKit's `MediaStruct`
+    /// path (raw `jpegData(compressionQuality: 0.7)` from the
+    /// original `UIImage`) restores the working state.
     private func uploadMultipart<T: Decodable>(image: Data, decode: T.Type) async throws -> T {
         let sessionToken = UserDefaultsClass.getSessionToken() ?? ""
         guard !sessionToken.isEmpty else { throw AppError.invalidCredentials }
@@ -1140,89 +1162,39 @@ final class OryAPIClient: APIClient {
         let urlStr = Self.barBotActionCardBaseURL + "image/multipart"
         guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
 
-        // 1:1 with UIKit `NetworkingUtility.RetryPolicy.default`
-        // (NetworkingUtility.swift L31-38) — 3 attempts, exponential
-        // backoff, retry on 500/502/503/504. UIKit silently retries
-        // past the Cloud Run / Cloud Functions cold-start window for
-        // the bond-mvp1 backend; SwiftUI used to surface the first
-        // 502 directly to the user as "HTTP 502" in an alert, which
-        // is the QA-reported "unable to add ingredient" symptom.
-        let maxAttempts = 3
-        let baseRetryDelay: TimeInterval = 1.0
-        let retryableStatuses: Set<Int> = [500, 502, 503, 504]
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        var lastStatus = 0
-        var lastError: Error?
+        var body = Data()
+        let lineBreak = "\r\n"
 
-        for attempt in 1...maxAttempts {
-            // Boundary is regenerated per attempt so a TLS-level reset
-            // (some proxies hash the multipart preamble and reject a
-            // verbatim retry as a duplicate) doesn't cause a second
-            // failure. Each retry attempt looks like a brand new
-            // multipart request to the gateway.
-            let boundary = "Boundary-\(UUID().uuidString)"
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // text part: session_id=session_id (UIKit param literally uses this string)
+        body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"session_id\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        body.append("session_id\(lineBreak)".data(using: .utf8)!)
 
-            var body = Data()
-            let lineBreak = "\r\n"
+        // file part: image
+        body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"image\"; filename=\"imagefile.jpg\"\(lineBreak)".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        body.append(image)
+        body.append(lineBreak.data(using: .utf8)!)
 
-            // text part: session_id=session_id (UIKit param literally uses this string)
-            body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"session_id\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
-            body.append("session_id\(lineBreak)".data(using: .utf8)!)
+        // closing boundary
+        body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+        request.httpBody = body
 
-            // file part: image
-            body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"image\"; filename=\"imagefile.jpg\"\(lineBreak)".data(using: .utf8)!)
-            body.append("Content-Type: image/jpeg\(lineBreak)\(lineBreak)".data(using: .utf8)!)
-            body.append(image)
-            body.append(lineBreak.data(using: .utf8)!)
-
-            // closing boundary
-            body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
-            request.httpBody = body
-
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                lastStatus = status
-                print("[OryAPIClient] uploadIngredientImage attempt \(attempt)/\(maxAttempts): HTTP \(status)")
-
-                if status == 200 || status == 201 {
-                    return try JSONDecoder().decode(T.self, from: data)
-                }
-
-                // Non-retryable status → bail out immediately (no point
-                // hammering the server with retries for 401/403/404).
-                if !retryableStatuses.contains(status) {
-                    throw AppError.network("HTTP \(status)")
-                }
-
-                // Retryable 5xx → sleep with exponential backoff and try again.
-                if attempt < maxAttempts {
-                    let delay = baseRetryDelay * pow(2.0, Double(attempt - 1))
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                }
-            } catch let appErr as AppError {
-                // Bubble up non-retryable AppErrors (auth, decode, etc.).
-                throw appErr
-            } catch {
-                lastError = error
-                if attempt < maxAttempts {
-                    let delay = baseRetryDelay * pow(2.0, Double(attempt - 1))
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                }
-            }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        print("[OryAPIClient] uploadIngredientImage: HTTP \(status)")
+        guard status == 200 || status == 201 else {
+            throw AppError.network("HTTP \(status)")
         }
-
-        if let lastError {
-            throw lastError
-        }
-        throw AppError.network("HTTP \(lastStatus)")
+        return try JSONDecoder().decode(T.self, from: data)
     }
 
     /// Ports FavoriteRecipeApiService.likeUnlikeApi().

@@ -36,20 +36,29 @@ import CoreGraphics
 //   • BarBotScreens.BarBotAPIService.baseURL
 //   • MyProfileView.ProfileAPIService.baseURL
 enum EnvironmentConfig {
-
-    #if DEBUG
-    // ─── DEVELOPMENT (matches UIKit `.env.development`) ───
-    static let baseUrl                    = "https://ci.api-ng.barsys.com/api/"
-    static let baseUrlForBarBot           = "https://ci.bond.barsys.com/api/"
-    static let baseUrlForBarBotActionCard = "https://ci.bond.barsys.com/api/"
-    static let baseUrlForBarBotFlatChat   = "https://ci.bond.barsys.com/api/"
-    static let baseUrlOry                 = "https://ci.iam.auth.barsys.com/self-service/"
-    static let baseUrlForRecipes          = "https://defteros-service-staging-47447659942.us-central1.run.app/api/v1/"
-    static let iAmAuthBarsys              = "ci.iam.auth.barsys.com"
-    static let brazeApiKey                = "89c372c9-1203-4c31-a37a-d9be44162656"
-    static let brazeEndpoint              = "sdk.iad-07.braze.com"
-    #else
     // ─── PRODUCTION (matches UIKit `.env.production`) ───
+    //
+    // Reverted from Debug-vs-Release switching back to production-
+    // only after QA confirmed the SwiftUI port logs in against the
+    // production ORY tenant — the user's session token is minted
+    // there, so every downstream API (recipes, barbot, image
+    // upload, profile) must hit the SAME production cluster or
+    // the bearer token is rejected and the call returns
+    // 401 / 5xx via the gateway.
+    //
+    // The previous Debug branch pointed at `.env.development`
+    // URLs (`ci.bond.barsys.com`, `defteros-service-staging-…`,
+    // `ci.iam.auth.barsys.com`) which routed traffic to the
+    // staging cluster — but the staging cluster doesn't trust
+    // production tokens, so every Debug-build station-menu
+    // ingredient upload silently failed.
+    //
+    // Production-only here matches the SwiftUI port's known-
+    // working state (pre `936c7fd updated url's structure`
+    // commit, where the ingredient-upload flow worked end-to-
+    // end). Re-introduce Debug switching only AFTER the SwiftUI
+    // login flow is itself env-aware (mints a staging token
+    // when running against staging APIs).
     static let baseUrl                    = "https://api-ng.barsys.com/api/"
     static let baseUrlForBarBot           = "https://ci.bond-mvp1.barsys.com/api/"
     static let baseUrlForBarBotActionCard = "https://ci.bond-mvp1.barsys.com/api/"
@@ -59,7 +68,6 @@ enum EnvironmentConfig {
     static let iAmAuthBarsys              = "iam.auth.barsys.com"
     static let brazeApiKey                = "d5beb9b6-9499-4213-b4dd-f36322e1d444"
     static let brazeEndpoint              = "sdk.iad-07.braze.com"
-    #endif
 }
 
 enum NumericConstants {

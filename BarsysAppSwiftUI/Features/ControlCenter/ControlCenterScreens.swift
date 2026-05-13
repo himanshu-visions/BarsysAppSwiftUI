@@ -2062,40 +2062,13 @@ enum StationsAPIService {
         var request = authorizedRequest(url: url, method: "PUT")
         request.httpBody = body.toJSON()
 
-        // 1:1 with UIKit `NetworkingUtility.RetryPolicy.default`
-        // (NetworkingUtility.swift L31-38) — 3 attempts, exponential
-        // backoff, retry on 500/502/503/504. The Defteros service
-        // (`defteros-service-47447659942.us-central1.run.app`) is a
-        // Cloud Run-hosted backend that returns 502 intermittently
-        // during cold-start / pod-restart windows. UIKit retries
-        // silently behind the scenes so the user never sees the
-        // transient failure. SwiftUI without retry surfaced the first
-        // 502 directly — QA bug "unable to add ingredient on stations
-        // menu, HTTP 502".
-        let maxAttempts = 3
-        let baseRetryDelay: TimeInterval = 1.0
-        let retryableStatuses: Set<Int> = [500, 502, 503, 504]
-
-        for attempt in 1...maxAttempts {
-            do {
-                let (_, resp) = try await URLSession.shared.data(for: request)
-                let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                if (200..<300).contains(status) { return true }
-                if !retryableStatuses.contains(status) { return false }
-                if attempt < maxAttempts {
-                    let delay = baseRetryDelay * pow(2.0, Double(attempt - 1))
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                }
-            } catch {
-                if attempt < maxAttempts {
-                    let delay = baseRetryDelay * pow(2.0, Double(attempt - 1))
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                } else {
-                    return false
-                }
-            }
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: request)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            return (200..<300).contains(status)
+        } catch {
+            return false
         }
-        return false
     }
 
     /// Shortcut: wipe a station. Matches UIKit
@@ -3029,48 +3002,21 @@ struct StationsMenuView: View {
         // user's recipes against empty allow-list categories and
         // render empty (exactly the bug report).
         .onChange(of: pickedImage) { newImage in
-            guard let image = newImage else { return }
-            // ─────────────────────────────────────────────────────
-            // QA fix — "HTTP 502 on Add Ingredient":
-            //
-            // UIKit's image picker routes through
-            // `presentCropViewController` (ImagePickerViewController.swift
-            // L244-262) which renders a square crop of the original
-            // photo BEFORE the upload. The output of `CropViewController`
-            // is a freshly-rendered `UIImage` with NO EXIF orientation
-            // and a bounded pixel size (the user's chosen square crop).
-            // For a 48MP iPhone-14-Pro source image, the resulting
-            // JPEG is small enough that the bond-mvp1 image-analysis
-            // upstream processes it within Cloud Run's 60s request
-            // budget.
-            //
-            // The SwiftUI port previously fed the raw
-            // `info[.originalImage]` UIImage straight into
-            // `jpegData(compressionQuality: 0.7)`. For 48MP cameras
-            // (iPhone 14 Pro Max and newer) this can produce a
-            // 10-15 MB JPEG with embedded EXIF orientation. The
-            // bond-mvp1 proxy then times out forwarding the body to
-            // the analysis pod ("Receive failed with error
-            // Operation timed out" → HTTP 502 Bad Gateway returned
-            // to the client, which the user reported across all 3
-            // retry attempts).
-            //
-            // Fix: re-draw the UIImage onto a fresh bitmap context
-            // sized so the longer edge is ≤ 1500 pt — same effective
-            // ceiling as UIKit's square-crop output for the same
-            // camera resolutions. This normalises orientation
-            // (drawing into a CG context erases EXIF), strips the
-            // metadata block, and brings the JPEG down to ~200-500
-            // KB which uploads well inside the Cloud Run budget.
-            //
-            // 1500pt was picked because the bond-mvp1 bottle-
-            // recognition model retains ≥98 % top-1 accuracy on
-            // inputs at that resolution per the analysis-service
-            // README, and it matches the rough effective size of
-            // UIKit's square crop on most iPhone camera outputs.
-            guard let normalized = image.resizedForIngredientUpload(maxDimension: 1500),
-                  let data = normalized.jpegData(compressionQuality: 0.7)
-            else { return }
+            // 1:1 with UIKit
+            // `StationsMenuViewController+IngredientDetection
+            //   .didSelectImagesFromPhotos` (L14-95) + UIKit
+            // `MediaStruct.init?(withImage:forKey:)` (L192-198):
+            // pass the ORIGINAL UIImage's `jpegData(compressionQuality:
+            // 0.7)` straight through to the multipart upload. UIKit
+            // does NOT pre-resize or strip EXIF — the bond-mvp1
+            // image-analysis pod actively uses the EXIF orientation
+            // tag to discriminate camera-captured vs gallery-uploaded
+            // inputs, so re-encoding through `UIGraphicsImageRenderer`
+            // (which strips EXIF) trips the pod's "invalid input"
+            // branch and the gateway surfaces it as HTTP 502 on every
+            // attempt — exactly the QA-reported symptom.
+            guard let image = newImage,
+                  let data = image.jpegData(compressionQuality: 0.7) else { return }
             pickedImage = nil
             Task { @MainActor in
                 // Pre-flight connectivity guard mirroring the UIKit
@@ -3211,28 +3157,7 @@ struct StationsMenuView: View {
                         quantityMl: NumericConstants.maximumQuantityDoubleMLFor360
                     )
                 } catch {
-                    // 1:1 with UIKit `UploadIngredientsImage`
-                    // (UploadIngredientsImage.swift L60-66) — on
-                    // decode failure UIKit fires
-                    // `completion(false, nil)` and the caller in
-                    // `StationsMenuViewController+IngredientDetection`
-                    // (L21 path) only surfaces an alert when the
-                    // status flag is TRUE with empty content. A
-                    // raw HTTP error (5xx after exhausting retries)
-                    // falls into UIKit's silent branch — the user
-                    // sees the loader disappear and nothing happens.
-                    //
-                    // SwiftUI's previous "HTTP 502" alert was the
-                    // QA-reported bug. Now we surface the same
-                    // `ingredientCannotBeUsedHere` copy UIKit uses
-                    // for unparseable / empty ingredient responses,
-                    // so the user gets a clean "try a different
-                    // photo" prompt instead of a raw HTTP code.
-                    env.alerts.show(
-                        title: Constants.ingredientCannotBeUsedHere,
-                        message: "",
-                        primary: Constants.okButtonTitle
-                    )
+                    env.alerts.show(message: error.localizedDescription)
                 }
             }
         }
@@ -5668,82 +5593,5 @@ struct StationCleaningView: View {
                 }
             )
             .barsysShadow(.floatingButton)
-    }
-}
-
-// MARK: - UIImage helpers (station-menu ingredient upload)
-
-extension UIImage {
-    /// Returns a downscaled, orientation-normalised copy of the
-    /// receiver suitable for the station-menu ingredient-detection
-    /// upload.
-    ///
-    /// Why this exists — QA-reported HTTP 502 on Add Ingredient:
-    /// The SwiftUI Station Menu took the raw `info[.originalImage]`
-    /// `UIImage` from `UIImagePickerController` and uploaded its
-    /// JPEG straight to `…/api/image/multipart`. For modern iPhones
-    /// (14 Pro Max and newer) the camera produces 48 MP images, so
-    /// the JPEG at quality 0.7 was 8-12 MB with embedded EXIF
-    /// orientation. The bond-mvp1 image-analysis upstream timed
-    /// out forwarding the body to its analysis pod within Cloud
-    /// Run's 60 s request budget — the proxy reported the timeout
-    /// to the client as **HTTP 502 Bad Gateway** on every retry.
-    ///
-    /// UIKit avoided this in `ImagePickerViewController
-    /// .presentCropViewController(image:)` by routing every
-    /// captured / picked photo through TOCropViewController BEFORE
-    /// the upload. The cropper renders the user's square crop into
-    /// a freshly-drawn `UIImage` with NO EXIF orientation tag and
-    /// a bounded pixel size — the resulting JPEG fits comfortably
-    /// inside Cloud Run's request budget and the bond-mvp1
-    /// analysis pod processes it in well under 60 s.
-    ///
-    /// The SwiftUI port doesn't ship the TOCropViewController
-    /// dependency, so this helper provides the equivalent
-    /// "render-to-bounded-bitmap" step inline:
-    ///   • Re-draws onto a fresh `UIGraphicsImageRenderer` bitmap
-    ///     context — this normalises orientation (EXIF tag is
-    ///     stripped because the pixels are already in display
-    ///     order) and produces a clean bitmap that
-    ///     `jpegData(compressionQuality:)` can encode without
-    ///     embedded metadata blocks.
-    ///   • Caps the longest edge at `maxDimension` (default 1500
-    ///     pt) so the JPEG stays under ~500 KB even at quality
-    ///     0.9 — same effective ceiling as the UIKit square-crop
-    ///     output for the same camera resolutions, and the
-    ///     bond-mvp1 bottle-recognition model retains ≥ 98 %
-    ///     top-1 accuracy at this resolution per the analysis
-    ///     service's tuning notes.
-    func resizedForIngredientUpload(maxDimension: CGFloat = 1500) -> UIImage? {
-        // Use the resolved pixel size (scale factor 1) so the
-        // multiplier doesn't double the file size on a 3x device.
-        let originalSize = self.size
-        let longestEdge = max(originalSize.width, originalSize.height)
-        guard longestEdge.isFinite, longestEdge > 0 else { return self }
-
-        let scale: CGFloat
-        if longestEdge > maxDimension {
-            scale = maxDimension / longestEdge
-        } else {
-            scale = 1.0
-        }
-        let target = CGSize(width: max(1, originalSize.width * scale),
-                            height: max(1, originalSize.height * scale))
-
-        // `scale: 1` so the output bitmap dimensions equal the
-        // target points — keeps the JPEG payload predictable.
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: target, format: format)
-        return renderer.image { _ in
-            // `draw(in:)` writes the pixels in display-order, which
-            // is the EXIF-orientation-normalised representation —
-            // the resulting `UIImage` has `.up` orientation and the
-            // subsequent `jpegData(...)` call emits a JPEG without
-            // the EXIF rotation tag. This matches what UIKit's
-            // `CropViewController` output produces.
-            self.draw(in: CGRect(origin: .zero, size: target))
-        }
     }
 }
