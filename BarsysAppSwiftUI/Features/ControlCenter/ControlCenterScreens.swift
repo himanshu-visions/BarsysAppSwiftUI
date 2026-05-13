@@ -545,6 +545,14 @@ struct DevicePairedView: View {
     /// special-casing.
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
+    /// Bumped on every `UIDevice.orientationDidChangeNotification` so
+    /// `gridColumns` re-evaluates against the latest
+    /// `UIScreen.main.bounds` on iPad rotation. iPad keeps
+    /// `regular/regular` size classes in both orientations, so SwiftUI
+    /// doesn't auto-re-run the property on iPad rotation — this
+    /// `@State` is the explicit dependency that makes it.
+    @State private var orientationTick: Int = 0
+
     /// Bottom breathing room above the tab bar. iOS 26+ glass blurs
     /// over content (30pt is enough and was the pre-existing value);
     /// pre-iOS 26's opaque tab bar + hairline needs ~50pt so the
@@ -837,23 +845,44 @@ struct DevicePairedView: View {
         return "Watch the video for a step-by-step guide on how to use your Barsys Shaker"
     }
 
-    // Main grid columns. Orientation-aware so iPhone landscape — where
-    // the 2-column layout makes each card stretch awkwardly wide and
-    // pushes "Host an Event" / "Party Mode" off-screen behind the
-    // scroll fold — gets a 4-up row that uses the extra horizontal
-    // canvas. iPhone portrait and iPad (any orientation) keep the
-    // original 2-column grid bit-identically.
+    // Main grid columns for the Explore tile row (Ready to Pour /
+    // Explore Recipes / Explore Cocktail Kits / Host an Event /
+    // Party Mode).
     //
-    // `verticalSizeClass == .compact` is true on iPhone landscape
-    // ONLY. Every iPhone in portrait and every iPad in any
-    // orientation reports `.regular`, so this predicate is the
-    // tightest possible scope for the layout change.
+    // QA spec — every LANDSCAPE canvas shows all four primary
+    // action tiles in a single row of 4. PORTRAIT keeps the
+    // original 2-column grid on every device.
+    //
+    //   • iPhone portrait              → 2 columns (unchanged)
+    //   • iPhone landscape             → 4 columns (was 4)
+    //   • iPad portrait (any iPad)     → 2 columns (unchanged)
+    //   • iPad landscape (any iPad)    → 4 columns (was 2)
+    //   • iPad Mini landscape          → 4 columns (iPad branch covers it)
+    //
+    // iPad landscape detection uses `UIScreen.main.bounds.width >
+    // .height` because iPad keeps `regular/regular` size classes
+    // in both orientations — `verticalSizeClass` alone can't
+    // distinguish them. `orientationTick` (bumped by the rotation
+    // observer wired to the body) is the explicit re-evaluation
+    // dependency so iPad rotation reflows live from 2 ⇄ 4 columns.
     private var gridColumns: [GridItem] {
-        if verticalSizeClass == .compact {
-            // iPhone landscape — 4 columns at 15pt spacing so the
-            // four primary action tiles (Ready to Pour / Explore
-            // Recipes / Cocktail Kits / Host an Event etc.) all fit
-            // in a single row with no wrap.
+        _ = orientationTick
+        let isLandscape: Bool = {
+            if verticalSizeClass == .compact {
+                // iPhone landscape — guaranteed.
+                return true
+            }
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                let bounds = UIScreen.main.bounds
+                return bounds.width > bounds.height
+            }
+            return false
+        }()
+
+        if isLandscape {
+            // 4 columns at 15pt spacing so all four primary action
+            // tiles fit in a single row with no wrap, on every
+            // landscape canvas (iPhone, iPad, iPad Mini).
             return [
                 GridItem(.flexible(), spacing: 15),
                 GridItem(.flexible(), spacing: 15),
@@ -861,8 +890,7 @@ struct DevicePairedView: View {
                 GridItem(.flexible(), spacing: 15)
             ]
         }
-        // iPhone portrait + iPad — original 2-column layout
-        // (cell width = (containerWidth - 15) / 2). Untouched.
+        // Portrait (iPhone + iPad) — original 2-column layout.
         return [
             GridItem(.flexible(), spacing: 15),
             GridItem(.flexible(), spacing: 15)
@@ -1464,6 +1492,27 @@ struct DevicePairedView: View {
                 inlineTutorialPlayer.load(url: url, repeatPlayback: true)
                 inlineTutorialPlayer.player?.isMuted = isInlineTutorialMuted
                 inlineTutorialPlayer.play()
+            }
+            // Arm device-orientation notifications so the rotation
+            // observer fires on iPad — UIKit doesn't generate them
+            // by default until a subscriber asks for them.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
+        }
+        // iPad rotation handler: bump `orientationTick` inside a
+        // `withAnimation` so the Explore tile grid reflows
+        // smoothly between 2 ⇄ 4 columns when the user rotates
+        // the device. iPhone reacts through the size-class change
+        // automatically; iPad keeps regular/regular in both
+        // orientations so this explicit tick is needed.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                orientationTick &+= 1
             }
         }
         .onDisappear {
