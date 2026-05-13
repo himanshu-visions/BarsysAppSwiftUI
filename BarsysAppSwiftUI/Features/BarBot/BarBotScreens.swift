@@ -366,7 +366,10 @@ private struct SessionsResponse: Decodable {
 actor BarBotAPIService {
     static let shared = BarBotAPIService()
 
-    private let baseURL = "https://ci.bond-mvp1.barsys.com/api/"
+    // 1:1 with UIKit `GlobalConstants.baseUrlForBarBot` —
+    // Debug = staging (`ci.bond.barsys.com`), Release = production
+    // (`ci.bond-mvp1.barsys.com`). See `EnvironmentConfig`.
+    private let baseURL = EnvironmentConfig.baseUrlForBarBot
 
     private func makeRequest(path: String, method: String = "GET") -> URLRequest? {
         guard let url = URL(string: baseURL + path) else { return nil }

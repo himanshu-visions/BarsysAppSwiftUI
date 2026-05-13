@@ -1243,8 +1243,43 @@ final class BLEService: NSObject, ObservableObject {
     var isAnyDeviceConnected: Bool {
         !connected.isEmpty
     }
+    /// Returns the trimmed, CRLF-stripped name of the currently
+    /// connected BLE peripheral.
+    ///
+    /// 1:1 with UIKit `BleManager.getConnectedDeviceName()`
+    /// (BleManager.swift L122-126):
+    /// ```
+    /// let deviceName = self.connectedPeripheral?.customName ?? ""
+    /// let actualDeviceName: String = deviceName
+    ///     .replacingOccurrences(of: Constants.newLine, with: "")
+    ///     .trim()
+    /// return actualDeviceName
+    /// ```
+    ///
+    /// The Barsys device firmware broadcasts its `customName` with a
+    /// trailing `\r\n` in some bonded-pairing states (legacy
+    /// behaviour preserved across firmware revisions to keep
+    /// backwards compatibility with the UIKit app). When we feed
+    /// that raw name into the station-update URL —
+    /// `…/device-number/{NAME}/stations/A` — `addingPercentEncoding`
+    /// turns the trailing `\r\n` into `%0D%0A`, and the upstream
+    /// proxy can't route a request path with embedded CRLF and
+    /// rejects the request with **HTTP 502 Bad Gateway**. QA bug:
+    /// "On station menu unable to add ingredients :- shows error
+    /// 502".
+    ///
+    /// Stripping the CRLF + trimming whitespace here keeps every
+    /// downstream consumer (station GET/PUT/PATCH, mixlist
+    /// `setupStationsAction`, BarBot crafting, perishable cleaning,
+    /// pair-device flow) free of the trailing-byte issue without
+    /// having to repeat the cleanup at every call site.
     func getConnectedDeviceName() -> String {
-        connected.first?.name ?? ""
+        let raw = connected.first?.name ?? ""
+        return raw
+            .replacingOccurrences(of: "\r\n", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
     var connectedDeviceKind: IsDeviceType? {
         guard let first = connected.first else { return nil }

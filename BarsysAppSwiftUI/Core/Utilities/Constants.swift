@@ -9,6 +9,59 @@
 import Foundation
 import CoreGraphics
 
+// MARK: - EnvironmentConfig (1:1 mirror of UIKit's build-script-
+//          generated `BarsysApp/Helpers/Constants/EnvironmentConfig.generated.swift`)
+//
+// UIKit pipeline: `BarsysApp/Scripts/generate_env.sh` runs as an
+// Xcode Build Phase BEFORE "Compile Sources" and writes a Swift
+// `EnvironmentConfig` enum populated from either `.env.development`
+// (Debug) or `.env.production` (Release). Every backend URL in the
+// UIKit codebase routes through that enum.
+//
+// SwiftUI port previously hardcoded the Release URLs in five
+// different files. That meant a SwiftUI Debug build hit the
+// production cluster, while a UIKit Debug build hit staging —
+// QA filed "HTTP 502 on Add Ingredient" because the production
+// `bond-mvp1` image-analysis pod is currently returning 502 for
+// every multipart upload, while the staging `bond.barsys.com`
+// pod that UIKit Debug talks to works fine.
+//
+// This enum is the SwiftUI equivalent: a single `#if DEBUG`-
+// gated source of truth that picks the same URL set UIKit picks
+// for the matching build configuration. Wired into:
+//   • OryAPIClient.Endpoint.baseUrl + .baseUrlOry + .iAmAuthBarsys
+//   • OryAPIClient.recipesBaseURL
+//   • OryAPIClient.barBotActionCardBaseURL
+//   • ControlCenterScreens.StationsAPIService.baseURL
+//   • BarBotScreens.BarBotAPIService.baseURL
+//   • MyProfileView.ProfileAPIService.baseURL
+enum EnvironmentConfig {
+
+    #if DEBUG
+    // ─── DEVELOPMENT (matches UIKit `.env.development`) ───
+    static let baseUrl                    = "https://ci.api-ng.barsys.com/api/"
+    static let baseUrlForBarBot           = "https://ci.bond.barsys.com/api/"
+    static let baseUrlForBarBotActionCard = "https://ci.bond.barsys.com/api/"
+    static let baseUrlForBarBotFlatChat   = "https://ci.bond.barsys.com/api/"
+    static let baseUrlOry                 = "https://ci.iam.auth.barsys.com/self-service/"
+    static let baseUrlForRecipes          = "https://defteros-service-staging-47447659942.us-central1.run.app/api/v1/"
+    static let iAmAuthBarsys              = "ci.iam.auth.barsys.com"
+    static let brazeApiKey                = "89c372c9-1203-4c31-a37a-d9be44162656"
+    static let brazeEndpoint              = "sdk.iad-07.braze.com"
+    #else
+    // ─── PRODUCTION (matches UIKit `.env.production`) ───
+    static let baseUrl                    = "https://api-ng.barsys.com/api/"
+    static let baseUrlForBarBot           = "https://ci.bond-mvp1.barsys.com/api/"
+    static let baseUrlForBarBotActionCard = "https://ci.bond-mvp1.barsys.com/api/"
+    static let baseUrlForBarBotFlatChat   = "https://ci.bond-mvp1.barsys.com/api/"
+    static let baseUrlOry                 = "https://iam.auth.barsys.com/self-service/"
+    static let baseUrlForRecipes          = "https://defteros-service-47447659942.us-central1.run.app/api/v1/"
+    static let iAmAuthBarsys              = "iam.auth.barsys.com"
+    static let brazeApiKey                = "d5beb9b6-9499-4213-b4dd-f36322e1d444"
+    static let brazeEndpoint              = "sdk.iad-07.braze.com"
+    #endif
+}
+
 enum NumericConstants {
     static let ounceConversionFactor: CGFloat = 0.033814
     static let minimumAge = 21

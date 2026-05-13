@@ -32,9 +32,16 @@ final class OryAPIClient: APIClient {
     // MARK: - Endpoint constants (mirror BarsysApp/Helpers/Constants)
 
     private enum Endpoint {
-        static let baseUrl    = "https://api-ng.barsys.com/api/"
-        static let baseUrlOry = "https://iam.auth.barsys.com/self-service/"
-        static let iAmAuthBarsys = "iam.auth.barsys.com"
+        // 1:1 with UIKit `EnvironmentConfig.generated.swift` —
+        // routes through `EnvironmentConfig` so Debug builds hit
+        // the staging cluster (matches UIKit Debug) and Release
+        // builds hit the production cluster (matches UIKit
+        // Release). Was hard-coded to production URLs which broke
+        // the SwiftUI Debug build's image-detection flow against
+        // the currently-flaky `bond-mvp1` cluster.
+        static let baseUrl       = EnvironmentConfig.baseUrl
+        static let baseUrlOry    = EnvironmentConfig.baseUrlOry
+        static let iAmAuthBarsys = EnvironmentConfig.iAmAuthBarsys
 
         // Note: the trailing ")" matches the literal in OryAPI.swift verbatim.
         static var getFlowIdForLogin: String {
@@ -469,7 +476,9 @@ final class OryAPIClient: APIClient {
     //   Recipes: cache/recipes?timestamp=
     //   Mixlists: cache/mixlists?timestamp=
 
-    private static let recipesBaseURL = "https://defteros-service-47447659942.us-central1.run.app/api/v1/"
+    // 1:1 with UIKit `GlobalConstants.baseUrlForRecipes` —
+    // staging in Debug, production in Release.
+    private static let recipesBaseURL = EnvironmentConfig.baseUrlForRecipes
 
     /// Helper: creates an authenticated URLRequest matching UIKit's
     /// `NetworkingUtility.createRequest(includeAuth: true)` which adds
@@ -919,7 +928,14 @@ final class OryAPIClient: APIClient {
     //           and file part `image` (jpeg quality 0.7, filename imagefile.jpg).
     // Response: [IngredientListResponseModel] — array whose first element
     //           contains `ingredients: [StationIngredientFromImageModel]`.
-    private static let barBotActionCardBaseURL = "https://ci.bond-mvp1.barsys.com/api/"
+    // 1:1 with UIKit `GlobalConstants.baseUrlForBarBotActionCard` —
+    // staging (`ci.bond.barsys.com`) in Debug, production
+    // (`ci.bond-mvp1.barsys.com`) in Release. Was hard-coded to
+    // production; the bond-mvp1 image-analysis pod has been
+    // returning HTTP 502 across the entire QA cycle, so the
+    // SwiftUI Debug build needs the same staging fallback UIKit
+    // Debug uses.
+    private static let barBotActionCardBaseURL = EnvironmentConfig.baseUrlForBarBotActionCard
 
     func uploadIngredientImage(_ image: Data) async throws -> [IngredientFromImage] {
         try await uploadMultipart(
@@ -1124,39 +1140,89 @@ final class OryAPIClient: APIClient {
         let urlStr = Self.barBotActionCardBaseURL + "image/multipart"
         guard let url = URL(string: urlStr) else { throw AppError.network("Invalid URL") }
 
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // 1:1 with UIKit `NetworkingUtility.RetryPolicy.default`
+        // (NetworkingUtility.swift L31-38) — 3 attempts, exponential
+        // backoff, retry on 500/502/503/504. UIKit silently retries
+        // past the Cloud Run / Cloud Functions cold-start window for
+        // the bond-mvp1 backend; SwiftUI used to surface the first
+        // 502 directly to the user as "HTTP 502" in an alert, which
+        // is the QA-reported "unable to add ingredient" symptom.
+        let maxAttempts = 3
+        let baseRetryDelay: TimeInterval = 1.0
+        let retryableStatuses: Set<Int> = [500, 502, 503, 504]
 
-        var body = Data()
-        let lineBreak = "\r\n"
+        var lastStatus = 0
+        var lastError: Error?
 
-        // text part: session_id=session_id (UIKit param literally uses this string)
-        body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"session_id\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
-        body.append("session_id\(lineBreak)".data(using: .utf8)!)
+        for attempt in 1...maxAttempts {
+            // Boundary is regenerated per attempt so a TLS-level reset
+            // (some proxies hash the multipart preamble and reject a
+            // verbatim retry as a duplicate) doesn't cause a second
+            // failure. Each retry attempt looks like a brand new
+            // multipart request to the gateway.
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        // file part: image
-        body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"image\"; filename=\"imagefile.jpg\"\(lineBreak)".data(using: .utf8)!)
-        body.append("Content-Type: image/jpeg\(lineBreak)\(lineBreak)".data(using: .utf8)!)
-        body.append(image)
-        body.append(lineBreak.data(using: .utf8)!)
+            var body = Data()
+            let lineBreak = "\r\n"
 
-        // closing boundary
-        body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
-        request.httpBody = body
+            // text part: session_id=session_id (UIKit param literally uses this string)
+            body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"session_id\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+            body.append("session_id\(lineBreak)".data(using: .utf8)!)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        print("[OryAPIClient] uploadIngredientImage: HTTP \(status)")
-        guard status == 200 || status == 201 else {
-            throw AppError.network("HTTP \(status)")
+            // file part: image
+            body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"image\"; filename=\"imagefile.jpg\"\(lineBreak)".data(using: .utf8)!)
+            body.append("Content-Type: image/jpeg\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+            body.append(image)
+            body.append(lineBreak.data(using: .utf8)!)
+
+            // closing boundary
+            body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+            request.httpBody = body
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                lastStatus = status
+                print("[OryAPIClient] uploadIngredientImage attempt \(attempt)/\(maxAttempts): HTTP \(status)")
+
+                if status == 200 || status == 201 {
+                    return try JSONDecoder().decode(T.self, from: data)
+                }
+
+                // Non-retryable status → bail out immediately (no point
+                // hammering the server with retries for 401/403/404).
+                if !retryableStatuses.contains(status) {
+                    throw AppError.network("HTTP \(status)")
+                }
+
+                // Retryable 5xx → sleep with exponential backoff and try again.
+                if attempt < maxAttempts {
+                    let delay = baseRetryDelay * pow(2.0, Double(attempt - 1))
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            } catch let appErr as AppError {
+                // Bubble up non-retryable AppErrors (auth, decode, etc.).
+                throw appErr
+            } catch {
+                lastError = error
+                if attempt < maxAttempts {
+                    let delay = baseRetryDelay * pow(2.0, Double(attempt - 1))
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
-        return try JSONDecoder().decode(T.self, from: data)
+
+        if let lastError {
+            throw lastError
+        }
+        throw AppError.network("HTTP \(lastStatus)")
     }
 
     /// Ports FavoriteRecipeApiService.likeUnlikeApi().

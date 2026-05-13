@@ -352,8 +352,10 @@ final class MyProfileViewModel: ObservableObject {
     //   PUT    `baseUrlForRecipes + my/profile/picture` — upload image
     //                                                    (multipart/form-data)
     //   DELETE `baseUrlForRecipes + my/profile`        — delete profile
-    private static let baseURL =
-        "https://defteros-service-47447659942.us-central1.run.app/api/v1/"
+    // 1:1 with UIKit `GlobalConstants.baseUrlForRecipes` —
+    // Debug = staging, Release = production. See
+    // `EnvironmentConfig`.
+    private static let baseURL = EnvironmentConfig.baseUrlForRecipes
     private static let profilePath        = "my/profile"
     private static let profilePicturePath = "my/profile/picture"
 
