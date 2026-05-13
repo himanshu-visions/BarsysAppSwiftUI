@@ -878,11 +878,17 @@ struct MixlistDetailView: View {
     /// rotation animation instead of snapping.
     private var gridColumnCount: Int {
         _ = orientationTick
+        // Landscape split → both idioms render the recipe grid inside
+        // the right-hand column (≈ 55–58 % of screen width), so 2
+        // columns keeps the cells at a readable size. The portrait
+        // path keeps the prior behaviour (iPad portrait = 2, iPhone
+        // portrait is unreachable here because `useGridLayout` is
+        // false on iPhone portrait).
+        if isLandscapeLayout { return 2 }
         if UIDevice.current.userInterfaceIdiom == .pad {
-            let bounds = UIScreen.main.bounds
-            return bounds.width > bounds.height ? 3 : 2
+            return 2 // iPad portrait
         }
-        return 3  // iPhone landscape — unchanged from prior behaviour
+        return 3  // iPhone landscape (no-split fallback — currently unused)
     }
 
     private var gridColumns: [GridItem] {
@@ -897,6 +903,26 @@ struct MixlistDetailView: View {
     private var isPhoneLandscape: Bool {
         UIDevice.current.userInterfaceIdiom != .pad
             && verticalSizeClass == .compact
+    }
+
+    /// True when running on iPad in landscape orientation. iPad keeps
+    /// `regular/regular` size classes in both orientations, so we read
+    /// `UIScreen.main.bounds` directly. `orientationTick` is bumped by
+    /// the rotation observer (`onReceive` on
+    /// `orientationDidChangeNotification`) so SwiftUI re-evaluates
+    /// this property on rotation.
+    private var isIPadLandscape: Bool {
+        _ = orientationTick
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let bounds = UIScreen.main.bounds
+        return bounds.width > bounds.height
+    }
+
+    /// Drives the side-by-side split layout (banner left, info right)
+    /// on iPhone landscape AND iPad landscape. iPhone portrait and
+    /// iPad portrait keep the original single-column layout.
+    private var isLandscapeLayout: Bool {
+        isPhoneLandscape || isIPadLandscape
     }
 
     /// Forces `recipes` to re-evaluate after a heart-toggle that goes
@@ -1135,6 +1161,37 @@ struct MixlistDetailView: View {
 
     @ViewBuilder
     private func content(_ mixlist: Mixlist) -> some View {
+        // Two layouts share the same toolbar + bottom-button-row
+        // wrapper. Landscape (iPhone OR iPad) splits the screen into
+        // [banner left, scrollable title + tabs + list right] so the
+        // mixlist artwork stays in view while the user scrolls
+        // recipes / ingredients. Portrait keeps the single-column
+        // scroll bit-identically.
+        Group {
+            if isLandscapeLayout {
+                landscapeContent(mixlist)
+            } else {
+                portraitContent(mixlist)
+            }
+        }
+        .safeAreaInset(edge: .bottom) { bottomButtonRow(for: mixlist) }
+        // QA fix — same as RecipeDetailView (RecipesScreens.swift):
+        // on iOS 26 the toolbar's Liquid-Glass capsules pick up dark
+        // colours from the banner image as it scrolls under the bar.
+        // Switching the top scroll-edge effect from the default
+        // `.soft` to `.hard` removes the system fade/blur at the
+        // edge, so the back-button circle + favourites/profile pill
+        // see only the opaque nav-bar background and stay identical
+        // to Cocktail Kits / Explore.
+        .hardTopScrollEdgeIfAvailable()
+    }
+
+    /// Portrait single-column layout — 1:1 port of the UIKit
+    /// `MixlistDetailViewController` storyboard order: banner image
+    /// on top, then the scrolling stack of title / tabs bar /
+    /// recipes-or-ingredients list.
+    @ViewBuilder
+    private func portraitContent(_ mixlist: Mixlist) -> some View {
         ScrollView {
             // Parent VStack spacing 0 — UIKit uses hard-coded constants
             // (image top=0, title top = image.bottom + 19, tabs bar top
@@ -1145,24 +1202,8 @@ struct MixlistDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 banner(for: mixlist)
 
-                // Mixlist title — storyboard `jHp-tM-EQo`:
-                //   boldSystem 16pt, `appBlackColor`, leading/trailing = 24,
-                //   top = `AWF-ly-2Vd.bottom + 19` (constraint `X4y-C1-ARS`).
-                // iPad bumps to 22pt bold so the mixlist name reads at
-                // a comfortable scale next to the larger row text.
-                // iPhone keeps storyboard 16pt bit-identically.
-                Text(mixlist.displayName)
-                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16, weight: .bold))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .padding(.horizontal, 24)
-                    .padding(.top, 19)
+                bodySections(for: mixlist)
 
-                tabsBar
-
-                switch selectedTab {
-                case .recipes:    recipesList
-                case .ingredients: ingredientsList
-                }
                 // Conditional clearance — only reserve space under the
                 // bottom action row when a Barsys 360 is connected and
                 // the Setup-Stations CTA is actually rendered. Without
@@ -1175,16 +1216,89 @@ struct MixlistDetailView: View {
             }
             .padding(.bottom, 16)
         }
-        .safeAreaInset(edge: .bottom) { bottomButtonRow(for: mixlist) }
-        // QA fix — same as RecipeDetailView (RecipesScreens.swift):
-        // on iOS 26 the toolbar's Liquid-Glass capsules pick up dark
-        // colours from the banner image as it scrolls under the bar.
-        // Switching the top scroll-edge effect from the default
-        // `.soft` to `.hard` removes the system fade/blur at the
-        // edge, so the back-button circle + favourites/profile pill
-        // see only the opaque nav-bar background and stay identical
-        // to Cocktail Kits / Explore.
-        .hardTopScrollEdgeIfAvailable()
+    }
+
+    /// Landscape split layout — banner stays fixed on the left, the
+    /// info column (title / tabs bar / recipes-or-ingredients list)
+    /// scrolls independently on the right. Used on iPhone landscape
+    /// (compact vertical size class) AND on iPad landscape.
+    @ViewBuilder
+    private func landscapeContent(_ mixlist: Mixlist) -> some View {
+        GeometryReader { geo in
+            // Image-column proportion: 42% on iPhone landscape (so
+            // the info column gets 58% — enough for the 2-column
+            // recipe grid without the cards getting too narrow) and
+            // 45% on iPad landscape (the larger canvas can afford
+            // the bigger banner without crowding the info side).
+            let leftFraction: CGFloat = isIPadLandscape ? 0.45 : 0.42
+            // Banner inset matches the storyboard's 24pt screen edge.
+            let leadingInset: CGFloat = 24
+            // The banner's intrinsic frame: 1:1 square that fits
+            // inside the proportional column width but also stays
+            // under the available vertical height (toolbar + bottom
+            // action bar inset are already removed from
+            // `geo.size.height`). `min(width, height)` keeps the
+            // square from overflowing on iPhone-15-Pro-Max-class
+            // devices where landscape height (≈ 360pt usable) is
+            // the tighter constraint.
+            let maxBannerWidth = geo.size.width * leftFraction - leadingInset
+            let maxBannerHeight = geo.size.height - 40
+            let bannerSide = max(120, min(maxBannerWidth, maxBannerHeight))
+            let leftColumnWidth = bannerSide + leadingInset
+
+            HStack(alignment: .top, spacing: 0) {
+                // Left column — banner image pinned to the top.
+                VStack(alignment: .leading, spacing: 0) {
+                    banner(for: mixlist, fixedSide: bannerSide)
+                    Spacer(minLength: 0)
+                }
+                .frame(width: leftColumnWidth, alignment: .topLeading)
+
+                // Right column — scrollable title / tabs / list.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        bodySections(for: mixlist)
+                        if shouldShowSetupStations {
+                            Color.clear.frame(height: 120)
+                        }
+                    }
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// Title / tabs bar / recipes-or-ingredients list — the full
+    /// information stack rendered identically in portrait and
+    /// landscape. Hosted inside the portrait ScrollView's VStack OR
+    /// the landscape right-column ScrollView's VStack.
+    @ViewBuilder
+    private func bodySections(for mixlist: Mixlist) -> some View {
+        // Mixlist title — storyboard `jHp-tM-EQo`:
+        //   boldSystem 16pt, `appBlackColor`, leading/trailing = 24,
+        //   top = `AWF-ly-2Vd.bottom + 19` (constraint `X4y-C1-ARS`).
+        // iPad bumps to 22pt bold so the mixlist name reads at
+        // a comfortable scale next to the larger row text.
+        // iPhone keeps storyboard 16pt bit-identically.
+        Text(mixlist.displayName)
+            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16, weight: .bold))
+            .foregroundStyle(Color("appBlackColor"))
+            .padding(.horizontal, 24)
+            // Portrait: UIKit constraint `X4y-C1-ARS`: title.top =
+            // banner.bottom + 19. Landscape split: the banner lives
+            // in a sibling column so the right-column title only
+            // needs a small top breathing room (8pt added by the
+            // parent above).
+            .padding(.top, isLandscapeLayout ? 0 : 19)
+
+        tabsBar
+
+        switch selectedTab {
+        case .recipes:    recipesList
+        case .ingredients: ingredientsList
+        }
     }
 
     // MARK: - Banner — ports `imgMixlist` (`AWF-ly-2Vd`):
@@ -1205,7 +1319,18 @@ struct MixlistDetailView: View {
     // 24pt on both sides; on iPhone 15 Pro / 16 Pro the difference is
     // 16pt of extra width (~5% of the image area) which visibly
     // misaligns every downstream row.
-    private func banner(for mixlist: Mixlist) -> some View {
+    /// Renders the mixlist banner image.
+    ///
+    /// - Portrait (no `fixedSide`): full-width 1:1 square, padded
+    ///   24pt on each horizontal edge — bit-identical to UIKit
+    ///   storyboard `imgMixlist` (`AWF-ly-2Vd`).
+    /// - Landscape split (caller passes `fixedSide`): renders a
+    ///   `fixedSide × fixedSide` square pinned by `landscapeContent`
+    ///   inside the left column, with only the leading 24pt inset
+    ///   (the right side is the inter-column gap, owned by the
+    ///   parent layout).
+    private func banner(for mixlist: Mixlist,
+                        fixedSide: CGFloat? = nil) -> some View {
         // Fluctuation fix:
         // Previous layout put `.aspectRatio(1, contentMode: .fit)` on
         // the `AsyncImage` itself. While the network image is loading
@@ -1217,28 +1342,20 @@ struct MixlistDetailView: View {
         // visible as a "jump" when you first enter the screen.
         //
         // Fix: use a `Color` placeholder as the sizing root. `Color`
-        // has infinite intrinsic size, so `aspectRatio(1, .fit)`
-        // immediately pins to `min(width, height) = width` since the
-        // parent provides width. The AsyncImage is overlaid on top of
-        // that locked frame — it can load at any size without
-        // perturbing layout.
-        //
-        // iPhone landscape: a 1:1 square at the padded width
-        // (~804pt on iPhone 15 Pro Max) eats more than the entire
-        // ~390pt-tall canvas, leaving the tabs / recipe list pushed
-        // off-screen. Cap the banner to a 200pt-tall flat banner —
-        // the `aspectFill` AsyncImage overlay still fills the visible
-        // crop without distortion. iPad and iPhone-portrait keep the
-        // UIKit-parity 1:1 square via the original
-        // `.aspectRatio(1, .fit)` modifier.
-        let landscapeBannerHeight: CGFloat = 200
+        // has infinite intrinsic size, so the explicit `.frame(...)`
+        // / `.aspectRatio(1, .fit)` modifier locks the size on first
+        // paint. The AsyncImage is overlaid on top of that locked
+        // frame — it can load at any size without perturbing layout.
         let placeholder = Color("lightBorderGrayColor")
-            .frame(maxWidth: .infinity)
         let sizedPlaceholder = Group {
-            if isPhoneLandscape {
-                placeholder.frame(height: landscapeBannerHeight)
+            if let side = fixedSide {
+                // Landscape split: fixed square pinned by caller.
+                placeholder.frame(width: side, height: side)
             } else {
-                placeholder.aspectRatio(1, contentMode: .fit)
+                // Portrait: full-width 1:1 square (UIKit-parity).
+                placeholder
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(1, contentMode: .fit)
             }
         }
         return sizedPlaceholder
@@ -1265,10 +1382,13 @@ struct MixlistDetailView: View {
                 }
             )
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            // UIKit storyboard constants `56N-ek-dao` + `tTa-AP-hxa`:
-            // 24pt leading / 24pt trailing — matches RecipeDetail +
-            // ExploreRecipes + every other banner in the app.
-            .padding(.horizontal, 24)
+            // Portrait: UIKit storyboard constants `56N-ek-dao` +
+            // `tTa-AP-hxa` apply 24pt leading + 24pt trailing.
+            // Landscape split: only the 24pt leading inset matches
+            // the screen edge — the trailing gap is supplied by the
+            // parent HStack's column split, not by banner padding.
+            .padding(.leading, 24)
+            .padding(.trailing, fixedSide == nil ? 24 : 0)
             // Shadow disabled while the image is loading would cause a
             // second reflow if enabled. Leaving the banner shadow-less
             // matches the UIKit `imgMixlist` outlet (no shadow
