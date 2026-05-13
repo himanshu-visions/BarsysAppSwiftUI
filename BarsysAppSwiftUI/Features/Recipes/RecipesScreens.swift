@@ -5788,7 +5788,61 @@ struct EditRecipeView: View {
             // produced "Unable to save recipe").
             recipeToSave = source
             recipeToSave.name = trimmed
-            recipeToSave.ingredients = filteredIngredients
+
+            // 1:1 with UIKit `EditViewModel+API.saveRecipe` L37-46
+            // (remove-then-append pattern):
+            //
+            //   recipe?.ingredients?.removeAll(where: {
+            //       $0.category?.primary != "garnish" &&
+            //       $0.category?.primary != "additional"
+            //   })
+            //   if recipe?.ingredients?.filter({ ... }).count == 0 {
+            //       if garnishIngredientsArr.count > 0 {
+            //           recipe?.ingredients?.append(contentsOf: garnishIngredientsArr)
+            //       }
+            //   }
+            //   recipe?.ingredients?.append(contentsOf: ingredientArrayToSendFurther)
+            //
+            // The remove-then-append approach is the BULLETPROOF
+            // way to guarantee a deleted ingredient never reaches
+            // the PATCH body. The previous SwiftUI port built a
+            // brand-new `filteredIngredients` array and assigned
+            // it via `recipeToSave.ingredients = filteredIngredients`
+            // — semantically equivalent, BUT the QA bug-report
+            // "deleted ingredient is still saved" surfaced when
+            // `source.ingredients` retained a stale base/mixer
+            // entry that wasn't in the SwiftUI `ingredients`
+            // @State (e.g., a duplicate-name entry that got
+            // dedup-dropped during onAppear, or a "garnish"
+            // primary with `ingredientOptional == nil` that the
+            // savedGarnish / savedAdditional filters skip).
+            //
+            // Mirroring UIKit's removal pattern exactly closes
+            // those edge cases: we PURGE every non-garnish entry
+            // from the source's ingredients first, so the only
+            // base/mixer items remaining are the ones the user
+            // explicitly kept (and qty > 0). Garnishes / additionals
+            // are preserved by `category.primary == "garnish"
+            // || == "additional" || == "additionals"`.
+            var workingIngredients = recipeToSave.ingredients ?? []
+            workingIngredients.removeAll { ing in
+                let p = (ing.category?.primary ?? "").lowercased()
+                return p != "garnish" && p != "additional" && p != "additionals"
+            }
+            // UIKit safety net (L40-44): if the removal stripped
+            // everything (no garnishes survived), re-attach our
+            // captured garnish + additional snapshots so the
+            // saved recipe doesn't lose the read-only garnish
+            // rows.
+            if workingIngredients.isEmpty {
+                workingIngredients.append(contentsOf: savedGarnishIngredients)
+                workingIngredients.append(contentsOf: savedAdditionalIngredients)
+            }
+            // Append the edited base+mixer (qty > 0). Deleted
+            // entries aren't in `filteredBaseAndMixer` anymore.
+            workingIngredients.append(contentsOf: filteredBaseAndMixer)
+            recipeToSave.ingredients = workingIngredients
+
             recipeToSave.isMyDrinkFavourite = true
             // 1:1 with UIKit `recipe?.image?.url = ""` from
             // `deleteImage()` — clear the URL so the API client
