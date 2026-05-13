@@ -1175,6 +1175,27 @@ struct CraftingView: View {
         UIDevice.current.userInterfaceIdiom == .pad
     }
 
+    /// Resolves the recipe to craft, preferring the user's edited
+    /// copy (set by `RecipeDetailView.craft(_:)` via
+    /// `router.craftRecipeOverride`) over the canonical storage
+    /// version. Falls through to `env.storage.recipe(by: recipeID)`
+    /// when no override is set — covering the "Make It Again" path
+    /// from `DrinkCompleteView`, the SpeakEasy socket-driven craft,
+    /// and any other non-Recipe-Detail entry point.
+    ///
+    /// This is the SwiftUI equivalent of UIKit
+    /// `CraftingViewController.recipe` being assigned by the caller
+    /// before the segue — UIKit hands `viewModel.recipe` (with all
+    /// `+ / -` edits intact) straight to the next VC, so the device
+    /// pours the user's chosen amount. The SwiftUI router only
+    /// carries the recipe **ID** through the route enum, so we need
+    /// this side-channel to preserve UIKit's edited-quantity
+    /// semantics. Fixes the QA-reported "Craft uses the initial
+    /// quantity, not the changed quantity" bug.
+    private var resolvedRecipe: Recipe? {
+        router.craftRecipeOverride ?? env.storage.recipe(by: recipeID)
+    }
+
     var body: some View {
         // 1:1 port of UIKit `Crafting.storyboard` scene `X0s-iW-KFx`:
         //
@@ -1197,7 +1218,13 @@ struct CraftingView: View {
             Color("primaryBackgroundColor").ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if let recipe = env.storage.recipe(by: recipeID) {
+                // `resolvedRecipe` prefers `router.craftRecipeOverride`
+                // — set by `RecipeDetailView.craft(_:)` so the
+                // user's +/- quantity edits flow into the craft
+                // pipeline (QA fix: "Craft uses initial quantity,
+                // not the changed quantity"). Falls back to storage
+                // for non-Recipe-Detail entry points.
+                if let recipe = resolvedRecipe {
                     ScrollView(showsIndicators: false) {
                         VStack(spacing: 0) {
                             // Glass status label (storyboard gzR-vU-4zg) —
@@ -1375,6 +1402,18 @@ struct CraftingView: View {
             if router.activeCraftingScreen == .crafting {
                 router.activeCraftingScreen = nil
             }
+            // Consume the recipe-override side-channel once the
+            // crafting flow ends so the next `.crafting(...)` push
+            // (e.g. from DrinkComplete's "Make It Again" loop, a
+            // BarBot recipe, or a fresh Recipe Detail entry that
+            // didn't set an override) falls through to the storage
+            // lookup. UIKit's equivalent is implicit: each
+            // `CraftingViewController` is its own VC with its own
+            // `recipe` property — there's no global state to clean
+            // up. SwiftUI's route enum carries only an ID, so we
+            // simulate the per-instance state by clearing the
+            // override when this instance disappears.
+            router.craftRecipeOverride = nil
         }
         // Kept as a fallback for the very-first push of the view —
         // `.onAppear` above handles both first-push and re-appear
@@ -1450,7 +1489,10 @@ struct CraftingView: View {
             // with the full property bag (recipe + ingredient array
             // marked with `poured_ingredients` reflecting WHICH rows
             // had been dispensed at the moment of cancellation).
-            if let recipe = env.storage.recipe(by: recipeID) {
+            // Read through `resolvedRecipe` so the analytics payload
+            // reflects the EDITED quantities the user actually
+            // started crafting with.
+            if let recipe = resolvedRecipe {
                 env.analytics.track(
                     TrackEventName.craftCancelled.rawValue,
                     properties: craftEventProperties(recipe: recipe,
@@ -1467,7 +1509,10 @@ struct CraftingView: View {
         .barsysPopup($pourConfirmPopup, onPrimary: {
             HapticService.medium()
             didResolvePourConfirm = true
-            guard let recipe = env.storage.recipe(by: recipeID) else { return }
+            // `resolvedRecipe` carries any pending quantity edits
+            // from the Recipe Detail screen — the device must pour
+            // those, not the catalog defaults.
+            guard let recipe = resolvedRecipe else { return }
             // 1:1 with UIKit `CraftingViewModel.trackEventCraftBegin()`
             // (CraftingViewModel+Analytics.swift L47-90). The Braze
             // `craft_begin` event carries the full recipe metadata
@@ -1605,7 +1650,15 @@ struct CraftingView: View {
     ///   • `!didResolvePourConfirm` — don't re-show the alert if the
     ///     user already confirmed this round.
     private func runCraftEntryFlow() {
-        guard let recipe = env.storage.recipe(by: recipeID),
+        // Prefer the user-edited recipe (set by
+        // `RecipeDetailView.craft(_:)` via `router.craftRecipeOverride`)
+        // so `viewModel.start(...)` receives the live quantities the
+        // user picked on the recipe detail page. UIKit's
+        // `CraftingViewController.recipe` was assigned by the caller
+        // for the same reason — the SwiftUI route only carries an
+        // ID, so the override side-channel is how we preserve those
+        // edits. QA bug: "device uses initial quantity, not changed".
+        guard let recipe = resolvedRecipe,
               viewModel.state == .idle,
               !didResolvePourConfirm else { return }
 

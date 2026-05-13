@@ -365,6 +365,33 @@ final class AppRouter: ObservableObject {
     /// on appear and clear it when done.
     @Published var setupStationsContext: SetupStationsContext? = nil
 
+    /// Transient hand-off for the user's locally-edited recipe from
+    /// `RecipeDetailView` into the next `CraftingView` push.
+    ///
+    /// Why this exists:
+    /// Recipe Detail keeps `editedIngredients` as local `@State`,
+    /// so a `+ / -` tap on a quantity row never reaches
+    /// `env.storage`. The Craft button used to call
+    /// `router.push(.crafting(recipe.id))`, which made `CraftingView`
+    /// re-fetch the recipe from `env.storage.recipe(by: recipeID)`
+    /// — pulling the **catalog** quantities and discarding the
+    /// user's edits. This mirrors UIKit's
+    /// `RecipePageViewController+Actions.didPressCraftButton`
+    /// behaviour ("the Craft path treats the edited quantities AS
+    /// the user's intent and feeds them straight into
+    /// RecipeCraftingClass") which had been broken in the SwiftUI
+    /// port.
+    ///
+    /// Lifecycle:
+    /// - Set by `RecipeDetailView.craft(_:)` right before
+    ///   `push(.crafting(...))` with the recipe already overlaid
+    ///   with `editedIngredients`.
+    /// - Read by `CraftingView` on first appear, then immediately
+    ///   cleared so subsequent crafting pushes (DrinkComplete's
+    ///   "Make It Again", BarBot, etc.) fall through to the
+    ///   storage lookup.
+    @Published var craftRecipeOverride: Recipe? = nil
+
     /// Identifies which crafting-adjacent screen is currently visible
     /// (if any). Set by views in `onAppear`, cleared in `onDisappear`.
     ///

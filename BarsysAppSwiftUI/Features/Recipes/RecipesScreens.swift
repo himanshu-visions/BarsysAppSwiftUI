@@ -3369,6 +3369,53 @@ struct RecipeDetailView: View {
                                     source: .recipeCrafting)
             return
         }
+
+        // ─────────────────────────────────────────────────────────
+        // Overlay the user's pending quantity edits onto the recipe
+        // AND commit them to `env.storage` so every downstream
+        // reader — the validation preflight, the CraftingView
+        // ingredient table, the BLE command builder, the
+        // DrinkComplete summary — pulls the live values, not the
+        // catalog defaults.
+        //
+        // UIKit reference (`RecipePageViewModel.swift`):
+        //   • The viewmodel maintains TWO arrays —
+        //     `baseAndMixerIngredientsArr` (original) and
+        //     `baseAndMixerIngredientsArrWithUpdatedQuantity`
+        //     (mutated on every `+/-` tap, L225-235).
+        //   • `RecipePageViewController+Actions.didPressCraftButton`
+        //     (L56-78) passes the `…WithUpdatedQuantity` array
+        //     straight to `RecipeCraftingClass`
+        //     (`craftCoasterRecipeWithUpdatedQuantity` /
+        //     `craft360RecipeForUpdatedQuantity`), and
+        //     `checkBarsys360Craftability`
+        //     (`RecipePageViewModel+CraftAndAnalytics.swift` L17-100)
+        //     builds the `[StationCleaningFlow]` it hands to
+        //     `CraftingViewController` from that same edited array.
+        //   • The result: UIKit never re-reads the catalog recipe
+        //     between the user's +/- tap and the BLE command. Every
+        //     consumer sees the edited values.
+        //
+        // The SwiftUI port keeps user edits in
+        // `RecipeDetailView.editedIngredients` (@State) — they
+        // never reach `env.storage`, so when the route push hands
+        // off to `CraftingView` and it does
+        // `env.storage.recipe(by: recipeID)`, the lookup returns
+        // the **unedited** catalog copy. Result: device pours
+        // catalog defaults. QA bug: "user changes the quantity on
+        // recipe details → presses Craft → device uses the initial
+        // quantity, not the changed quantity".
+        //
+        // Fix: write the merged-edits recipe back to
+        // `env.storage.upsert(recipe:)` *before* pushing. This is
+        // the SwiftUI equivalent of UIKit mutating the in-memory
+        // viewmodel array — `env.storage` IS our in-memory state.
+        // Every downstream `env.storage.recipe(by: recipeID)` call
+        // now returns the edited recipe, exactly mirroring UIKit's
+        // single-source-of-truth-while-crafting behaviour.
+        let editedRecipe = recipeWithEditedQuantities(recipe)
+        env.storage.upsert(recipe: editedRecipe)
+
         // 1:1 port of UIKit
         // `RecipePageViewController+Actions.didPressCraftButton` +
         // `checkBarsys360Craftability` preflight pipeline. UIKit
@@ -3404,11 +3451,11 @@ struct RecipeDetailView: View {
         // downstream, so we can go straight to push here.
         if ble.isBarsys360Connected() {
             Task { @MainActor in
-                await validateAndPushBarsys360Craft(recipe)
+                await validateAndPushBarsys360Craft(editedRecipe)
             }
             return
         }
-        router.push(.crafting(recipe.id))
+        router.push(.crafting(editedRecipe.id))
     }
 
     /// Ports the Barsys-360 branch of UIKit
