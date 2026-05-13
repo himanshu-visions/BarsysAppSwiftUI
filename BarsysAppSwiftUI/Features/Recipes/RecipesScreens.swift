@@ -1397,6 +1397,24 @@ struct RecipeDetailView: View {
             && verticalSizeClass == .compact
     }
 
+    /// True when running on iPad in landscape orientation. iPad keeps
+    /// `regular/regular` size classes in both orientations, so we read
+    /// `UIScreen.main.bounds` directly. `orientationTick` is bumped by
+    /// the rotation observer so SwiftUI re-evaluates this on rotation.
+    private var isIPadLandscape: Bool {
+        _ = orientationTick
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let bounds = UIScreen.main.bounds
+        return bounds.width > bounds.height
+    }
+
+    /// Drives the side-by-side split layout (image left, info right)
+    /// on iPhone landscape AND iPad landscape. iPhone portrait and
+    /// iPad portrait keep the original single-column layout.
+    private var isLandscapeLayout: Bool {
+        isPhoneLandscape || isIPadLandscape
+    }
+
     @State private var editedIngredients: [Ingredient] = []
     @State private var originalIngredients: [Ingredient] = []
     @State private var showUnsavedAlert = false
@@ -1443,6 +1461,14 @@ struct RecipeDetailView: View {
     ///      sections used to sit forever behind the keyboard.
     @State private var keyboardHeight: CGFloat = 0
     private var isKeyboardVisible: Bool { keyboardHeight > 0 }
+
+    /// Bumped on every `UIDevice.orientationDidChangeNotification` so
+    /// `isIPadLandscape` (which reads `UIScreen.main.bounds` directly)
+    /// re-evaluates on iPad rotation. iPad keeps `regular/regular`
+    /// size classes in both orientations so SwiftUI doesn't auto-
+    /// re-run the property — this `@State` is the explicit dependency
+    /// that triggers the split-layout reflow.
+    @State private var orientationTick: Int = 0
 
     private var recipe: Recipe? { env.storage.recipe(by: recipeID) }
 
@@ -1738,149 +1764,16 @@ struct RecipeDetailView: View {
 
     @ViewBuilder
     private func content(recipe: Recipe) -> some View {
-        ScrollView {
-            // Parent VStack spacing 0 — UIKit stacks the hero, title,
-            // subtitle, and the `fBc-sd-Chd` details container by
-            // explicit autolayout constants (image top=0, title top=20
-            // from image bottom, subtitle top=14 from title bottom,
-            // `fBc-sd-Chd` top = WMC bottom with no extra gap). The
-            // previous `spacing: 16` double-counted and pushed every
-            // section down by 16pt relative to UIKit.
-            VStack(alignment: .leading, spacing: 0) {
-                // Hero image — storyboard `VN9-Mm-R3c`:
-                //   leading:24, trailing:24, top=0 (pinned to WMC top),
-                //   width:height=1:1, roundCorners:12.
-                heroImage(recipe: recipe)
-                    .padding(.horizontal, 24)
-
-                // Title + description — matches storyboard
-                //   `K2L-S7-8cr`: boldSystem 16pt, `appBlackColor`,
-                //       leading/trailing:24, top = image.bottom + 20.
-                //   `S8V-cr-6My`: system 12pt, `appBlackColor`, multi-line,
-                //       leading/trailing:24, top = title.bottom + 14.
-                VStack(alignment: .leading, spacing: 14) {
-                    // iPad-only font ramp. iPhone keeps storyboard
-                    // 16pt bold title / 12pt subtitle bit-identically.
-                    Text(recipe.displayName)
-                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16, weight: .bold))
-                        .foregroundStyle(Color("appBlackColor"))
-                        .accessibilityAddTraits(.isHeader)
-                    if !recipe.subtitle.isEmpty {
-                        Text(recipe.subtitle)
-                            .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12))
-                            .foregroundStyle(Color("appBlackColor"))
-                            .lineSpacing(2)
-                    }
-                }
-                .padding(.horizontal, 24)
-                // UIKit constraint `sH9-eg-yai`: K2L-S7-8cr.top =
-                // VN9-Mm-R3c.bottom + 20. Previously 6pt — wrong.
-                .padding(.top, 20)
-
-                // "The Recipe" underlined header — storyboard `kqG-7l-90a`:
-                //   boldSystem 14pt, `appBlackColor`, underlined attributed
-                //   text set in `setupView()` via `.underline`.
-                // iPad bumps to 18pt bold for proportional hierarchy.
-                HStack {
-                    Text("The Recipe")
-                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14, weight: .bold))
-                        .foregroundStyle(Color("appBlackColor"))
-                        .underline()
-                    Spacer()
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 14)
-
-                // Section order (1:1 port of UIKit
-                // `RecipePageViewController.swift` storyboard + runtime
-                // visibility in `setupView`):
-                //   1. INGREDIENTS (N) — main base + mixer table
-                //   2. ADDITIONAL INGREDIENTS (N) — shown immediately
-                //      below the main ingredients table when
-                //      `viewModel.additionalIngredientsArr.count > 0`
-                //      (UIKit `viewAdditionalIngredient` outlet is
-                //      visible iff `isAdditionalIngredientsVisible`).
-                //   3. Glass info row
-                //   4. Garnish info row
-                //   5. Crafting Instructions
-                //
-                // The previous SwiftUI order rendered Additional
-                // Ingredients AFTER Instructions which didn't match
-                // the UIKit layout — fixed here by moving it up
-                // right after `ingredientsSection`.
-
-                // INGREDIENTS (n)
-                ingredientsSection
-
-                // ADDITIONAL INGREDIENTS (n) — shown directly below
-                // the main ingredients table (matches UIKit storyboard).
-                // Extra 10pt top breathing room between the main
-                // ingredients table and the "ADDITIONAL INGREDIENTS"
-                // header so the section reads as visually separated
-                // rather than glued to the row above it.
-                if !additionalIngredients.isEmpty {
-                    additionalSection
-                        .padding(.top, 10)
-                }
-
-                // Bh4-Tv-YEG (details stack `7Yu-k8-WvF`) — the UIKit
-                // storyboard orders these three rows top-to-bottom as:
-                //   1. Garnish   (Jef-JS-SvH, y=0,   50pt tall, label top=25)
-                //   2. Glass     (g08-Lm-IC9, y=50,  50pt tall, label top=12)
-                //   3. Crafting Instructions (cdY-8H-RMr, y=100,
-                //                             label top=25, body top=12 from label)
-                // The previous SwiftUI port inverted the first two so
-                // "Glass" rendered above "Garnish" — fixed here.
-                //
-                // Runtime visibility in UIKit (`setupView()`):
-                //   • lblGlass / lblGarnish / lblInstruction are always
-                //     populated from `viewModel`. In SwiftUI we only
-                //     render rows that actually have data so the layout
-                //     never produces empty sections, matching UIKit
-                //     `isHidden` toggling for missing values.
-
-                // 1. Garnish (joined list, comma-separated capitalized)
-                //    — UIKit Jef-JS-SvH label top = 25.
-                if !garnishIngredients.isEmpty {
-                    infoRow(title: "Garnish",
-                            value: garnishIngredients.map { $0.name.capitalized }.joined(separator: ", "),
-                            topInset: 25)
-                }
-                // 2. Glass — UIKit g08-Lm-IC9 label top = 12 (tighter
-                //    than the first row because it sits inside the
-                //    50pt row below Garnish with only the 12pt interior
-                //    offset as visual separation).
-                if let g = recipe.glassware?.type, !g.isEmpty {
-                    infoRow(title: "Glass", value: g.capitalized,
-                            topInset: 12)
-                }
-                // 3. Crafting Instructions — vertical list of
-                //    "Step N: …" blocks. 1:1 port of UIKit
-                //    `RecipePageViewController.updateInstructionsUI`:
-                //
-                //        viewInstructions.isHidden =
-                //            (lblInstruction.text ?? "").isEmpty
-                //            || lblGlass.text?.lowercased()
-                //               == Constants.notAvailable.lowercased()
-                //
-                //    where `Constants.notAvailable = "N/A"`. Hide when
-                //    the formatted text is empty OR when the glass
-                //    row reads "N/A". Context-aware formatting (My
-                //    Drinks vs standard) is handled inside
-                //    `instructionsSection(for:)` via
-                //    `formattedInstructionSteps(for:)`.
-                if shouldShowInstructions(for: recipe) {
-                    instructionsSection(for: recipe)
-                }
-                // Bottom buffer grows by the live keyboard height so
-                // the Crafting Instructions section can scroll all the
-                // way above the keyboard while a quantity field is
-                // focused. `.ignoresSafeArea(.keyboard)` on the outer
-                // compound view stops the ScrollView from auto-
-                // insetting itself, so we add the inset manually here.
-                Color.clear.frame(
-                    height: 30 + 70.0// keyboard height
-                )
+        // Two layouts share the same toolbar/keyboard/bottom-bar
+        // wrapper. Landscape (iPhone OR iPad) splits the screen into
+        // [image left, scrollable info right] so the recipe artwork
+        // stays in view while the user scrolls ingredients /
+        // instructions. Portrait keeps the single-column scroll.
+        Group {
+            if isLandscapeLayout {
+                landscapeContent(recipe: recipe)
+            } else {
+                portraitContent(recipe: recipe)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -1946,6 +1839,240 @@ struct RecipeDetailView: View {
         ) { _ in
             keyboardHeight = 0
         }
+        // iPad rotation handler: bump `orientationTick` inside a
+        // `withAnimation` so the landscape-split layout flips smoothly
+        // when the user rotates the device. iPhone reacts through the
+        // size-class change automatically; iPad keeps regular/regular
+        // in both orientations so this explicit tick is needed.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                orientationTick &+= 1
+            }
+        }
+        .onAppear {
+            // Arm device-orientation notifications so the rotation
+            // observer fires on iPad — UIKit doesn't generate them
+            // by default until a subscriber asks for them.
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
+        }
+    }
+
+    // MARK: - Portrait / Landscape layouts
+
+    /// Portrait single-column layout — 1:1 port of the original
+    /// UIKit `RecipePageViewController` storyboard order: hero image
+    /// on top, then the scrolling stack of title / "The Recipe" /
+    /// ingredients / additional / garnish / glass / instructions.
+    @ViewBuilder
+    private func portraitContent(recipe: Recipe) -> some View {
+        ScrollView {
+            // Parent VStack spacing 0 — UIKit stacks the hero, title,
+            // subtitle, and the `fBc-sd-Chd` details container by
+            // explicit autolayout constants (image top=0, title top=20
+            // from image bottom, subtitle top=14 from title bottom,
+            // `fBc-sd-Chd` top = WMC bottom with no extra gap). The
+            // previous `spacing: 16` double-counted and pushed every
+            // section down by 16pt relative to UIKit.
+            VStack(alignment: .leading, spacing: 0) {
+                // Hero image — storyboard `VN9-Mm-R3c`:
+                //   leading:24, trailing:24, top=0 (pinned to WMC top),
+                //   width:height=1:1, roundCorners:12.
+                heroImage(recipe: recipe)
+                    .padding(.horizontal, 24)
+
+                bodySections(recipe: recipe)
+
+                // Bottom buffer grows by the live keyboard height so
+                // the Crafting Instructions section can scroll all the
+                // way above the keyboard while a quantity field is
+                // focused. `.ignoresSafeArea(.keyboard)` on the outer
+                // compound view stops the ScrollView from auto-
+                // insetting itself, so we add the inset manually here.
+                Color.clear.frame(
+                    height: 30 + 70.0// keyboard height
+                )
+            }
+        }
+    }
+
+    /// Landscape split layout — image stays fixed on the left, the
+    /// info column (title / "The Recipe" / ingredients / additional /
+    /// garnish / glass / instructions) scrolls independently on the
+    /// right. Used on iPhone landscape (compact vertical size class)
+    /// AND on iPad landscape (`UIScreen.main.bounds.width > .height`).
+    /// Portrait on both idioms keeps the single-column layout.
+    @ViewBuilder
+    private func landscapeContent(recipe: Recipe) -> some View {
+        GeometryReader { geo in
+            // Image-column proportion: 42% on iPhone landscape (so
+            // the info column gets 58% — enough for two-column-ish
+            // ingredient rows without the title wrapping aggressively)
+            // and 45% on iPad landscape (the larger canvas can afford
+            // the bigger image without crowding the info side).
+            let leftFraction: CGFloat = isIPadLandscape ? 0.45 : 0.42
+            // Image inset matches the storyboard's 24pt screen edge.
+            let leadingInset: CGFloat = 24
+            // The image's intrinsic frame: 1:1 square that fits inside
+            // the proportional column width but also stays under the
+            // available vertical height (after toolbar + bottom
+            // action bar inset already removed from `geo.size.height`).
+            // `min(width, height)` keeps the square from overflowing
+            // on iPhone-15-Pro-Max-class devices where landscape
+            // height (≈ 360pt usable) is the tighter constraint.
+            let maxImageWidth = geo.size.width * leftFraction - leadingInset
+            let maxImageHeight = geo.size.height - 40
+            let imageSide = max(120, min(maxImageWidth, maxImageHeight))
+            // Column width = imageSide + leading inset so the right
+            // column starts right at the image's trailing edge — the
+            // sections inside it carry their own 24pt horizontal
+            // padding so the visual gap between image and info text
+            // ends up at ~24pt (the info column's leading inset).
+            let leftColumnWidth = imageSide + leadingInset
+
+            HStack(alignment: .top, spacing: 0) {
+                // Left column — image pinned to the top.
+                VStack(alignment: .leading, spacing: 0) {
+                    heroImage(recipe: recipe)
+                        .frame(width: imageSide, height: imageSide)
+                        .padding(.leading, leadingInset)
+                        .padding(.top, 16)
+                    Spacer(minLength: 0)
+                }
+                .frame(width: leftColumnWidth, alignment: .topLeading)
+
+                // Right column — scrollable info stack. Each section
+                // inside `bodySections` already applies its own 24pt
+                // horizontal padding, so the info text reads with a
+                // consistent inset from the image on the left AND
+                // the screen edge on the right.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        bodySections(recipe: recipe)
+                        // Same bottom buffer the portrait scroll uses
+                        // so the Crafting Instructions section can
+                        // scroll above the keyboard while a quantity
+                        // field is focused.
+                        Color.clear.frame(height: 30 + 70.0)
+                    }
+                    .padding(.top, 8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// Title / subtitle / "The Recipe" header / ingredients /
+    /// additional / garnish / glass / instructions — the full
+    /// information stack rendered identically in portrait and
+    /// landscape. Hosted inside the portrait ScrollView's VStack OR
+    /// the landscape right-column ScrollView's VStack.
+    @ViewBuilder
+    private func bodySections(recipe: Recipe) -> some View {
+        // Title + description — matches storyboard
+        //   `K2L-S7-8cr`: boldSystem 16pt, `appBlackColor`,
+        //       leading/trailing:24, top = image.bottom + 20.
+        //   `S8V-cr-6My`: system 12pt, `appBlackColor`, multi-line,
+        //       leading/trailing:24, top = title.bottom + 14.
+        VStack(alignment: .leading, spacing: 14) {
+            // iPad-only font ramp. iPhone keeps storyboard
+            // 16pt bold title / 12pt subtitle bit-identically.
+            Text(recipe.displayName)
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16, weight: .bold))
+                .foregroundStyle(Color("appBlackColor"))
+                .accessibilityAddTraits(.isHeader)
+            if !recipe.subtitle.isEmpty {
+                Text(recipe.subtitle)
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 16 : 12))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .lineSpacing(2)
+            }
+        }
+        .padding(.horizontal, 24)
+        // Portrait: UIKit constraint `sH9-eg-yai`: title.top =
+        // image.bottom + 20. Landscape split: the image lives in a
+        // sibling column so the right-column title only needs a
+        // small top breathing room (8pt added by the parent above).
+        .padding(.top, isLandscapeLayout ? 0 : 20)
+
+        // "The Recipe" underlined header — storyboard `kqG-7l-90a`:
+        //   boldSystem 14pt, `appBlackColor`, underlined attributed
+        //   text set in `setupView()` via `.underline`.
+        // iPad bumps to 18pt bold for proportional hierarchy.
+        HStack {
+            Text("The Recipe")
+                .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 18 : 14, weight: .bold))
+                .foregroundStyle(Color("appBlackColor"))
+                .underline()
+            Spacer()
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 14)
+
+        // Section order (1:1 port of UIKit
+        // `RecipePageViewController.swift` storyboard + runtime
+        // visibility in `setupView`):
+        //   1. INGREDIENTS (N) — main base + mixer table
+        //   2. ADDITIONAL INGREDIENTS (N) — shown immediately
+        //      below the main ingredients table when
+        //      `viewModel.additionalIngredientsArr.count > 0`
+        //      (UIKit `viewAdditionalIngredient` outlet is
+        //      visible iff `isAdditionalIngredientsVisible`).
+        //   3. Glass info row
+        //   4. Garnish info row
+        //   5. Crafting Instructions
+        //
+        // The previous SwiftUI order rendered Additional
+        // Ingredients AFTER Instructions which didn't match
+        // the UIKit layout — fixed here by moving it up
+        // right after `ingredientsSection`.
+
+        // INGREDIENTS (n)
+        ingredientsSection
+
+        // ADDITIONAL INGREDIENTS (n) — shown directly below
+        // the main ingredients table (matches UIKit storyboard).
+        // Extra 10pt top breathing room between the main
+        // ingredients table and the "ADDITIONAL INGREDIENTS"
+        // header so the section reads as visually separated
+        // rather than glued to the row above it.
+        if !additionalIngredients.isEmpty {
+            additionalSection
+                .padding(.top, 10)
+        }
+
+        // Bh4-Tv-YEG (details stack `7Yu-k8-WvF`) — the UIKit
+        // storyboard orders these three rows top-to-bottom as:
+        //   1. Garnish   (Jef-JS-SvH, y=0,   50pt tall, label top=25)
+        //   2. Glass     (g08-Lm-IC9, y=50,  50pt tall, label top=12)
+        //   3. Crafting Instructions (cdY-8H-RMr, y=100,
+        //                             label top=25, body top=12 from label)
+        // The previous SwiftUI port inverted the first two so
+        // "Glass" rendered above "Garnish" — fixed here.
+
+        // 1. Garnish (joined list, comma-separated capitalized)
+        //    — UIKit Jef-JS-SvH label top = 25.
+        if !garnishIngredients.isEmpty {
+            infoRow(title: "Garnish",
+                    value: garnishIngredients.map { $0.name.capitalized }.joined(separator: ", "),
+                    topInset: 25)
+        }
+        // 2. Glass — UIKit g08-Lm-IC9 label top = 12.
+        if let g = recipe.glassware?.type, !g.isEmpty {
+            infoRow(title: "Glass", value: g.capitalized,
+                    topInset: 12)
+        }
+        // 3. Crafting Instructions — vertical list of
+        //    "Step N: …" blocks. 1:1 port of UIKit
+        //    `RecipePageViewController.updateInstructionsUI`.
+        if shouldShowInstructions(for: recipe) {
+            instructionsSection(for: recipe)
+        }
     }
 
     // MARK: - Hero
@@ -1994,16 +2121,13 @@ struct RecipeDetailView: View {
         // and produces a consistent square on every device and for
         // every remote asset.
         //
-        // iPhone landscape: a 1:1 square at full padded width
-        // (~804pt on iPhone 15 Pro Max) eats more than the entire
-        // ~390pt-tall canvas, leaving the title / Craft button /
-        // ingredients pushed way off-screen. Cap the hero height to
-        // 200pt and let the image render as a wider banner — the
-        // `aspectFill` content mode + rounded clip keeps the artwork
-        // well-framed without distortion. iPad and iPhone-portrait
-        // keep the UIKit-parity 1:1 square via the `.aspectRatio(1,
-        // .fit)` modifier on the GeometryReader.
-        let landscapeHeroHeight: CGFloat = 200
+        // Both layouts now produce a 1:1 square: portrait scrolls
+        // the square vertically; landscape places it in the left
+        // column where `landscapeContent` already pins the
+        // GeometryReader to a square frame sized to fit the column
+        // and the available vertical space. The earlier 200pt iPhone-
+        // landscape banner is no longer needed since the image is
+        // sized by its host column, not by full screen width.
         let hero = GeometryReader { geo in
             let side = geo.size.width
             AsyncImage(url: url) { phase in
@@ -2030,24 +2154,17 @@ struct RecipeDetailView: View {
                         .padding(40)
                 }
             }
-            .frame(width: side,
-                   height: isPhoneLandscape ? landscapeHeroHeight : side)
+            .frame(width: side, height: side)
             .clipped()
             .background(Color("lightBorderGrayColor"))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        if isPhoneLandscape {
-            // Fix the GeometryReader's height so the parent VStack
-            // doesn't try to expand it to a square. Width still
-            // tracks the parent's proposed (padded) width.
-            hero.frame(height: landscapeHeroHeight)
-        } else {
-            // Tell the GeometryReader to be a 1:1 square so it
-            // requests `proposedWidth × proposedWidth` from its parent
-            // — matches the UIKit storyboard constraint
-            // `width:height = 1:1`.
-            hero.aspectRatio(1, contentMode: .fit)
-        }
+        // Tell the GeometryReader to be a 1:1 square so it requests
+        // `proposedWidth × proposedWidth` from its parent — matches
+        // the UIKit storyboard constraint `width:height = 1:1`. In
+        // landscape, the parent's frame caps both width AND height,
+        // so the square fits within whichever dimension is tighter.
+        hero.aspectRatio(1, contentMode: .fit)
     }
 
     // MARK: - Ingredients
