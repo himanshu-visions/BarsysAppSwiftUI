@@ -1257,20 +1257,23 @@ struct ShimmerModifier: ViewModifier {
             )
             .onAppear {
                 // `.repeatForever` on a `@State` property fires SwiftUI
-                // state updates every 1.2s cycle. On iPad + pre-iOS-26
-                // that continuous state write cascaded into layout
-                // passes on the enclosing LazyVStack → the BarBot chat
-                // scroll appeared to animate up / down on its own
-                // while the user was just looking at the tab. iPhone
-                // every version and iPad iOS 26+ (where the glass tab
-                // bar + SwiftUI 6 renderer absorb the update cleanly)
-                // keep the original repeating shimmer — visually and
-                // behaviourally bit-identical to before.
-                let isIPadPre26: Bool = {
-                    guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+                // state updates every 1.2s cycle. On every pre-iOS-26
+                // device (iPhone AND iPad) that continuous state write
+                // cascades into layout passes on the enclosing
+                // LazyVStack → the BarBot chat scroll appears to
+                // animate up / down on its own (and the bottom
+                // "Describe…" input pill placeholder visibly bounces
+                // along with it) while the user is just looking at
+                // the tab. The loop was originally reported only on
+                // iPad pre-iOS 26; QA later confirmed the same
+                // symptom on iPhone pre-iOS 26. iOS 26+ (the new
+                // SwiftUI renderer absorbs the update cleanly)
+                // keeps the original repeating shimmer — visually
+                // and behaviourally bit-identical to before.
+                let isPre26: Bool = {
                     if #available(iOS 26.0, *) { return false } else { return true }
                 }()
-                if isIPadPre26 {
+                if isPre26 {
                     // Static skeleton — phase stays at its initial
                     // `-1` so the highlight sits off-screen to the
                     // left. The skeleton tile itself still renders.
@@ -2813,18 +2816,23 @@ struct BarBotCraftView: View {
 
     /// GeometryReader that publishes the chat content's `maxY` so the
     /// "scroll to bottom" FAB can hide/show as the user scrolls. On
-    /// iPad + pre-iOS-26 the probe is replaced with `EmptyView` to
-    /// avoid a preference-key → state-write → layout-pass feedback
-    /// loop that caused the chat list to slowly scroll up and down on
-    /// its own while the user just looked at the tab. iPhone (every
-    /// iOS) and iPad iOS 26+ keep the probe and therefore the FAB.
+    /// every pre-iOS-26 device (iPhone AND iPad) the probe is replaced
+    /// with `EmptyView` to avoid a preference-key → state-write →
+    /// layout-pass feedback loop that caused the chat list (and the
+    /// bottom "Describe…" input pill) to slowly oscillate up and down
+    /// on its own while the user just looked at the tab. The loop was
+    /// originally reported on iPad pre-iOS 26 only; QA later observed
+    /// the same symptom on iPhone pre-iOS 26 (the bottom input row's
+    /// placeholder visibly bouncing) once additional state writes
+    /// started landing in the chat layout. iOS 26+ (the new SwiftUI
+    /// renderer absorbs the update cleanly) keeps the probe and
+    /// therefore the auto-hide FAB.
     @ViewBuilder
     private var barbotScrollGeometryProbe: some View {
-        let isIPadPre26: Bool = {
-            guard UIDevice.current.userInterfaceIdiom == .pad else { return false }
+        let isPre26: Bool = {
             if #available(iOS 26.0, *) { return false } else { return true }
         }()
-        if isIPadPre26 {
+        if isPre26 {
             EmptyView()
         } else {
             GeometryReader { geo in
