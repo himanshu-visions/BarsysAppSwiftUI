@@ -1784,22 +1784,148 @@ struct MainTabView: View {
                 tabItemContentBounds(in: $0)?.width
             }
             let maxContentWidth = allContentWidths.max() ?? contentInButton.width
-            let slotWidth = tabBar.bounds.width / CGFloat(items.count)
-            let safetyCap = max(slotWidth - 6, 0)
             // iPad-only: widen the selection pill by 50pt so it reads
             // as a deliberate emphasis on the larger canvas. iPhone
             // unchanged. Still capped by `safetyCap` so it can never
             // bleed into adjacent tab slots.
             let iPadWidthBump: CGFloat = UIDevice.current.userInterfaceIdiom == .pad ? 40 : 0
-            let uniformWidth = min(maxContentWidth + paddingX * 2 + iPadWidthBump, safetyCap)
+
+            // QA report 0062424 — iPhone XS (iOS < 26): selection pill
+            // (a) overlapped the adjacent tab, and (b) was narrower than
+            // the Control Center icon+title composite. Both fixes apply
+            // ONLY to iPhone on iOS < 26. iPad (any iOS) and iOS 26+
+            // keep their previous behaviour bit-identically — the
+            // function already early-returns on iOS 26+, and the iPad
+            // branch below uses the original bounds-divided math and
+            // content-midX anchor that QA signed off on for the iPad
+            // tab-bar layout.
+            let isIPhonePre26 = UIDevice.current.userInterfaceIdiom == .phone
+
+            let uniformWidth: CGFloat
+            let xAnchor: CGFloat
+            let contentInTabBar = tabBar.convert(contentInButton, from: buttons[index])
+
+            if isIPhonePre26 {
+                // iPhone branch — QA 0062424 final fix:
+                //   1. Slot ceiling reads the SMALLEST real button frame
+                //      width (not `tabBar.bounds.width / itemCount`),
+                //      since iOS sometimes leaves asymmetric leading /
+                //      trailing padding around the button stack on
+                //      narrow iPhones. The bounds-divided math then
+                //      over-estimated the slot.
+                //   2. PER-TAB sizing (each pill uses ITS OWN content
+                //      width, not the max across all tabs). A uniform
+                //      width driven by `maxContent` forced narrow-tab
+                //      pills (My Bar) to inherit Control Center's
+                //      wider sizing, which on iPhone XS pushed them
+                //      past the slot edge and into the neighbouring
+                //      tab. Per-tab sizing eliminates that
+                //      cross-pollination — each pill is now driven by
+                //      ITS OWN selected tab's content.
+                //   3. CONDITIONAL TIER-3 GROW (user request: "increase
+                //      width only when Control Center is selected").
+                //      If the selected tab's content + ideal 15pt
+                //      padding fits inside the slot safetyCap, use the
+                //      strict cap — pill stays inside the slot, no
+                //      bleed. If it DOESN'T fit (the Control Center
+                //      case on iPhone iOS < 26), grow the pill to
+                //      content + 4pt minimum padding so the icon +
+                //      title read comfortably inside the highlight.
+                //      The grow is triggered by the SELECTED tab's
+                //      content width — Home / Explore / BarBot / My
+                //      Bar all fit comfortably, so they never trigger
+                //      it; Control Center is the only tab where this
+                //      branch is active in practice.
+                //   4. X anchor uses the BUTTON's geometric midX
+                //      (not the composite's midX) so a few pixels of
+                //      composite drift can't push the pill into the
+                //      neighbouring slot. Then clamp inside the tab
+                //      bar bounds so the grown Control Center pill on
+                //      the last tab can't extend off-screen.
+                let selectedButtonInTabBar = tabBar.convert(buttons[index].bounds,
+                                                           from: buttons[index])
+                let minButtonWidth = buttons.map { $0.frame.width }.min()
+                    ?? selectedButtonInTabBar.width
+                let safetyCap = max(minButtonWidth - 6, 0)
+
+                let thisContentWidth = contentInButton.width
+                let idealWidth = thisContentWidth + paddingX * 2 + iPadWidthBump
+                let cappedToSlot = min(idealWidth, safetyCap)
+                if idealWidth > safetyCap {
+                    // Content + ideal padding overflows the slot —
+                    // grow the pill to a comfortable size that
+                    // VISIBLY contains the content with breathing
+                    // room. Currently only Control Center on iPhone
+                    // iOS < 26 hits this branch (its title is much
+                    // wider than any other tab's), so this is the
+                    // "Control Center selected → wider pill"
+                    // behaviour the user asked for.
+                    //
+                    // Two grow lower bounds, take the larger:
+                    //   • content + 10pt padding each side — gives
+                    //     comfortable margin around the icon + title
+                    //   • slot + 16pt — ensures the pill is at least
+                    //     8pt past each slot edge. This is the
+                    //     belt-and-braces guarantee: even if our
+                    //     `contentInButton.width` reading is off
+                    //     (e.g. UIKit lays out the UIImageView at a
+                    //     fixed area larger than the composite), the
+                    //     pill is STILL visibly wider than the slot
+                    //     and therefore wider than anything UIKit
+                    //     can fit inside that slot. Previous attempts
+                    //     trusted the content measurement alone and
+                    //     left the pill reading as "still smaller
+                    //     than the icon and text" — this fallback
+                    //     fixes that. The pill bleeds past the slot
+                    //     edge here; the X clamp below keeps it
+                    //     inside the tab bar's visible area.
+                    let comfortablePaddingX: CGFloat = 10
+                    let grownByContent = thisContentWidth + comfortablePaddingX * 2 + iPadWidthBump
+                    let grownBySlot = minButtonWidth + 16
+                    uniformWidth = max(safetyCap, max(grownByContent, grownBySlot))
+                } else {
+                    // Selected tab's content fits comfortably with
+                    // ideal padding — strict slot cap, no bleed.
+                    // This is the path every non-Control-Center tab
+                    // takes on iPhone iOS < 26, so their pills stay
+                    // strictly inside their own slots and never
+                    // overlap a neighbour.
+                    uniformWidth = cappedToSlot
+                }
+
+                var x = selectedButtonInTabBar.midX - uniformWidth / 2
+                // Clamp the pill inside the tab bar's visible bounds.
+                // Only matters when the tier-3 grow kicks in for the
+                // first or last tab (a centered wide pill would
+                // otherwise extend off-screen). For non-grown pills
+                // this is a no-op since they sit inside the slot.
+                let leftBound: CGFloat = 0
+                let rightBound = tabBar.bounds.width - uniformWidth
+                if rightBound >= leftBound {
+                    x = max(leftBound, min(rightBound, x))
+                }
+                xAnchor = x
+            } else {
+                // iPad branch — preserved bit-identically from the
+                // prior implementation. QA already signed off on the
+                // iPad tab-bar selection layout, so this path stays
+                // exactly as it was: bounds-divided slot, content-midX
+                // anchor, single-tier `min(content + 30, slot - 6)`
+                // width cap. The iPad-mini visual bump still flows
+                // through `iPadWidthBump` above.
+                let slotWidth = tabBar.bounds.width / CGFloat(items.count)
+                let safetyCap = max(slotWidth - 6, 0)
+                uniformWidth = min(maxContentWidth + paddingX * 2 + iPadWidthBump,
+                                   safetyCap)
+                xAnchor = contentInTabBar.midX - uniformWidth / 2
+            }
 
             // Vertical metrics still hug the SELECTED tab's content
             // bounds — top / bottom space is `paddingY` regardless of
             // which tab is active. (Vertical content height is the
             // same across all tabs in a given idiom, so this is
             // already uniform in practice.)
-            let contentInTabBar = tabBar.convert(contentInButton, from: buttons[index])
-            let x = contentInTabBar.midX - uniformWidth / 2
+            let x = xAnchor
             let w = uniformWidth
             let y = contentInTabBar.minY - paddingY
             let h = contentInTabBar.height + paddingY * 2
@@ -1950,7 +2076,26 @@ struct MainTabView: View {
 
     private static func horizontalTabImage(iconName: String,
                                            title: String) -> UIImage? {
-        let key = "\(iconName)|\(title)"
+        // QA 0062424 follow-up — the "Control Center" composite was
+        // wider than the slot on iPhone iOS < 26, which clipped the
+        // title at the right edge and (paired with the pill cap)
+        // caused both pill overlap and content overflow. Shrink ONLY
+        // the Control Center composite on iPhone iOS < 26 so it fits
+        // inside the slot with visible right-side breathing room.
+        // Every other tab + iPad (any iOS) + iOS 26+ keep their
+        // original 25pt icon / 10pt font sizing bit-identically.
+        let shrinkForNarrowIPhone: Bool = {
+            if #available(iOS 26.0, *) { return false }
+            guard UIDevice.current.userInterfaceIdiom == .phone else { return false }
+            // Only the longest title needs shrinking — currently
+            // "Control Center". "Home" / "Explore" / "My Bar" / "BarBot"
+            // all fit comfortably at the default 25pt / 10pt sizing.
+            return title == "Control Center"
+        }()
+        // Cache key carries the shrink flag so the iPhone-pre-26
+        // variant doesn't bleed into iPad / iOS-26+ paths (and vice
+        // versa) if the static cache is ever re-used across idioms.
+        let key = "\(iconName)|\(title)|\(shrinkForNarrowIPhone ? "shrunk" : "default")"
         if let cached = horizontalTabImageCache[key] { return cached }
 
         guard let icon = UIImage(named: iconName) else { return nil }
@@ -1969,14 +2114,23 @@ struct MainTabView: View {
         // path to be readable there. So this 25pt / 10pt sizing
         // remains bit-identical to the original iPhone / regular-
         // iPad / iPad Pro behaviour.)
-        let iconSize = CGSize(width: 25, height: 25)
-        let font = UIFont.systemFont(ofSize: 10, weight: .regular)
+        //
+        // QA 0062424: iPhone iOS < 26 Control Center uses 20pt icon /
+        // 9pt font to fit inside the narrow slot with right-side
+        // breathing room. Saves ~12pt vs the 25/10 sizing — enough
+        // to fit "Control Center" comfortably in the iPhone XS
+        // ~94pt slot.
+        let iconSize = shrinkForNarrowIPhone
+            ? CGSize(width: 20, height: 20)
+            : CGSize(width: 25, height: 25)
+        let font = UIFont.systemFont(ofSize: shrinkForNarrowIPhone ? 9 : 10,
+                                     weight: .regular)
         let titleAttrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: UIColor.black // recolored by .alwaysTemplate
         ]
         let titleSize = (title as NSString).size(withAttributes: titleAttrs)
-        let spacing: CGFloat = 4
+        let spacing: CGFloat = shrinkForNarrowIPhone ? 3 : 4
 
         let totalWidth = iconSize.width + spacing + ceil(titleSize.width)
         let totalHeight = max(iconSize.height, ceil(titleSize.height))
