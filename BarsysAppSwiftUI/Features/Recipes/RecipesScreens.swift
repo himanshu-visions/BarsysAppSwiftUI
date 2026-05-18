@@ -549,184 +549,169 @@ struct ExploreRecipesView: View {
         // ScrollView. Loading / empty states preserve the original
         // centred-in-viewport look via `frame(minHeight: …)` so the
         // visual is unchanged.
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
-                // iPhone-landscape branch renders the title and the
-                // search bar side-by-side on the same horizontal line
-                // — title takes its intrinsic width on the left, the
-                // search field takes the remaining space on the right.
-                // Portrait + iPad keep the original stacked VStack
-                // layout bit-identical (title on its own row above
-                // the full-width search field).
-                if isPhoneLandscape {
-                    HStack(spacing: 16) {
-                        Text("All Recipes")
-                            .font(.system(size: 24))
-                            .foregroundStyle(Color("appBlackColor"))
-                            .fixedSize(horizontal: true, vertical: false)
-                        // Search bar — shared `BarsysSearchBar`. Takes
-                        // the remaining horizontal space.
-                        BarsysSearchBar(query: $query)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 16)
-                } else {
-                    // Title — "All Recipes" 24pt, appBlackColor, leading 24, top 58.
-                    // iPad bumps to 32pt so the screen title matches the
-                    // Ready to Pour title size on the wider canvas.
-                    // iPhone unchanged.
-                    //
-                    // Top-padding bump on iPad: the inline iOS 26 nav-bar
-                    // Liquid-Glass blur overlaps the first few pixels of the
-                    // ScrollView content on the wider canvas, which made the
-                    // larger 32pt iPad title look clipped / "not coming"
-                    // (QA report). 16pt was enough on iPhone but iPad needs
-                    // the extra clearance — bumping iPad to 24pt restores
-                    // the same visible breathing room iPhone has at 16pt.
-                    // iPhone path stays at 16pt — bit-identical to before.
+        VStack(spacing: 0) {
+            // Title + search bar live OUTSIDE the ScrollView in both
+            // orientations so a long Explore Recipes list never
+            // pushes them off-screen (QA). Portrait stacks them
+            // vertically; iPhone landscape compacts the same chrome
+            // into a single side-by-side row so the search field
+            // doesn't eat the already-tight vertical space.
+            if isPhoneLandscape {
+                HStack(spacing: 16) {
                     Text("All Recipes")
-                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
+                        .font(.system(size: 24))
                         .foregroundStyle(Color("appBlackColor"))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 24)
-                        .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 16)
-
-                    // Search bar — 1:1 port of UIKit `viewSearch` + `txtSearch` +
-                    // `searchAndCloseButton` from Mixlist.storyboard scene
-                    // `Zsc-V0-6RG`. The previous inline implementation drifted
-                    // from UIKit on several axes (system SF Symbols instead of
-                    // the `exploreSearch` / `crossIcon` assets, 16pt placeholder
-                    // font instead of 14pt, white backgroundColor instead of
-                    // clear, a duplicate "×" button glued to the trailing edge).
-                    // Factored into the shared `BarsysSearchBar` — same widget
-                    // used by ExploreRecipes / Cocktail Kits / Favorites so
-                    // every UIKit search bar is pixel-identical to UIKit.
+                        .fixedSize(horizontal: true, vertical: false)
+                    // Search bar — shared `BarsysSearchBar`. Takes
+                    // the remaining horizontal space.
                     BarsysSearchBar(query: $query)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 15)
                 }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 15)
+            } else {
+                // Title — "All Recipes" 24pt, appBlackColor.
+                // iPad bumps to 32pt so the screen title matches the
+                // Ready to Pour title size on the wider canvas.
+                // iPhone unchanged.
+                Text("All Recipes")
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 16)
 
-                // Recipe list
-                //
-                // Loading-state ordering: when the catalog is fetching
-                // for the first time (`isLoading && recipes.isEmpty`)
-                // we render a shimmer skeleton mirroring the actual
-                // cell layout — UIKit parity with
-                // `ExploreRecipesViewController.showAnimatedGradientSkeleton()`.
-                // The previous SwiftUI port wrapped a `ProgressView`
-                // inside the `else` of `filtered.isEmpty`, which was
-                // dead code: while loading, `filtered` is also empty,
-                // so the user always saw "No results to display"
-                // instead of any loading indicator. Skeletons take
-                // priority over the empty-state copy now.
+                // Search bar — 1:1 port of UIKit `viewSearch` + `txtSearch` +
+                // `searchAndCloseButton` from Mixlist.storyboard scene
+                // `Zsc-V0-6RG`. The shared `BarsysSearchBar` widget is
+                // the same one used by Cocktail Kits / Favorites so
+                // every UIKit search bar is pixel-identical to UIKit.
+                BarsysSearchBar(query: $query)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 15)
+                    .padding(.bottom, 15)
+            }
+
+            ScrollView(showsIndicators: false) {
                 let cellWidth = UIScreen.main.bounds.width - 48
                 let rowHeight = cellWidth / 2
 
-                if catalog.isLoading && catalog.recipes.isEmpty {
-                    if useGridLayout {
-                        RecipeGridSkeleton(columnCount: gridColumnCount)
-                            .padding(.horizontal, 24)
-                            .padding(.top, 15)
-                            .padding(.bottom, exploreRecipesBottomInset)
-                    } else {
-                        RecipeRowSkeleton(cellHeight: rowHeight)
-                            .padding(.horizontal, 24)
-                            .padding(.top, 15)
-                            .padding(.bottom, exploreRecipesBottomInset)
-                    }
-                } else if filtered.isEmpty {
-                    // Empty-state placeholder. The actual "No results
-                    // to display" label is rendered in a `.overlay`
-                    // on the outer ScrollView (below) so it can
-                    // centre to the ENTIRE viewport — 1:1 with the
-                    // UIKit storyboard's `lblNoDataFound` whose
-                    // `centerX` + `centerY` anchors target the
-                    // screen-sized parent view `pTV-oh-f0k`, NOT the
-                    // search-bar VStack. Mixlist.storyboard ids:
-                    //   vkt-BB-aaN.centerX → pTV-oh-f0k.centerX
-                    //   vkt-BB-aaN.centerY → pTV-oh-f0k.centerY
-                    // The previous `minHeight: screen.height - 200`
-                    // hack approximated the centre but the fixed
-                    // `200` magic number drifted by device size /
-                    // safe-area shape. The overlay version is
-                    // viewport-exact on every device.
-                    Color.clear.frame(height: 1)
-                } else {
-                    let toggleHandler: (Recipe) -> Void = { recipe in
-                        let willBeFav = !env.storage.favorites().contains(recipe.id)
-                        catalog.toggleFavourite(recipeId: recipe.id)
-                        favouritesRefreshTick &+= 1
-                        // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
-                        // (FavoriteRecipeApiService.swift L300-332). UIKit
-                        // packs parent_event_id, recipe_id, recipe_name,
-                        // ingredients and conditionally deviceType/deviceId
-                        // (only when a device is connected) so the Braze
-                        // event matches the upstream `craft_begin` payload.
-                        var props: [String: Any] = [
-                            "parent_event_id": "",
-                            "recipe_id": recipe.id.value,
-                            "recipe_name": recipe.displayName,
-                            "ingredients": recipe.ingredients ?? []
-                        ]
-                        if let connected = ble.connected.first {
-                            props["deviceType"] = connected.kind.displayName
-                            props["deviceId"] = connected.name
+                VStack(spacing: 0) {
+                    // Recipe list
+                    //
+                    // Loading-state ordering: when the catalog is fetching
+                    // for the first time (`isLoading && recipes.isEmpty`)
+                    // we render a shimmer skeleton mirroring the actual
+                    // cell layout — UIKit parity with
+                    // `ExploreRecipesViewController.showAnimatedGradientSkeleton()`.
+                    // The previous SwiftUI port wrapped a `ProgressView`
+                    // inside the `else` of `filtered.isEmpty`, which was
+                    // dead code: while loading, `filtered` is also empty,
+                    // so the user always saw "No results to display"
+                    // instead of any loading indicator. Skeletons take
+                    // priority over the empty-state copy now.
+                    if catalog.isLoading && catalog.recipes.isEmpty {
+                        if useGridLayout {
+                            RecipeGridSkeleton(columnCount: gridColumnCount)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, exploreRecipesBottomInset)
+                        } else {
+                            RecipeRowSkeleton(cellHeight: rowHeight)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, exploreRecipesBottomInset)
                         }
-                        env.analytics.track(
-                            (willBeFav ? TrackEventName.favouriteRecipeAdded
-                                       : TrackEventName.favouriteRecipeRemoved).rawValue,
-                            properties: props
-                        )
-                        env.alerts.show(message: willBeFav
-                                        ? Constants.likeSuccessMessage
-                                        : Constants.unlikeSuccessMessage)
-                    }
-                    if useGridLayout {
-                        // LazyVGrid of vertical recipe cards.
-                        // iPad: 2 columns. iPhone landscape: 3 columns.
-                        // iPhone portrait keeps the LazyVStack list
-                        // below.
-                        LazyVGrid(columns: gridColumns, spacing: 16) {
-                            ForEach(filtered) { recipe in
-                                RecipeGridCell(
-                                    recipe: recipe,
-                                    onFavourite: { toggleHandler(recipe) },
-                                    onOpen: {
-                                        HapticService.light()
-                                        router.push(.recipeDetail(recipe.id))
-                                    }
-                                )
+                    } else if filtered.isEmpty {
+                        // Empty-state placeholder. The actual "No results
+                        // to display" label is rendered in a `.overlay`
+                        // on the outer ScrollView (below) so it can
+                        // centre to the ENTIRE viewport — 1:1 with the
+                        // UIKit storyboard's `lblNoDataFound` whose
+                        // `centerX` + `centerY` anchors target the
+                        // screen-sized parent view `pTV-oh-f0k`, NOT the
+                        // search-bar VStack. Mixlist.storyboard ids:
+                        //   vkt-BB-aaN.centerX → pTV-oh-f0k.centerX
+                        //   vkt-BB-aaN.centerY → pTV-oh-f0k.centerY
+                        // The previous `minHeight: screen.height - 200`
+                        // hack approximated the centre but the fixed
+                        // `200` magic number drifted by device size /
+                        // safe-area shape. The overlay version is
+                        // viewport-exact on every device.
+                        Color.clear.frame(height: 1)
+                    } else {
+                        let toggleHandler: (Recipe) -> Void = { recipe in
+                            let willBeFav = !env.storage.favorites().contains(recipe.id)
+                            catalog.toggleFavourite(recipeId: recipe.id)
+                            favouritesRefreshTick &+= 1
+                            // 1:1 with UIKit `FavoriteRecipeApiService.likeUnlikeApi`
+                            // (FavoriteRecipeApiService.swift L300-332). UIKit
+                            // packs parent_event_id, recipe_id, recipe_name,
+                            // ingredients and conditionally deviceType/deviceId
+                            // (only when a device is connected) so the Braze
+                            // event matches the upstream `craft_begin` payload.
+                            var props: [String: Any] = [
+                                "parent_event_id": "",
+                                "recipe_id": recipe.id.value,
+                                "recipe_name": recipe.displayName,
+                                "ingredients": recipe.ingredients ?? []
+                            ]
+                            if let connected = ble.connected.first {
+                                props["deviceType"] = connected.kind.displayName
+                                props["deviceId"] = connected.name
                             }
+                            env.analytics.track(
+                                (willBeFav ? TrackEventName.favouriteRecipeAdded
+                                           : TrackEventName.favouriteRecipeRemoved).rawValue,
+                                properties: props
+                            )
+                            env.alerts.show(message: willBeFav
+                                            ? Constants.likeSuccessMessage
+                                            : Constants.unlikeSuccessMessage)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 15)
-                        .padding(.bottom, exploreRecipesBottomInset)
-                    } else {
-                        LazyVStack(spacing: 0) {
-                            ForEach(filtered) { recipe in
-                                ipadAwareRowWrapper(
-                                    navigate: {
-                                        HapticService.light()
-                                        router.push(.recipeDetail(recipe.id))
-                                    }
-                                ) {
-                                    RecipeRowCell(
+                        if useGridLayout {
+                            // LazyVGrid of vertical recipe cards.
+                            // iPad: 2 columns. iPhone landscape: 3 columns.
+                            // iPhone portrait keeps the LazyVStack list
+                            // below.
+                            LazyVGrid(columns: gridColumns, spacing: 16) {
+                                ForEach(filtered) { recipe in
+                                    RecipeGridCell(
                                         recipe: recipe,
-                                        cellHeight: rowHeight,
-                                        onFavourite: { toggleHandler(recipe) }
+                                        onFavourite: { toggleHandler(recipe) },
+                                        onOpen: {
+                                            HapticService.light()
+                                            router.push(.recipeDetail(recipe.id))
+                                        }
                                     )
                                 }
                             }
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, exploreRecipesBottomInset)
+                        } else {
+                            LazyVStack(spacing: 0) {
+                                ForEach(filtered) { recipe in
+                                    ipadAwareRowWrapper(
+                                        navigate: {
+                                            HapticService.light()
+                                            router.push(.recipeDetail(recipe.id))
+                                        }
+                                    ) {
+                                        RecipeRowCell(
+                                            recipe: recipe,
+                                            cellHeight: rowHeight,
+                                            onFavourite: { toggleHandler(recipe) }
+                                        )
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, exploreRecipesBottomInset)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 15)
-                        .padding(.bottom, exploreRecipesBottomInset)
                     }
                 }
             }
-        }
-        .refreshable {
-            await catalog.refresh()
+            .refreshable {
+                await catalog.refresh()
+            }
         }
         // 1:1 with UIKit `lblNoDataFound` (Mixlist.storyboard
         // vkt-BB-aaN) whose `centerX` + `centerY` anchors target the

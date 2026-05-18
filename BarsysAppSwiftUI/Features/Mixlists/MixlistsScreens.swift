@@ -160,142 +160,141 @@ struct MixlistListView: View {
         // VStack rows OUTSIDE the ScrollView, which left the bar with
         // no material to blur through and produced the "black
         // transparent" pill the user reported on Cocktail Kits.
-        ScrollView(showsIndicators: false) {
-            // Compute deterministic row geometry ONCE per layout so
-            // every row in the LazyVStack reports the same size on
-            // first render — eliminates the scroll-zoom artefact.
-            //   • Page horizontal padding: 24pt left + 24pt right = 48
-            //   • Cell width = screen width − 48
-            //   • Image (square) = 50% of cell width  ⇒  cell height
-            //     = cell width / 2.
-            let cellWidth = UIScreen.main.bounds.width - 48
-            let rowHeight = cellWidth / 2
-
-            VStack(spacing: 0) {
-                // iPhone-landscape branch renders the title and the
-                // search bar side-by-side on the same horizontal line —
-                // the wider canvas leaves the title's natural width
-                // (~155pt) and gives the rest to the search field.
-                // Portrait + iPad keep the original stacked VStack
-                // layout bit-identical (title on its own row above
-                // the full-width search field).
-                if isPhoneLandscape {
-                    HStack(spacing: 16) {
-                        Text("Cocktail Kits")
-                            .font(.system(size: 24))
-                            .foregroundStyle(Color("appBlackColor"))
-                            .fixedSize(horizontal: true, vertical: false)
-                        BarsysSearchBar(query: $query)
-                    }
+        VStack(spacing: 0) {
+            // Title + search bar live OUTSIDE the ScrollView in both
+            // orientations so a long Cocktail Kits list never pushes
+            // them off-screen (QA). Portrait stacks them vertically;
+            // iPhone landscape compacts the same chrome into a single
+            // side-by-side row so the search field doesn't eat the
+            // already-tight vertical space.
+            if isPhoneLandscape {
+                HStack(spacing: 16) {
+                    Text("Cocktail Kits")
+                        .font(.system(size: 24))
+                        .foregroundStyle(Color("appBlackColor"))
+                        .fixedSize(horizontal: true, vertical: false)
+                    BarsysSearchBar(query: $query)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 15)
+            } else {
+                // Title — "Cocktail Kits" 24pt, appBlackColor.
+                // iPad bumps to 32pt so the screen title matches the
+                // Ready to Pour title size on the wider canvas.
+                // iPhone unchanged.
+                Text("Cocktail Kits")
+                    .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
+                    .foregroundStyle(Color("appBlackColor"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
-                } else {
-                    // Title — "Cocktail Kits" 24pt, appBlackColor.
-                    // iPad bumps to 32pt so the screen title matches the
-                    // Ready to Pour title size on the wider canvas.
-                    // iPhone unchanged.
-                    Text("Cocktail Kits")
-                        .font(.system(size: UIDevice.current.userInterfaceIdiom == .pad ? 32 : 24))
-                        .foregroundStyle(Color("appBlackColor"))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 16)
 
-                    // Search bar — uses shared `BarsysSearchBar` for 1:1 UIKit
-                    // parity with `viewSearch` + `txtSearch` + `searchAndCloseButton`
-                    // (Mixlist.storyboard scene `Q4y-Gs-Lbh`). Replaces the
-                    // previous inline implementation which used SF Symbols
-                    // instead of the `exploreSearch` / `crossIcon` assets, a
-                    // 16pt placeholder font instead of 14pt, and a white
-                    // background instead of the UIKit transparent container.
-                    BarsysSearchBar(query: $query)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 15)
-                }
+                // Search bar — uses shared `BarsysSearchBar` for 1:1 UIKit
+                // parity with `viewSearch` + `txtSearch` + `searchAndCloseButton`
+                // (Mixlist.storyboard scene `Q4y-Gs-Lbh`). Replaces the
+                // previous inline implementation which used SF Symbols
+                // instead of the `exploreSearch` / `crossIcon` assets, a
+                // 16pt placeholder font instead of 14pt, and a white
+                // background instead of the UIKit transparent container.
+                BarsysSearchBar(query: $query)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 15)
+                    .padding(.bottom, 15)
+            }
 
-                // Mixlist list
-                //
-                // Loading-state ordering: when the catalog is fetching
-                // for the first time (`isLoading && mixlists.isEmpty`)
-                // we render a shimmer skeleton mirroring the actual
-                // cell layout — UIKit parity with
-                // `MixlistViewController.showAnimatedGradientSkeleton()`.
-                // The previous SwiftUI port wrapped a `ProgressView`
-                // inside the `else` of `filtered.isEmpty`, which was
-                // dead code: while loading, `filtered` is also empty,
-                // so the user always saw "No results to display"
-                // instead of any loading indicator. Skeletons take
-                // priority over the empty-state copy now.
-                if catalog.isLoading && catalog.mixlists.isEmpty {
-                    if useGridLayout {
-                        MixlistGridSkeleton(columnCount: gridColumnCount)
-                            .padding(.horizontal, 24)
-                            .padding(.top, 15)
-                            .padding(.bottom, mixlistListBottomInset)
-                    } else {
-                        MixlistRowSkeleton(cellHeight: rowHeight)
-                            .padding(.horizontal, 24)
-                            .padding(.top, 15)
-                            .padding(.bottom, mixlistListBottomInset)
-                    }
-                } else if filtered.isEmpty {
-                    // Empty-state placeholder. The actual "No results
-                    // to display" label is rendered in a `.overlay`
-                    // on the outer ScrollView so it can centre to the
-                    // ENTIRE viewport (1:1 with the UIKit storyboard's
-                    // `lblNoDataFound` whose `centerX` + `centerY`
-                    // anchors target the screen-sized parent view
-                    // `tHT-Xs-fi8`, NOT the search-bar VStack).
-                    // Mixlist.storyboard ids:
-                    //   GHK-w1-xBP.centerX → tHT-Xs-fi8.centerX
-                    //   GHK-w1-xBP.centerY → tHT-Xs-fi8.centerY
-                    // The previous `padding(.top, 80)` glued the label
-                    // 80pt below the search bar — visibly off-centre
-                    // on every screen size.
-                    Color.clear.frame(height: 1)
-                } else {
-                    if useGridLayout {
-                        // LazyVGrid of vertical mixlist cards — iPad: 2
-                        // columns; iPhone landscape: 3 columns. Cocktail
-                        // Kits doesn't have favourite or craft buttons
-                        // (UIKit hides them on this listing) — taps push
-                        // the mixlist detail. iPhone portrait keeps the
-                        // LazyVStack single-column list below.
-                        LazyVGrid(columns: gridColumns, spacing: 16) {
-                            ForEach(filtered) { mixlist in
-                                Button {
-                                    HapticService.light()
-                                    router.push(.mixlistDetail(mixlist.id))
-                                } label: {
-                                    MixlistGridCell(mixlist: mixlist)
-                                }
-                                .buttonStyle(.plain)
-                            }
+            ScrollView(showsIndicators: false) {
+                // Compute deterministic row geometry ONCE per layout so
+                // every row in the LazyVStack reports the same size on
+                // first render — eliminates the scroll-zoom artefact.
+                //   • Page horizontal padding: 24pt left + 24pt right = 48
+                //   • Cell width = screen width − 48
+                //   • Image (square) = 50% of cell width  ⇒  cell height
+                //     = cell width / 2.
+                let cellWidth = UIScreen.main.bounds.width - 48
+                let rowHeight = cellWidth / 2
+
+                VStack(spacing: 0) {
+                    // Mixlist list
+                    //
+                    // Loading-state ordering: when the catalog is fetching
+                    // for the first time (`isLoading && mixlists.isEmpty`)
+                    // we render a shimmer skeleton mirroring the actual
+                    // cell layout — UIKit parity with
+                    // `MixlistViewController.showAnimatedGradientSkeleton()`.
+                    // The previous SwiftUI port wrapped a `ProgressView`
+                    // inside the `else` of `filtered.isEmpty`, which was
+                    // dead code: while loading, `filtered` is also empty,
+                    // so the user always saw "No results to display"
+                    // instead of any loading indicator. Skeletons take
+                    // priority over the empty-state copy now.
+                    if catalog.isLoading && catalog.mixlists.isEmpty {
+                        if useGridLayout {
+                            MixlistGridSkeleton(columnCount: gridColumnCount)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, mixlistListBottomInset)
+                        } else {
+                            MixlistRowSkeleton(cellHeight: rowHeight)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, mixlistListBottomInset)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 15)
-                        .padding(.bottom, mixlistListBottomInset)
+                    } else if filtered.isEmpty {
+                        // Empty-state placeholder. The actual "No results
+                        // to display" label is rendered in a `.overlay`
+                        // on the outer ScrollView so it can centre to the
+                        // ENTIRE viewport (1:1 with the UIKit storyboard's
+                        // `lblNoDataFound` whose `centerX` + `centerY`
+                        // anchors target the screen-sized parent view
+                        // `tHT-Xs-fi8`, NOT the search-bar VStack).
+                        // Mixlist.storyboard ids:
+                        //   GHK-w1-xBP.centerX → tHT-Xs-fi8.centerX
+                        //   GHK-w1-xBP.centerY → tHT-Xs-fi8.centerY
+                        // The previous `padding(.top, 80)` glued the label
+                        // 80pt below the search bar — visibly off-centre
+                        // on every screen size.
+                        Color.clear.frame(height: 1)
                     } else {
-                        LazyVStack(spacing: 0) {
-                            ForEach(filtered) { mixlist in
-                                Button {
-                                    HapticService.light()
-                                    router.push(.mixlistDetail(mixlist.id))
-                                } label: {
-                                    MixlistRowCell(mixlist: mixlist, cellHeight: rowHeight)
+                        if useGridLayout {
+                            // LazyVGrid of vertical mixlist cards — iPad: 2
+                            // columns; iPhone landscape: 3 columns. Cocktail
+                            // Kits doesn't have favourite or craft buttons
+                            // (UIKit hides them on this listing) — taps push
+                            // the mixlist detail. iPhone portrait keeps the
+                            // LazyVStack single-column list below.
+                            LazyVGrid(columns: gridColumns, spacing: 16) {
+                                ForEach(filtered) { mixlist in
+                                    Button {
+                                        HapticService.light()
+                                        router.push(.mixlistDetail(mixlist.id))
+                                    } label: {
+                                        MixlistGridCell(mixlist: mixlist)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, mixlistListBottomInset)
+                        } else {
+                            LazyVStack(spacing: 0) {
+                                ForEach(filtered) { mixlist in
+                                    Button {
+                                        HapticService.light()
+                                        router.push(.mixlistDetail(mixlist.id))
+                                    } label: {
+                                        MixlistRowCell(mixlist: mixlist, cellHeight: rowHeight)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, mixlistListBottomInset)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 15)
-                        .padding(.bottom, mixlistListBottomInset)
                     }
                 }
             }
-        }
-        .refreshable {
-            await catalog.refresh()
+            .refreshable {
+                await catalog.refresh()
+            }
         }
         // 1:1 with UIKit `lblNoDataFound` (Mixlist.storyboard
         // GHK-w1-xBP) whose `centerX` + `centerY` anchors target the
