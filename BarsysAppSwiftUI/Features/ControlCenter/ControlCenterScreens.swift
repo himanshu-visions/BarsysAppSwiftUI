@@ -3503,7 +3503,14 @@ struct StationsMenuView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
+        // 24pt horizontal padding to match the StationSelectorCard
+        // and "Stations Menu" title above (both at 24pt). Previously
+        // 16pt, which on iPhone landscape (where the screen is much
+        // wider) made the bottom buttons visibly overhang the card
+        // by 8pt on each side — left button sat to the left of the
+        // card's leading edge, right button to the right of its
+        // trailing edge. Vertical padding unchanged.
+        .padding(.horizontal, 24)
         .padding(.bottom, 16)
         .padding(.top, 8)
         .background(
@@ -5527,7 +5534,12 @@ struct StationCleaningView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
+        // 24pt horizontal padding to match the StationSelectorCard,
+        // table rows and "Clean Stations" title above (all at 24pt).
+        // Previously 16pt, which on iPhone landscape made the bottom
+        // buttons visibly overhang the card by 8pt on each side.
+        // Vertical padding unchanged.
+        .padding(.horizontal, 24)
         .padding(.bottom, 16)
         .padding(.top, 8)
         .background(
