@@ -486,12 +486,21 @@ final class MyProfileViewModel: ObservableObject {
         guard var req = authorizedRequest(path: Self.profilePath, method: "PATCH") else {
             return false
         }
-        let params: [String: String] = [
-            "full_name":       fullName,
-            "email":           email,
-            "profile_picture": base64String,
-            "date_of_birth":   dobStr
+        var params: [String: String] = [
+            "full_name":     fullName,
+            "email":         email,
+            "date_of_birth": dobStr
         ]
+        // Only include `profile_picture` when a NEW image was actually
+        // picked — UIKit's "text-only PATCH" branch (see condition
+        // above) sends the request WITHOUT the picture field. Sending
+        // an empty string makes the server overwrite the stored
+        // avatar with an empty/black image, which then surfaces as a
+        // black profile circle after the next reload (QA: "profile
+        // image goes black after just editing name + Update").
+        if !base64String.isEmpty {
+            params["profile_picture"] = base64String
+        }
         req.httpBody = try? JSONSerialization.data(withJSONObject: params,
                                                    options: [.prettyPrinted])
 
