@@ -1674,6 +1674,7 @@ private struct RecommendedRecipeCard: View {
 
                 thumbnail
                     .frame(width: imageWidth, height: cardHeight)
+                    .background(Color("lightBorderGrayColor"))
                     .clipped()
             }
 
