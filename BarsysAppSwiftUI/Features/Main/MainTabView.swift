@@ -1801,7 +1801,13 @@ struct MainTabView: View {
             // tab-bar layout.
             let isIPhonePre26 = UIDevice.current.userInterfaceIdiom == .phone
 
-            let uniformWidth: CGFloat
+            // `var` (not `let`) so the iPhone branch can re-tighten the
+            // resolved width for individual tabs after the primary
+            // if-else (e.g. the My Bar slot-cap + cosmetic trim below).
+            // Both branches still initialise it exactly once on the
+            // primary path; the subsequent reassignments are explicit
+            // and tab-scoped.
+            var uniformWidth: CGFloat
             let xAnchor: CGFloat
             let contentInTabBar = tabBar.convert(contentInButton, from: buttons[index])
 
@@ -1893,6 +1899,37 @@ struct MainTabView: View {
                     uniformWidth = cappedToSlot
                 }
 
+                // QA — My Bar pill on iPhone iOS < 26 MUST NOT touch
+                // the adjacent Control Center tab. The grow branch
+                // above intentionally produces a pill wider than the
+                // slot's `safetyCap` (correct for "Control Center"
+                // itself — last tab, no neighbour to the right — but
+                // wrong for the My Bar tab whose right neighbour IS
+                // Control Center). For My Bar specifically:
+                //
+                //   1. Hard-cap to `safetyCap` (= minButtonWidth - 6)
+                //      so the pill stays strictly inside My Bar's
+                //      own slot with a 3pt margin on each side
+                //      against the neighbouring button frames — no
+                //      bleed onto Control Center, no bleed onto
+                //      Explore.
+                //   2. Then apply a 10pt cosmetic trim so the pill
+                //      hugs the My Bar icon+title visibly tighter
+                //      than the safety boundary (the user asked
+                //      "make the selection view little smaller for
+                //      my bar").
+                //
+                // Scoped strictly to:
+                //   • iPhone idiom + iOS < 26     (this branch only)
+                //   • index == AppTab.myBar       (this tab only)
+                // iPad (any iOS), iOS 26+ (any device), and every
+                // OTHER iPhone iOS < 26 tab continue to read the
+                // exact `uniformWidth` resolved above bit-identically.
+                if index == AppTab.myBar.rawValue {
+                    uniformWidth = min(uniformWidth, safetyCap)
+                    let myBarTrim: CGFloat = 5
+                    uniformWidth = max(uniformWidth - myBarTrim, 0)
+                }
                 var x = selectedButtonInTabBar.midX - uniformWidth / 2
                 // Clamp the pill inside the tab bar's visible bounds.
                 // Only matters when the tier-3 grow kicks in for the
