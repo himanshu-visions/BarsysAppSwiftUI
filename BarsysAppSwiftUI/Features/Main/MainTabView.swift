@@ -122,6 +122,18 @@ struct MainTabView: View {
     /// comes back to foreground.
     @Environment(\.scenePhase) private var scenePhase
 
+    /// SwiftUI vertical size class — `.compact` on iPhone in LANDSCAPE,
+    /// `.regular` otherwise. Drives `tabLabel(_:connected:)`'s
+    /// compact-composite dispatch on iPhone iOS < 26 landscape:
+    /// landscape passes `compact: true` to `horizontalTabImage(...)`,
+    /// which produces a larger 30pt-icon / 14pt-font composite so the
+    /// tab bar content reads at a comfortable size in landscape
+    /// (QA: "content is looking very smaller for tab bar in
+    /// landscape — fix this"). Portrait passes `compact: false` and
+    /// keeps the historical 25/10 (or shrunk 20/9 for Control
+    /// Center) composite bit-identically — no portrait impact.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     /// Intercepts tab-bar taps so EVERY user tap on the tab bar pops
     /// the target tab's NavigationStack back to its root — matching
     /// the requested behaviour: "tap Explore from any other tab and
@@ -280,7 +292,99 @@ struct MainTabView: View {
             }
             .applyIOSLessThan26TabBarLift()
             .tint(Theme.Color.brand)
+            // QA fix (iPhone iOS < 26 rotation): synchronous SwiftUI-
+            // level safety net for the stale-title bug. When the
+            // user rotates LANDSCAPE → PORTRAIT, .tabItem flips
+            // from `Label` (compact) to bare `Image` (regular) and
+            // SwiftUI's bridge may leave a stale title on the
+            // UITabBarItem. `.onChange(of: verticalSizeClass)` fires
+            // immediately at the env flip, so we can clear titles in
+            // the SAME runloop turn — before UIKit composites the
+            // stale state to screen. The bounds-KVO and orientation-
+            // observer passes inside `setupCustomSelectionViewIfNeeded`
+            // are slower fallbacks. The helper is scope-guarded so
+            // iPad / iOS 26+ / iPhone landscape paths are bit-
+            // identical no-ops here.
+            .onChange(of: verticalSizeClass) { newValue in
+                // Sync titles on EITHER direction — the helper
+                // proactively writes the correct title for the
+                // current orientation (nil in portrait composite
+                // mode, AppTab.title in landscape Label mode). Then
+                // force a layout pass and reposition the pill so it
+                // adapts to the new orientation's content width and
+                // slot geometry (QA: "tab selection view position
+                // and width did not update on landscape").
+                _ = newValue  // suppress unused warning
+                DispatchQueue.main.async {
+                    if let bar = Self.observedTabBar {
+                        Self.syncTabBarTitlesForCurrentOrientation(in: bar)
+                        bar.setNeedsLayout()
+                        bar.layoutIfNeeded()
+                        Self.positionSelectionView(in: bar,
+                                                   atIndex: Self.lastKnownSelectedIndex,
+                                                   animated: false)
+                    }
+                }
+            }
+            // QA fix — BLE state change (connect / disconnect) flips
+            // the 4th tab's content (Control Center ↔ Home). SwiftUI's
+            // `.tabItem` bridge sometimes drops the title update on
+            // that swap, leaving "only images, no titles" in
+            // landscape (QA: "after disconnection it shows only
+            // images in landscape"). Updating the static cache lets
+            // the sync helper resolve the 4th tab's title without
+            // instance access, then we trigger an explicit sync.
+            // No-op in portrait (composite mode → titles nil
+            // anyway), on iPad, and on iOS 26+.
+            .onChange(of: ble.isAnyDeviceConnected) { newConnected in
+                Self.lastKnownBLEConnected = newConnected
+                DispatchQueue.main.async {
+                    if let bar = Self.observedTabBar {
+                        // Sync titles → force layout → reposition
+                        // the pill. The 4th tab's title swap
+                        // (Control Center ↔ Home) changes the
+                        // selected content's width, so the pill must
+                        // re-measure and re-center to hug the new
+                        // text. Without the reposition the pill
+                        // remains at the pre-swap width and looks
+                        // off-center on the new title.
+                        Self.syncTabBarTitlesForCurrentOrientation(in: bar)
+                        bar.setNeedsLayout()
+                        bar.layoutIfNeeded()
+                        Self.positionSelectionView(in: bar,
+                                                   atIndex: Self.lastKnownSelectedIndex,
+                                                   animated: true)
+                    }
+                    // The bridge update for the 4th tab may also
+                    // happen on the NEXT runloop tick if the body
+                    // re-evaluation is deferred; schedule a second
+                    // sync + reposition to catch that window.
+                    // Idempotent — no work in the steady state.
+                    DispatchQueue.main.async {
+                        if let bar = Self.observedTabBar {
+                            Self.syncTabBarTitlesForCurrentOrientation(in: bar)
+                            bar.setNeedsLayout()
+                            bar.layoutIfNeeded()
+                            Self.positionSelectionView(in: bar,
+                                                       atIndex: Self.lastKnownSelectedIndex,
+                                                       animated: false)
+                        }
+                    }
+                }
+            }
             .onAppear {
+                // Seed the static BLE cache SYNCHRONOUSLY before any
+                // other setup. SwiftUI's `.onChange(of:)` only fires
+                // on subsequent value changes — never on the initial
+                // value — so a user who launches the app already
+                // connected would otherwise leave the cache at its
+                // default `false`, causing the static sync helper to
+                // write "Home" instead of "Control Center" to the
+                // 4th tab item in landscape (QA: "in portrait it
+                // shows Control Center but in landscape it shows
+                // Home"). With this synchronous seed the cache is
+                // correct from the very first hook call.
+                Self.lastKnownBLEConnected = ble.isAnyDeviceConnected
                 configureAppearance()
                 wireBLECallbacks()
                 // 1:1 port of UIKit `TabBarViewController.viewDidAppear`
@@ -690,12 +794,54 @@ struct MainTabView: View {
             if #available(iOS 26.0, *) {
                 return tab != .homeOrControlCenter
             } else {
-                return true  // every tab uses the composite on iOS < 26
+                // QA — iPhone LANDSCAPE iOS < 26: fall back to native
+                // `Label` rendering. UIKit's `compactInlineLayoutAppearance`
+                // clamps the composite image to a tiny icon slot
+                // regardless of source dimensions — the QA-reported
+                // "content not visible in landscape". UIKit's compact
+                // inline layout DOES render a separate icon + title
+                // text natively at readable sizes when fed a normal
+                // image + title (not a pre-baked composite). Falling
+                // back to native Label rendering on iPhone landscape
+                // (the same path iPad mini takes via its own bypass)
+                // lets UIKit handle the inline layout at its natural
+                // compact-mode sizes. The post-rotation title-clear
+                // hook in `setupCustomSelectionViewIfNeeded` prevents
+                // SwiftUI's bridge from leaving a stale Label-mode
+                // title on the UITabBarItem when rotating back to
+                // portrait. Scoped strictly to iPhone + .compact
+                // vSize on iOS < 26 — iPad and portrait paths
+                // continue with the composite bit-identically.
+                if UIDevice.current.userInterfaceIdiom == .phone,
+                   verticalSizeClass == .compact {
+                    return false
+                }
+                return true
             }
         }()
 
+        // iPhone iOS < 26 LANDSCAPE serves the COMPACT composite (30pt
+        // icon / 14pt font / 5pt spacing — see `horizontalTabImage`
+        // for the dispatch). The default 25pt composite was reading
+        // as "very small" in landscape per QA — the compact variant
+        // is intentionally LARGER than portrait so even after any
+        // UIKit compact-mode height clamping the rendered content is
+        // visibly bigger than the historical landscape rendering.
+        // Every other path passes `compact: false` and receives the
+        // historical default (25/10) or shrunk (20/9) composite bit-
+        // identically — iPad (any iOS, any orientation), iOS 26+ (any
+        // device), and iPhone PORTRAIT iOS < 26 stay pixel-for-pixel
+        // the same.
+        let compactComposite: Bool = {
+            if #available(iOS 26.0, *) { return false }
+            guard UIDevice.current.userInterfaceIdiom == .phone else { return false }
+            return verticalSizeClass == .compact
+        }()
+
         if useComposite,
-           let composite = Self.horizontalTabImage(iconName: imageName, title: title) {
+           let composite = Self.horizontalTabImage(iconName: imageName,
+                                                   title: title,
+                                                   compact: compactComposite) {
             Image(uiImage: composite)
                 .renderingMode(.template)
         } else if Self.isIPadMini,
@@ -821,7 +967,6 @@ struct MainTabView: View {
                 ?? UIColor.systemBackground
         }
         appearance.backgroundEffect = nil
-
         // Dynamic UIColor providers — light variants are bit-identical
         // to the historical hard-coded `UIColor.black(...)` values, so
         // the tab bar renders the EXACT same pixels in light mode as
@@ -1266,6 +1411,16 @@ struct MainTabView: View {
     /// (homeOrControlCenter / index 3).
     private static var lastKnownSelectedIndex: Int = 3
 
+    /// Static cache mirroring `ble.isAnyDeviceConnected` so the
+    /// static `syncTabBarTitlesForCurrentOrientation` helper (called
+    /// from KVO / rotation observer / SwiftUI `.onChange` hooks) can
+    /// resolve the 4th tab's title ("Home" vs "Control Center")
+    /// without needing instance access to `ble`. Kept in sync via the
+    /// `.onChange(of: ble.isAnyDeviceConnected)` modifier on the
+    /// TabView and the initial seed inside
+    /// `setupCustomSelectionViewIfNeeded`.
+    private static var lastKnownBLEConnected: Bool = false
+
     /// Resolves the y-translation offset used to lift the tab bar off
     /// the bottom edge on iOS < 26.
     ///
@@ -1543,10 +1698,19 @@ struct MainTabView: View {
                 Self.pendingPostRotationReposition?.cancel()
                 let work = DispatchWorkItem { [weak observedBar] in
                     guard let bar = observedBar else { return }
-                    // Force a final layout pass and then snap the pill
-                    // to the correct tab. By 0.55s the iPad rotation
-                    // animation has fully completed and the button
-                    // frames are at their final post-rotation values.
+                    // ORDER MATTERS: sync titles FIRST so UIKit knows
+                    // the correct content per tab item, then force a
+                    // layout pass so the underlying UILabel /
+                    // UIImageView frames update for the new titles,
+                    // and FINALLY read those settled frames to
+                    // position the pill. The previous order
+                    // (position → sync) left the pill sized against
+                    // stale content bounds (no title yet for a
+                    // landscape Label item, or stale Label width
+                    // after a connect/disconnect title swap), so the
+                    // pill landed at the wrong size + position until
+                    // the next layout invalidation.
+                    Self.syncTabBarTitlesForCurrentOrientation(in: bar)
                     bar.setNeedsLayout()
                     bar.layoutIfNeeded()
                     Self.positionSelectionView(in: bar,
@@ -1591,6 +1755,16 @@ struct MainTabView: View {
                     // path AFTER the layout had naturally completed
                     // in the next runloop tick — now we just force
                     // that ordering up-front.
+                    // ORDER MATTERS: sync titles BEFORE positioning
+                    // the pill. Writing titles changes the underlying
+                    // UILabel content/width which UIKit re-lays-out
+                    // inside the following `layoutIfNeeded()` pass —
+                    // so the pill's `tabItemContentBounds` read picks
+                    // up the new icon+label union. The previous
+                    // ordering (position → sync) left the pill
+                    // measuring against stale content and landing at
+                    // the wrong width / position after rotation.
+                    Self.syncTabBarTitlesForCurrentOrientation(in: obs)
                     obs.setNeedsLayout()
                     obs.layoutIfNeeded()
                     // Use the CACHED last-known-selected index instead
@@ -1624,6 +1798,14 @@ struct MainTabView: View {
                     // is a no-op against an identical frame.
                     DispatchQueue.main.async { [weak obs] in
                         guard let obs else { return }
+                        // Sync FIRST (catch any late bridge writes
+                        // deferred to this runloop), force layout,
+                        // THEN reposition the pill against the
+                        // settled frames. Same ordering as the
+                        // immediate pass above.
+                        Self.syncTabBarTitlesForCurrentOrientation(in: obs)
+                        obs.setNeedsLayout()
+                        obs.layoutIfNeeded()
                         Self.positionSelectionView(in: obs,
                                                    atIndex: Self.lastKnownSelectedIndex,
                                                    animated: false)
@@ -1651,12 +1833,129 @@ struct MainTabView: View {
         // launch (like deep-link to Explore) positioning the pill
         // back at homeOrControlCenter.
         Self.lastKnownSelectedIndex = router.selectedTab.rawValue
+        // Seed the BLE connected cache so the static title-sync
+        // helper resolves the 4th tab's title correctly from the
+        // very first call — without this, the cache stays at its
+        // default `false` until the user connects a device, so any
+        // rotation while connected would briefly write "Home"
+        // instead of "Control Center" into the 4th tab item.
+        Self.lastKnownBLEConnected = ble.isAnyDeviceConnected
+        // ORDER MATTERS: sync titles FIRST so UIKit knows the right
+        // content per tab item, force a layout pass so the
+        // UILabel / UIImageView frames reflect the new titles, then
+        // position the pill against the settled content bounds.
         // Initial position — UIKit calls `moveSelectionView(animated: false)`
         // from `setupSelectionView()` so the pill snaps to the current
         // tab without animating from (0,0).
+        Self.syncTabBarTitlesForCurrentOrientation(in: tabBar)
+        tabBar.setNeedsLayout()
+        tabBar.layoutIfNeeded()
         Self.positionSelectionView(in: tabBar,
                                    atIndex: router.selectedTab.rawValue,
                                    animated: false)
+    }
+
+    /// Clears `UITabBarItem.title` on every tab item when iPhone is in
+    /// PORTRAIT on iOS < 26. The portrait path of
+    /// `tabLabel(_:connected:)` renders just `Image(uiImage:
+    /// composite)` (icon + title baked together in one template
+    /// image) — no SwiftUI `Text`, so the UITabBarItem SHOULD reach
+    /// UIKit with `title = nil`. But after rotating LANDSCAPE →
+    /// PORTRAIT on iPhone iOS < 26, SwiftUI's `.tabItem` bridge
+    /// appears to leave the stale title from the previous landscape
+    /// `Label`'s `Text(title)` ("Explore" / "My Bar" / …) on the
+    /// UITabBarItem.title field — UIKit then draws BOTH the composite
+    /// (with its baked-in title) AND that stale separate title,
+    /// producing a doubled appearance after rotation.
+    ///
+    /// SCOPE — strictly iPhone idiom + iOS < 26 + `.regular`
+    /// verticalSizeClass (portrait). Every other path early-returns
+    /// without touching ANY UITabBarItem:
+    ///   • iOS 26+ (any device, any orientation) — bit-identical no-op
+    ///   • iPad (any iOS, any orientation)       — bit-identical no-op
+    ///   • iPhone LANDSCAPE iOS < 26             — Label path needs
+    ///                                             the title; clearing
+    ///                                             here would erase
+    ///                                             the user-visible
+    ///                                             tab labels.
+    ///
+    /// Idempotent — only writes `nil` when the existing title is
+    /// non-nil, so repeated invocation across rotation / KVO / mount
+    /// hooks costs nothing in the steady state.
+    private static func syncTabBarTitlesForCurrentOrientation(in tabBar: UITabBar) {
+        if #available(iOS 26.0, *) { return }
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+
+        // Resolve "is the device CURRENTLY in landscape?" from the
+        // window scene's `interfaceOrientation`. UIKit updates this
+        // synchronously at the start of a rotation, before SwiftUI's
+        // body re-evaluates and before UIKit propagates the new
+        // vSize trait down to the tab bar — so it's lag-free
+        // compared to `traitCollection.verticalSizeClass`. We then
+        // proactively WRITE the desired title onto every
+        // UITabBarItem rather than only reactively clearing — this
+        // catches the QA-reported case where SwiftUI's `.tabItem`
+        // bridge drops the title update on a BLE state change
+        // (Control Center ↔ Home) and leaves the user staring at
+        // images-only in landscape. Writing both image and title
+        // exactly when we know what they should be makes this fully
+        // resilient to bridge timing.
+        let isLandscape: Bool
+        if let scene = tabBar.window?.windowScene {
+            isLandscape = scene.interfaceOrientation.isLandscape
+        } else {
+            // Defensive fallback when window/scene aren't available.
+            let deviceOrient = UIDevice.current.orientation
+            if deviceOrient.isLandscape {
+                isLandscape = true
+            } else if deviceOrient.isPortrait {
+                isLandscape = false
+            } else {
+                // Truly unknown — skip rather than risk stomping.
+                return
+            }
+        }
+
+        // Walk up the responder chain to the UITabBarController whose
+        // tab bar this is. The walk terminates at the window scene
+        // (bounded), so there's no risk of an infinite loop.
+        var responder: UIResponder? = tabBar.next
+        while let r = responder {
+            if let tbc = r as? UITabBarController,
+               let vcs = tbc.viewControllers {
+                for (idx, vc) in vcs.enumerated() {
+                    let desiredTitle: String?
+                    if isLandscape {
+                        // Label-mode tab items each need their own
+                        // title. The 4th tab swaps based on cached
+                        // BLE state — kept in sync via the
+                        // `.onChange(of: ble.isAnyDeviceConnected)`
+                        // hook on the TabView and the initial seed
+                        // inside `setupCustomSelectionViewIfNeeded`.
+                        guard let tab = AppTab(rawValue: idx) else {
+                            continue
+                        }
+                        if tab == .homeOrControlCenter,
+                           Self.lastKnownBLEConnected {
+                            desiredTitle = "Control Center"
+                        } else {
+                            desiredTitle = tab.title
+                        }
+                    } else {
+                        // Portrait composite mode — UITabBarItem
+                        // should reach UIKit with `title = nil`
+                        // because the icon image already has the
+                        // title baked into its bitmap.
+                        desiredTitle = nil
+                    }
+                    if vc.tabBarItem.title != desiredTitle {
+                        vc.tabBarItem.title = desiredTitle
+                    }
+                }
+                return
+            }
+            responder = r.next
+        }
     }
 
     /// 1:1 port of UIKit `moveSelectionView(to:animated:)`, with one
@@ -2112,7 +2411,8 @@ struct MainTabView: View {
     }
 
     private static func horizontalTabImage(iconName: String,
-                                           title: String) -> UIImage? {
+                                           title: String,
+                                           compact: Bool = false) -> UIImage? {
         // QA 0062424 follow-up — the "Control Center" composite was
         // wider than the slot on iPhone iOS < 26, which clipped the
         // title at the right edge and (paired with the pill cap)
@@ -2129,10 +2429,18 @@ struct MainTabView: View {
             // all fit comfortably at the default 25pt / 10pt sizing.
             return title == "Control Center"
         }()
-        // Cache key carries the shrink flag so the iPhone-pre-26
-        // variant doesn't bleed into iPad / iOS-26+ paths (and vice
-        // versa) if the static cache is ever re-used across idioms.
-        let key = "\(iconName)|\(title)|\(shrinkForNarrowIPhone ? "shrunk" : "default")"
+        // Cache key carries the size mode so each variant
+        // (default / shrunk / compact) caches independently and the
+        // iPhone-pre-26 paths don't bleed into iPad / iOS-26+ paths.
+        let sizeMode: String
+        if compact {
+            sizeMode = "compact"
+        } else if shrinkForNarrowIPhone {
+            sizeMode = "shrunk"
+        } else {
+            sizeMode = "default"
+        }
+        let key = "\(iconName)|\(title)|\(sizeMode)"
         if let cached = horizontalTabImageCache[key] { return cached }
 
         guard let icon = UIImage(named: iconName) else { return nil }
@@ -2157,17 +2465,43 @@ struct MainTabView: View {
         // breathing room. Saves ~12pt vs the 25/10 sizing — enough
         // to fit "Control Center" comfortably in the iPhone XS
         // ~94pt slot.
-        let iconSize = shrinkForNarrowIPhone
-            ? CGSize(width: 20, height: 20)
-            : CGSize(width: 25, height: 25)
-        let font = UIFont.systemFont(ofSize: shrinkForNarrowIPhone ? 9 : 10,
-                                     weight: .regular)
+        //
+        // QA follow-up — iPhone LANDSCAPE iOS < 26 (`compact == true`)
+        // uses 22pt icon / 11pt font / 4pt spacing across EVERY tab.
+        // 22pt is UIKit's natural compactInlineLayoutAppearance icon
+        // ceiling on iPhone iOS pre-26: source images at or below
+        // this height render at NATIVE size (no clamping), so the
+        // composite reads crisply rather than being scaled down. A
+        // taller source (the earlier 30pt attempt) gets clamped by
+        // UIKit's compact-mode constraint and renders no larger than
+        // 22pt anyway — just blurrier. The `compact` variant is
+        // rendered ONLY when iPhone is in landscape on iOS < 26
+        // (driven by `compactComposite` in `tabLabel(_:connected:)`);
+        // iPad (any iOS, any orientation), iOS 26+ (any device), and
+        // iPhone PORTRAIT iOS < 26 continue to receive the `default`
+        // (25/10) or `shrunk` (20/9) variants bit-identically — no
+        // portrait impact, no iPad impact, no iOS 26+ impact.
+        let iconSize: CGSize
+        let font: UIFont
+        let spacing: CGFloat
+        if compact {
+            iconSize = CGSize(width: 22, height: 22)
+            font = UIFont.systemFont(ofSize: 11, weight: .regular)
+            spacing = 4
+        } else if shrinkForNarrowIPhone {
+            iconSize = CGSize(width: 20, height: 20)
+            font = UIFont.systemFont(ofSize: 9, weight: .regular)
+            spacing = 3
+        } else {
+            iconSize = CGSize(width: 25, height: 25)
+            font = UIFont.systemFont(ofSize: 10, weight: .regular)
+            spacing = 4
+        }
         let titleAttrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: UIColor.black // recolored by .alwaysTemplate
         ]
         let titleSize = (title as NSString).size(withAttributes: titleAttrs)
-        let spacing: CGFloat = shrinkForNarrowIPhone ? 3 : 4
 
         let totalWidth = iconSize.width + spacing + ceil(titleSize.width)
         let totalHeight = max(iconSize.height, ceil(titleSize.height))
