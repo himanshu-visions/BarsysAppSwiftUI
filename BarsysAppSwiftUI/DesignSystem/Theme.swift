@@ -1393,23 +1393,12 @@ private struct BarsysPopupCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             // Pre-iOS 26: rating / logout / device-disconnected popup
-            // card. Originally `Color.white.opacity(0.95)` for every
-            // device + appearance, which made the card a stark white
-            // slab against the dark `primaryBackgroundColor` canvas
-            // in iPad dark mode. iPad + dark mode now picks up the
-            // elevated dark `Theme.Color.surface` (#2C2C2E) so the
-            // card reads as a raised dark panel, matching the side-
-            // menu / edit-panel surfaces on the same device.
-            //
-            // iPhone (every appearance) AND iPad LIGHT mode keep the
-            // previous `Color.white.opacity(0.95)` pixels so the
-            // existing rendering is bit-identical — the iPhone path
-            // is completely unchanged.
-            let isIPadDark = UIDevice.current.userInterfaceIdiom == .pad && colorScheme == .dark
+            // card uses the adaptive `Theme.Color.surface` (light card /
+            // #2C2C2E elevated dark surface) so iPhone + iPad dark mode
+            // both render as a raised dark panel instead of a stark
+            // white slab — matching the logout alert's `alertCardBackground`.
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isIPadDark
-                      ? Theme.Color.surface
-                      : SwiftUI.Color.white.opacity(0.95))
+                .fill(Theme.Color.surface.opacity(0.95))
         }
     }
 
