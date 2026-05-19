@@ -4439,7 +4439,7 @@ struct EditRecipeView: View {
             // the panel's `header`.
             Color.clear
                 .frame(maxWidth: .infinity,
-                       maxHeight: isIPhoneLandscape ? 24 : .infinity)
+                       maxHeight: isIPhoneLandscape ? 40 : .infinity)
                 .contentShape(Rectangle())
                 .onTapGesture { dismiss() }
 
