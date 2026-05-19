@@ -5885,6 +5885,69 @@ struct BarBotCraftingView: View {
     // MARK: - Actions
 
     // Cross / backdrop tap.
+    //
+    // Full port of UIKit `BarBotCraftingViewController+Actions.dismissAction`
+    // (L14-43). UIKit's storyboard wires BOTH `btnCross` (the X in the
+    // top-right of the sheet) AND `btnDismiss` (the backdrop tap target)
+    // to the same `dismissAction` selector — they share identical
+    // behaviour, so our single `onCancelTap` here covers both.
+    //
+    // UIKit per-state behaviour (decoded from `dismissAction` +
+    // `BarBotCraftingViewModel.handleCancelRequest` +
+    // `BarBotCraftingViewController+BleResponse.swift`):
+    //
+    //   ┌──────────────────────────┬───────────────────────────────────────┐
+    //   │ `CraftingState`          │ UIKit behaviour                       │
+    //   ├──────────────────────────┼───────────────────────────────────────┤
+    //   │ .awaitingGlassRemoval    │ NO-OP — `strGlassStatusText ==        │
+    //   │                          │ removeGlassToCompleteTheDrink` guard  │
+    //   │                          │ early-returns. Also `btnCross` is     │
+    //   │                          │ hidden in this state (set in          │
+    //   │                          │ `allIngredientsPoured` BLE handler).  │
+    //   ├──────────────────────────┼───────────────────────────────────────┤
+    //   │ .idle                    │ `handleCancelRequest` → .cancelling.  │
+    //   │ .dispensing              │ Send BLE .cancel, show loader,        │
+    //   │                          │ unconditional 1.5s timer → dismiss.   │
+    //   │                          │ Device's cancelAcknowledged /         │
+    //   │                          │ dataFlushed may dismiss earlier.      │
+    //   ├──────────────────────────┼───────────────────────────────────────┤
+    //   │ .waitingForGlass         │ `handleCancelRequest` →               │
+    //   │ .glassLifted             │ .cancelledWaitingForGlass.            │
+    //   │                          │ Same loader + BLE .cancel + 1.5s      │
+    //   │                          │ timer. cancelAcknowledged dismisses   │
+    //   │                          │ immediately on B360/Coaster, 1s on    │
+    //   │                          │ Shaker.                               │
+    //   ├──────────────────────────┼───────────────────────────────────────┤
+    //   │ .cancelling              │ `handleCancelRequest` returns false   │
+    //   │ .cancelledWaitingForGlass│ (state.isCancelRelated guard). UIKit  │
+    //   │ .cancelAcknowledged      │ still shows loader + 1.5s timer →     │
+    //   │                          │ dismiss (no-op cancel resent).        │
+    //   ├──────────────────────────┼───────────────────────────────────────┤
+    //   │ .completed               │ Same path as above — but the device   │
+    //   │                          │ is idle, so no BLE response arrives.  │
+    //   │                          │ UIKit's 1.5s timer is the ONLY thing  │
+    //   │                          │ that dismisses. This was the bug —    │
+    //   │                          │ the SwiftUI port had no safety-net    │
+    //   │                          │ timer and hung on the                 │
+    //   │                          │ "Cancelling drink..." loader forever. │
+    //   └──────────────────────────┴───────────────────────────────────────┘
+    //
+    // SwiftUI port strategy:
+    //   1. `.awaitingGlassRemoval` → defensive early return (the cross is
+    //      hidden in this state via the sheet overlay guard, but a
+    //      backdrop/programmatic call could still hit this path).
+    //   2. `.completed` → FAST PATH: skip the no-op `env.loading.show` +
+    //      no-op BLE cancel and call `finishDismiss()` directly. Hardware
+    //      is idle, nothing to wind down — the 1.5s loader UIKit shows
+    //      here is confusing UX (drink is done, user sees "Cancelling
+    //      drink..."). Going straight to slide-down is the cleaner port.
+    //   3. Every other state → normal cancel flow PLUS a 1.5s safety-net
+    //      `finishDismiss()` timer that mirrors UIKit's
+    //      `DelayedAction.afterBleResponse(seconds: 1.5)`. The BLE
+    //      cancelAcknowledged / dataFlushed paths typically dismiss
+    //      faster, but the timer guarantees the sheet eventually closes
+    //      even if firmware fails to respond. `finishDismiss` is
+    //      idempotent — repeat invocations are safe.
     private func onCancelTap() {
         // UIKit L21-23: guard — cannot cancel once `strGlassStatusText ==
         // removeGlassToCompleteTheDrink`. i.e. when .awaitingGlassRemoval.
@@ -5892,8 +5955,33 @@ struct BarBotCraftingView: View {
         if cancelRequested { return }
         cancelRequested = true
 
+        // Fast path: drink already completed. Device is idle; no BLE
+        // cancel needed. Dismiss directly — no loader, no 1.5s wait.
+        if viewModel.state == .completed {
+            finishDismiss()
+            return
+        }
+
+        // Normal cancel: show loader, transition state, send BLE .cancel.
         env.loading.show("Cancelling drink...")
         viewModel.cancel(ble: ble)
+
+        // 1.5s safety-net dismiss, 1:1 with UIKit
+        // `DelayedAction.afterBleResponse(seconds: 1.5)` inside
+        // `dismissAction` (DelayedAction.swift L37 confirms this is just
+        // `DispatchQueue.main.asyncAfter`, not an actual BLE-response
+        // observer). Guarantees the sheet closes even when the firmware
+        // doesn't reply — e.g. a .cancel sent while the device is in a
+        // transient state that swallows the command. If the BLE path
+        // (cancelAcknowledged → dataFlushed → onDismiss → finishDismiss)
+        // fires first, this timer's `finishDismiss()` is a safe idempotent
+        // no-op (loader.hide on already-hidden, sheetOffsetY assign on
+        // already-600, onDismiss closure sets `craftingRecipe = nil` on
+        // already-nil).
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            finishDismiss()
+        }
     }
 
     // saveButton tap — UIKit L94-131 ports.
