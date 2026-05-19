@@ -5515,9 +5515,26 @@ struct BarBotCraftingView: View {
                 // is computed off both `state` AND `hasStartedDispensing`
                 // (mirroring UIKit's full guard) so a glitchy mid-state
                 // can't leak the bar through.
+                //
+                // QA regression follow-up: even with `.opacity`, the sheet's
+                // parent `.animation(.easeInOut(duration: 0.2), value:
+                // viewModel.state)` propagated to the opacity change, so the
+                // bar visibly faded out over 0.2s ON TOP of the completed UI
+                // — re-surfacing the user-reported "Progress bar is showing
+                // on Drink Completed screen if crafting was done from
+                // BarBot" bug. UIKit
+                // `BarBotCraftingViewController.updateDrinkCompletedUI` L253
+                // sets `collectionViewProgress.isHidden = true` with NO
+                // animation — the bar disappears in the same frame
+                // `dataFlushed` lands. `.transaction { $0.animation = nil }`
+                // strips the inherited animation from this view's transaction
+                // so the opacity flips instantly, matching UIKit, while
+                // the contentContainer pour→completed swap and the
+                // bottomButtons reveal keep their 0.2s ease-in-out.
                 progressBar
                     .frame(height: 10)
                     .opacity(shouldShowProgressBar ? 1 : 0)
+                    .transaction { $0.animation = nil }
                     .allowsHitTesting(shouldShowProgressBar)
                     .accessibilityHidden(!shouldShowProgressBar)
             }
