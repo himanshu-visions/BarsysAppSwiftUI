@@ -59,6 +59,17 @@ struct MainTabView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    /// Held here so each tab's NavigationStack can re-inject it onto
+    /// pushed destinations. `ExploreRecipesView` / `MixlistListView` /
+    /// `ControlCenterView` consume `CatalogService` via
+    /// `@EnvironmentObject`, and on iOS 16+ the env chain through
+    /// `.navigationDestination` is occasionally dropped under specific
+    /// push/state-restoration timings (same SwiftUI quirk that bit
+    /// `EditRecipeCoverContent` — see comment on line 2744). Crash
+    /// signature: `SwiftUI.EnvironmentObject.error()` from
+    /// `ExploreRecipesView.body.getter` at the `catalog.isLoading` read.
+    /// Explicit re-injection on every NavigationStack closes the gap.
+    @EnvironmentObject private var catalog: CatalogService
 
     /// Persists the user's last-selected tab across background ↔
     /// foreground transitions. SwiftUI's TabView occasionally
@@ -229,6 +240,7 @@ struct MainTabView: View {
                         .navigationDestination(for: Route.self) { RouteView(route: $0) }
                 }
                 .environmentObject(barBotSharedVM)
+                .environmentObject(catalog)
                 .tabItem { tabLabel(.barBot) }
                 .tag(AppTab.barBot)
 
@@ -242,6 +254,7 @@ struct MainTabView: View {
                     DevicePairedView()
                         .navigationDestination(for: Route.self) { RouteView(route: $0) }
                 }
+                .environmentObject(catalog)
                 .tabItem { tabLabel(.explore) }
                 .tag(AppTab.explore)
 
@@ -250,6 +263,7 @@ struct MainTabView: View {
                     MyBarView()
                         .navigationDestination(for: Route.self) { RouteView(route: $0) }
                 }
+                .environmentObject(catalog)
                 .tabItem { tabLabel(.myBar) }
                 .tag(AppTab.myBar)
 
@@ -278,6 +292,7 @@ struct MainTabView: View {
                     }
                     .navigationDestination(for: Route.self) { RouteView(route: $0) }
                 }
+                .environmentObject(catalog)
                 .tabItem { tabLabel(.homeOrControlCenter, connected: ble.isAnyDeviceConnected) }
                 .tag(AppTab.homeOrControlCenter)
                 // Re-apply selectedImage every time this tab's content appears.
@@ -2755,6 +2770,7 @@ struct EditRecipeCoverContent<Content: View>: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var ble: BLEService
+    @EnvironmentObject private var catalog: CatalogService
     private let onClose: () -> Void
     private let content: () -> Content
 
@@ -2773,6 +2789,7 @@ struct EditRecipeCoverContent<Content: View>: View {
         .environmentObject(env)
         .environmentObject(router)
         .environmentObject(ble)
+        .environmentObject(catalog)
         .environment(\.editCoverPath, $path)
         // Direct close action — `EditRecipeView` reads this via
         // `@Environment(\.editCoverClose)` and invokes it for the
