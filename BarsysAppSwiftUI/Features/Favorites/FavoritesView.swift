@@ -1975,60 +1975,43 @@ struct BarsysRecipeGridCell: View {
     }
 }
 
-// MARK: - Glass button modifier (ports UIKit `addGlassEffectToUIButton`)
+// MARK: - Glass button modifier (ports UIKit `.prominentGlass()`)
 //
-// 1:1 port of UIKit `addGlassEffectToUIButton(isBorderEnabled:false,
-// cornerRadius: h/2, alpha:1, effect:"regular")` (UIViewClass+GlassEffects.swift).
-// UIKit applies this on BOTH iOS 26+ (real `UIGlassEffect(style: .regular)`
-// with `isInteractive = true`) AND pre-26 (`UIBlurEffect(style: .regular)`),
-// so the heart-button glass must render on every supported deployment target.
+// 1:1 port of UIKit's heart / more button styling
+// (BarsysRecipeTableViewCell, MixlistDetailTableViewCell,
+// RecommendedRecipeCell, ReadyToPourListViewController+TableView,
+// ExploreRecipesViewController+TableView, …):
 //
-// iOS 26+ uses the native SwiftUI `.glassEffect(.regular.interactive(), in:)`
-// modifier — same recipe as `TutorialCloseGlassBackground` and the system
-// toolbar back chevron — which gives the proper Liquid Glass press
-// refraction / bounce that `.ultraThinMaterial + Circle().fill(...)` cannot
-// reproduce. Pre-26 falls back to `.regularMaterial` + 1pt white stroke.
+//   if #available(iOS 26.0, *) {
+//       favouriteButton.configuration = .prominentGlass()
+//       favouriteButton.tintColor = .black.withAlphaComponent(0.3)
+//   } else {
+//       favouriteButton.tintColor = .white
+//   }
+//
+// On iOS 26+ the heart button gets a Liquid Glass capsule behind it.
+// On pre-iOS 26 the UIKit cells apply NO background to the button at
+// all — the heart icon renders as a bare white silhouette directly
+// on top of the recipe image. The SwiftUI helpers below must mirror
+// that exactly: glass capsule on iOS 26+, completely transparent on
+// pre-26 (no `Circle().fill(...)` background).
 
 extension View {
-    /// Wraps the view in a circular interactive glass capsule. iOS 26+
-    /// uses `.glassEffect(.regular.interactive(), in: .circle)` for the
-    /// native Liquid Glass press refraction the system back chevron has.
-    /// Pre-26 falls back to `Circle().fill(.regularMaterial)` — the
-    /// SwiftUI equivalent of `UIBlurEffect(style: .regular)` UIKit applies
-    /// via `addGlassEffectToUIButton`.
+    /// Wraps the view in a circular interactive Liquid Glass capsule
+    /// on iOS 26+. On pre-iOS 26 this is a no-op — UIKit's
+    /// `prominentGlass()` configuration is only applied inside the
+    /// `#available(iOS 26.0, *)` branch, so the SwiftUI port keeps
+    /// the heart icon background-less on older systems.
     @ViewBuilder
     func glassButtonIfAvailable(size: CGFloat) -> some View {
         if #available(iOS 26.0, *) {
-            // Native Liquid Glass — same modifier the system toolbar back
-            // chevron and TutorialCloseGlassBackground use. `.interactive()`
-            // gives the press refraction / bounce that `.ultraThinMaterial`
-            // alone cannot reproduce.
             self.glassEffect(.regular.interactive(), in: .circle)
         } else {
-            // Pre-iOS 26 fallback: `.regularMaterial` circle + 1pt white
-            // stroke — SwiftUI equivalent of `UIBlurEffect(style: .regular)`
-            // UIKit applies via `addGlassEffectToUIButton`.
-            self.background(
-                Circle()
-                    .fill(.regularMaterial)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                    )
-                    .frame(width: size, height: size)
-            )
+            self
         }
     }
 
     /// Favourites-only "dark-glass" variant of `glassButtonIfAvailable`.
-    ///
-    /// QA bug 0062300 follow-up: the heart + more icons on the
-    /// Favorites cells need to read as **dark blackish translucent
-    /// capsules with white-content icons** — same look the system
-    /// adopts in dark mode — and they need to keep that look in BOTH
-    /// light and dark mode (the regular `.glassEffect(.regular)` runs
-    /// light-on-light in light mode and the icons disappear into the
-    /// glass).
     ///
     /// - iOS 26+: `.glassEffect(.regular.tint(.black.opacity(0.35))
     ///   .interactive(), in: .circle)` — Liquid Glass with a 35%
@@ -2036,15 +2019,10 @@ extension View {
     ///   reads as a smoky-dark glass that still shows the recipe
     ///   image faintly through it. `.interactive()` preserves the
     ///   press refraction / bounce.
-    /// - Pre-iOS 26: `Circle().fill(.thinMaterial)` underneath a
-    ///   `Color.black.opacity(0.35)` overlay — the equivalent
-    ///   stacked-fill recipe SwiftUI uses elsewhere to fake the iOS
-    ///   26 tinted glass on older systems. 0.5pt white stroke keeps
-    ///   the capsule edge crisp against light recipe artwork.
-    ///
-    /// Scoped to the Favorites cells only — `glassButtonIfAvailable`
-    /// keeps its existing light/adaptive look for every other call
-    /// site (Mixlists, ReadyToPour, RecipeDetail, ControlCenter).
+    /// - Pre-iOS 26: no-op. UIKit's heart button has NO background on
+    ///   pre-iOS 26 (only `tintColor = .white`), so the SwiftUI port
+    ///   matches by rendering the heart as a bare silhouette directly
+    ///   on top of the recipe image.
     @ViewBuilder
     func favoritesIconCapsule(size: CGFloat) -> some View {
         if #available(iOS 26.0, *) {
@@ -2055,17 +2033,7 @@ extension View {
                 in: .circle
             )
         } else {
-            self.background(
-                ZStack {
-                    Circle().fill(.thinMaterial)
-                    Circle().fill(Color.black.opacity(0.35))
-                }
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
-                )
-                .frame(width: size, height: size)
-            )
+            self
         }
     }
 }
