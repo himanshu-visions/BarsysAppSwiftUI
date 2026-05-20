@@ -1,12 +1,12 @@
 {
   "images" : [
     {
-      "filename" : "stationB@1x New.png",
+      "filename" : "stationB@3x New 1.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
-      "filename" : "stationB@2x New.png",
+      "filename" : "stationB@3x New 2.png",
       "idiom" : "universal",
       "scale" : "2x"
     },

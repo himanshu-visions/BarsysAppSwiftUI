@@ -1,17 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "stationC@1x New.png",
+      "filename" : "StationC@3x New 1.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
-      "filename" : "stationC@2x New.png",
+      "filename" : "StationC@3x New 2.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "stationC@3x New.png",
+      "filename" : "StationC@3x New.png",
       "idiom" : "universal",
       "scale" : "3x"
     }
