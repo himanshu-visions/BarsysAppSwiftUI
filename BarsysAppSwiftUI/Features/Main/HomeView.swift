@@ -391,7 +391,13 @@ struct HomeView: View {
                     // Width math (per current toolbar layout):
                     //   leading area  ≈ 60pt (Explore circle + insets)
                     //   trailing area ≈ 120pt (heart+profile pill + insets)
-                    //   forced width  = screenWidth − 180
+                    //   horizontal safe-area insets are also subtracted
+                    //   so landscape (where iPhones with Dynamic Island
+                    //   add ~59pt gutters on each side) lands the
+                    //   leading edge right after the Explore button
+                    //   instead of letting the centering overflow push
+                    //   the greeting onto the Explore icon.
+                    //   forced width = screenWidth − 180 − hSafeArea
                     // Plain `Text` (non-interactive) so iOS 26 auto-glass
                     // does NOT wrap it in a capsule — clear background,
                     // same top-view Y, only the X position changes.
@@ -407,7 +413,12 @@ struct HomeView: View {
                         Spacer(minLength: 10)
                     }
                     .frame(
-                        width: max(0, UIScreen.main.bounds.width - 180),
+                        width: max(
+                            0,
+                            UIScreen.main.bounds.width
+                                - 180
+                                - navigationHorizontalSafeAreaInsets
+                        ),
                         alignment: .leading
                     )
                 }
@@ -561,6 +572,30 @@ struct HomeView: View {
     /// keeps the original stacked vertical layout.
     private var isLandscapeSideBySide: Bool {
         isPhoneLandscape || isIPadLandscape
+    }
+
+    /// Sum of the key window's left + right safe-area insets at the
+    /// current orientation. iOS 26 iPhones with Dynamic Island/notch
+    /// report ~59pt on each side in landscape (0 in portrait); iPads
+    /// stay near 0 in either orientation.
+    ///
+    /// QA fix (iPhone iOS 26 landscape "Hi {name}" overlap): the
+    /// iOS-26 `.principal` toolbar slot is laid out INSIDE the nav
+    /// bar's horizontal safe area, but `UIScreen.main.bounds.width`
+    /// includes those gutters — so the forced-wide HStack frame below
+    /// was overshooting the slot by ~118pt in landscape, and the
+    /// principal slot's centering pushed half of that overflow LEFT,
+    /// landing the greeting on top of the Explore button. Subtracting
+    /// these insets makes the forced frame match the slot's true
+    /// width on every orientation.
+    private var navigationHorizontalSafeAreaInsets: CGFloat {
+        _ = orientationBumpTick  // body dependency on rotation
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+        let window = windows.first(where: { $0.isKeyWindow }) ?? windows.first
+        return (window?.safeAreaInsets.left ?? 0)
+            + (window?.safeAreaInsets.right ?? 0)
     }
 
     // MARK: - Main card (outer + inner 5pt inset + header + hero)
