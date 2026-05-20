@@ -4816,6 +4816,13 @@ struct QRReaderView: View {
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    /// `compact` vertical size class on iPhone signals "landscape /
+    /// short viewport" — used to shrink the scanner card's bottom
+    /// inset so the live preview fills the available height instead
+    /// of being squashed by the portrait-spec 100pt bottom gap.
+    /// iPad keeps `regular` in both orientations, so this stays
+    /// false on iPad and the iPad layout is unaffected.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var didHandleScan = false
     @State private var isConnecting = false
@@ -4827,6 +4834,16 @@ struct QRReaderView: View {
     @State private var connectingDeviceName: String = ""
     @State private var loaderMessage: String = "Connecting"
 
+    /// True only on iPhone in landscape (compact vertical size class).
+    /// iPad keeps `regular` in both orientations and short-circuits to
+    /// false here, so the iPad scanner layout stays bit-identical.
+    /// Drives a per-orientation bottom inset on the scanner card so the
+    /// camera preview actually fills the iPhone-landscape viewport.
+    private var isPhoneLandscape: Bool {
+        verticalSizeClass == .compact
+            && UIDevice.current.userInterfaceIdiom != .pad
+    }
+
     var body: some View {
         // UIKit storyboard `kg7-ix-QeJ` (root) composed of:
         //   • `Gjh-Gs-NV7` — full-screen black @ alpha 0.9
@@ -4836,6 +4853,25 @@ struct QRReaderView: View {
         //   • `y9I-et-QTr` — scanner container, **24pt leading / 24pt
         //                    trailing from safe area**, 20pt below title,
         //                    100pt above bottom safe area (AutoLayout flex)
+        //
+        // QA fix (iPhone landscape — "Speakeasy camera height is not
+        // covering the view, observe top + bottom in landscape mode"):
+        // the UIKit storyboard ships a 100pt bottom inset designed for
+        // portrait, where the screen is ~852pt tall and 100pt is a
+        // visually balanced footer gap. On iPhone landscape (~393pt
+        // tall once nav bar + home-indicator safe area are taken out,
+        // and with a 44pt custom nav bar + 25pt title + 10pt + 20pt
+        // inset already above it), that same 100pt bottom inset leaves
+        // the live preview only ~170pt tall — half the available
+        // height, which is the "camera not covering the view"
+        // behaviour QA reported. Collapse the bottom inset to 20pt on
+        // iPhone landscape only (matches the 20pt top inset, so the
+        // scanner is now top/bottom symmetric in landscape) and keep
+        // the storyboard-spec 100pt for every other path — iPhone
+        // portrait stays bit-identical to the UIKit storyboard, and
+        // iPad (any orientation) stays bit-identical too because
+        // `isPhoneLandscape` short-circuits on `.pad`.
+        let scannerBottomInset: CGFloat = isPhoneLandscape ? 20 : 100
         ZStack {
             Color.black.opacity(0.9)
                 .ignoresSafeArea()
@@ -4855,13 +4891,17 @@ struct QRReaderView: View {
                 // 3. Scanner container — flex width bounded by 24pt
                 //    leading + 24pt trailing from the safe area (EXACT
                 //    UIKit AutoLayout). 20pt below the title. Vertical
-                //    space fills down to 100pt above the bottom safe
-                //    area, exactly like the storyboard's bottom anchor.
+                //    space fills down to `scannerBottomInset` above
+                //    the bottom safe area — 100pt by default (matches
+                //    the storyboard's bottom anchor on portrait /
+                //    iPad), 20pt on iPhone landscape so the preview
+                //    fills the short viewport with symmetric 20pt
+                //    insets above and below.
                 scannerCard
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 24)
                     .padding(.top, 20)
-                    .padding(.bottom, 100)
+                    .padding(.bottom, scannerBottomInset)
             }
 
             // Loader while socket is negotiating.
