@@ -4025,16 +4025,16 @@ struct StationSelectorCard: View {
 
             // Station diagram — UIKit: 279×246, scaleAspectFit.
             // Light mode: original PNG (bit-identical UIKit-parity).
-            // Dark mode: template-tinted with `softWhiteText` so the
-            // dark equipment glyph reads as a clear white diagram on
-            // the dark Stations Menu canvas.
+            // Dark mode: dedicated `station{X}Dark` PNG which preserves
+            // the salmon highlight ring + black letter glyph inside the
+            // oval on a black canvas. Template-tinting the light image
+            // flattened the salmon + letter into a single colour, making
+            // the A-F label invisible.
             Group {
                 if colorScheme == .dark {
-                    Image("station\(selected.rawValue)")
-                        .renderingMode(.template)
+                    Image("station\(selected.rawValue)Dark")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .foregroundStyle(Theme.Color.softWhiteText)
                 } else {
                     Image("station\(selected.rawValue)")
                         .resizable()
