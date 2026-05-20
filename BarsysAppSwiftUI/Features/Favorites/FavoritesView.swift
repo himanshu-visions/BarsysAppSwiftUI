@@ -2002,10 +2002,44 @@ extension View {
     /// `prominentGlass()` configuration is only applied inside the
     /// `#available(iOS 26.0, *)` branch, so the SwiftUI port keeps
     /// the heart icon background-less on older systems.
+    ///
+    /// QA fix (iOS 26+ centring + bounce parity with
+    /// `favoritesIconCapsule`): applying `.glassEffect(in: .circle)`
+    /// directly on the icon's chain (Image → `.frame(iconSize)` →
+    /// `.frame(buttonSize)` → `.foregroundStyle`) made iOS 26's
+    /// glass primitive snap to the inner Image's intrinsic content
+    /// size — the dark circle rendered SMALLER than the button
+    /// frame and the centred glyph read as off-centre relative to
+    /// it. An earlier fix parked the glass on a
+    /// `Color.clear.frame(size, size)` carrier inside `.background`,
+    /// which fixed the sizing but disabled `.interactive()`'s press
+    /// refraction (the Liquid Glass "bounce" the user reports as
+    /// stopped working) because the glass material no longer sat
+    /// on the touch-receiving view — it was a passive background
+    /// layer that didn't observe Button press state.
+    ///
+    /// Current fix wraps the icon in an explicitly-framed `ZStack`
+    /// and applies `.glassEffect(.interactive(), in: .circle)`
+    /// DIRECTLY on that ZStack. Three things this buys us:
+    ///   1. The ZStack `.frame(size, size)` sever any layout
+    ///      coupling to the inner Image's intrinsic content size,
+    ///      so the glass clip is guaranteed to be `size × size`
+    ///      (the original centring bug is fixed).
+    ///   2. `.glassEffect()` lives on the same view the parent
+    ///      Button presses, so `.interactive()` re-engages and the
+    ///      press refraction / bounce is back.
+    ///   3. The icon view (`self`) sits centred inside the ZStack
+    ///      via the default `.center` alignment, so the heart is
+    ///      visually centred in the glass circle.
+    /// Pre-iOS-26 behaviour is unchanged (still `self`).
     @ViewBuilder
     func glassButtonIfAvailable(size: CGFloat) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: .circle)
+            ZStack {
+                self
+            }
+            .frame(width: size, height: size)
+            .glassEffect(.regular.interactive(), in: .circle)
         } else {
             self
         }
@@ -2013,12 +2047,27 @@ extension View {
 
     /// Favourites-only "dark-glass" variant of `glassButtonIfAvailable`.
     ///
-    /// - iOS 26+: `.glassEffect(.regular.tint(.black.opacity(0.35))
-    ///   .interactive(), in: .circle)` — Liquid Glass with a 35%
-    ///   black tint composited into the material, so the capsule
-    ///   reads as a smoky-dark glass that still shows the recipe
-    ///   image faintly through it. `.interactive()` preserves the
-    ///   press refraction / bounce.
+    /// - iOS 26+: wraps the icon view in an explicitly-framed
+    ///   `ZStack` and applies a tinted, interactive
+    ///   `.glassEffect(.regular.tint(.black.opacity(0.35))
+    ///   .interactive(), in: .circle)` directly to that ZStack — the
+    ///   glass material sits on the touch-receiving view, so
+    ///   `.interactive()` re-engages and the recipe-row heart capsule
+    ///   bounces / refracts on press the way iOS 26 Liquid Glass is
+    ///   supposed to (QA: "ios 26 the recipes rows glass bounce
+    ///   effect should be working fine"). The explicit ZStack
+    ///   `.frame(size, size)` also detaches the glass from the inner
+    ///   Image's intrinsic content size, so the dark circle is
+    ///   guaranteed to be `size × size` and the centred heart reads
+    ///   as centred in the circle (the earlier centring QA).
+    ///
+    ///   An interim fix parked the glass on a passive
+    ///   `Color.clear.frame(size, size)` carrier inside `.background`
+    ///   — that produced the right circle size but disabled
+    ///   `.interactive()`'s press refraction because the glass
+    ///   material was no longer attached to the view receiving
+    ///   touches. The ZStack route gives us BOTH the correct sizing
+    ///   AND the interactive bounce.
     /// - Pre-iOS 26: no-op. UIKit's heart button has NO background on
     ///   pre-iOS 26 (only `tintColor = .white`), so the SwiftUI port
     ///   matches by rendering the heart as a bare silhouette directly
@@ -2026,7 +2075,11 @@ extension View {
     @ViewBuilder
     func favoritesIconCapsule(size: CGFloat) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(
+            ZStack {
+                self
+            }
+            .frame(width: size, height: size)
+            .glassEffect(
                 .regular
                     .tint(Color.black.opacity(0.35))
                     .interactive(),

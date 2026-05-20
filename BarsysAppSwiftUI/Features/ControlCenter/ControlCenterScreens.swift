@@ -1626,15 +1626,28 @@ private struct RecommendedRecipeCard: View {
         return raw.getImageUrl()
     }
 
-    /// Soft tint applied to the heart glyph — matches the favourites
-    /// button styling used by Mixlists / Favorites / Ready to Pour
-    /// cells (`favButtonTint` in those views): a subtle black overlay
-    /// inside the iOS 26 glass capsule, falling back to
-    /// `softWhiteText` on pre-26 so the heart reads against a darker
-    /// recipe thumbnail.
+    /// Heart-glyph tint — now matches the favourites button styling
+    /// actually used by Mixlists / Favorites / Ready to Pour / Explore
+    /// row cells (`favButtonTint` in those views): a near-white glyph
+    /// that reads with high contrast on top of the dark-tinted Liquid
+    /// Glass capsule (`favoritesIconCapsule`) on iOS 26+. Pre-iOS 26
+    /// keeps `softWhiteText` so the heart still reads against a darker
+    /// recipe thumbnail when there is no glass background.
+    ///
+    /// Previously this returned `Color.black.opacity(0.3)` on iOS 26
+    /// AND the call site below was missing `.renderingMode(.template)`
+    /// AND it called `glassButtonIfAvailable` (plain `.regular` glass,
+    /// no dark tint). Net result: the tint was a no-op (template-mode
+    /// off), the glass capsule was light, and the raw heart asset
+    /// rendered as a faint colored glyph floating on a smaller-than-
+    /// expected light glass circle — the "Explore carousel heart
+    /// doesn't look good" QA report. Re-aligning the tint here with
+    /// the rest of the app, plus the template/capsule fixes below, is
+    /// what the existing doc comment promised but the implementation
+    /// never delivered.
     private var heartTint: Color {
         if #available(iOS 26.0, *) {
-            return Color.black.opacity(0.3)
+            return Color.white.opacity(0.95)
         } else {
             return Theme.Color.softWhiteText
         }
@@ -1653,6 +1666,44 @@ private struct RecommendedRecipeCard: View {
         let descriptionSize: CGFloat = isIPad ? 14 : 11
         let heartGlyph: CGFloat = isIPad ? 28 : 22
         let heartButton: CGFloat = isIPad ? 40 : 30
+
+        // QA fix (iOS 26 only — "explore 'we think you'll love these'
+        // content is not in the centre"): on iOS 26 the dark-glass
+        // heart capsule sits visibly inside the card so the top-left
+        // text pinned by `alignment: .topLeading` reads as
+        // unbalanced — short titles + 1–2 ingredient lines float
+        // against the top edge with ~80pt of empty card below them
+        // while the heart anchors the top-right corner. Vertically
+        // centering the text VStack (leading-aligned, mid-height)
+        // balances the card visually. Pre-iOS-26 keeps the original
+        // topLeading pin so the previously-shipped storyboard
+        // layout is untouched there.
+        let contentAlignment: Alignment = {
+            if #available(iOS 26.0, *) { return .leading } else { return .topLeading }
+        }()
+        // Inset that lets the text VStack stretch to the full card
+        // height on iOS 26 so `.alignment: .leading` actually
+        // resolves to "vertically centred" (without an explicit
+        // maxHeight the VStack collapses to its intrinsic content
+        // height and `.leading` degenerates back into a top-pinned
+        // layout). nil on pre-iOS 26 = original auto-sized VStack.
+        let contentMaxHeight: CGFloat? = {
+            if #available(iOS 26.0, *) { return cardHeight } else { return nil }
+        }()
+        // QA fix (iOS 26 only — "give some spacing from right side
+        // more like 5-10 space increase"): the storyboard's 6pt
+        // trailing inset on the heart was tight enough that the
+        // bare pre-iOS-26 silhouette read fine against the recipe
+        // thumbnail, but the new dark-glass capsule (40pt diameter
+        // on iPad, 30pt on iPhone) is a much heavier visual element
+        // and looked crowded against the right edge of the card
+        // image. Bumping the trailing inset by 8pt (6 → 14) on
+        // iOS 26 gives the capsule the breathing room QA asked for
+        // without touching the pre-26 visual.
+        let heartTrailingInset: CGFloat = {
+            if #available(iOS 26.0, *) { return 14 } else { return 6 }
+        }()
+
         return ZStack(alignment: .topTrailing) {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -1670,7 +1721,11 @@ private struct RecommendedRecipeCard: View {
                     }
                 }
                 .padding(14)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: contentMaxHeight,
+                    alignment: contentAlignment
+                )
 
                 thumbnail
                     .frame(width: imageWidth, height: cardHeight)
@@ -1682,24 +1737,41 @@ private struct RecommendedRecipeCard: View {
                 onFavourite()
             } label: {
                 Image(recipe.isFavourite == true ? "favIconRecipeSelected" : "favIconRecipe")
+                    // `.renderingMode(.template)` is REQUIRED so the
+                    // tint in `.foregroundStyle(heartTint)` actually
+                    // paints the glyph — without it the raw asset
+                    // wins and `heartTint` is a no-op (the
+                    // pre-existing bug). Same template treatment that
+                    // the Favorites / Mixlist / Ready-to-Pour /
+                    // Explore row cells already use.
+                    .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: heartGlyph, height: heartGlyph)
                     .frame(width: heartButton, height: heartButton)
                     // Aligns this heart with the favourites design used
-                    // in Mixlists / Favorites / Ready to Pour cells: a
-                    // soft tinted glyph wrapped in the iOS 26 glass
-                    // capsule (with a graceful pre-26 fallback) plus
-                    // the standard bounce-on-tap button style.
+                    // in Mixlists / Favorites / Ready to Pour /
+                    // Explore row cells: near-white template-tinted
+                    // glyph wrapped in the dark-tinted iOS 26 Liquid
+                    // Glass capsule (`favoritesIconCapsule`), with a
+                    // pre-iOS-26 fallback that renders the heart as a
+                    // bare silhouette (matching the UIKit cells which
+                    // have no background on pre-26). Replaces the
+                    // previous `glassButtonIfAvailable` (plain glass,
+                    // no dark tint) so the heart icon on the Home
+                    // → Explore "We think you'll love these" carousel
+                    // reads the same way as the heart on every other
+                    // recipe surface in the app (QA: "fix the
+                    // favorite icon on explore screen also").
                     .foregroundStyle(heartTint)
-                    .glassButtonIfAvailable(size: heartButton)
+                    .favoritesIconCapsule(size: heartButton)
             }
             .buttonStyle(BounceButtonStyle())
             .accessibilityLabel(recipe.isFavourite == true
                                 ? "Remove from favourites"
                                 : "Add to favourites")
             .padding(.top, 6)
-            .padding(.trailing, 6)
+            .padding(.trailing, heartTrailingInset)
         }
         .frame(width: cardWidth, height: cardHeight)
         .background(Color("warmBackgroundColor"))
