@@ -6,12 +6,12 @@
       "scale" : "1x"
     },
     {
-      "filename" : "stationA@2x New.png",
+      "filename" : "stationA@1x New 1.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "stationA@3x New.png",
+      "filename" : "stationA@1x New 2.png",
       "idiom" : "universal",
       "scale" : "3x"
     }
