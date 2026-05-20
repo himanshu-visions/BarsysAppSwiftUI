@@ -1664,8 +1664,30 @@ private struct RecommendedRecipeCard: View {
         let imageWidth: CGFloat = isIPad ? 200 : 150
         let nameSize: CGFloat = isIPad ? 20 : 16
         let descriptionSize: CGFloat = isIPad ? 14 : 11
-        let heartGlyph: CGFloat = isIPad ? 28 : 22
-        let heartButton: CGFloat = isIPad ? 40 : 30
+        // QA fix (iOS 26 only — "the circle is smaller for this button,
+        // see the my drinks from favorites"): on iOS 26+ the heart sits
+        // inside the dark-glass `favoritesIconCapsule`, and the 30/40pt
+        // capsule on this carousel was visibly smaller than the
+        // 40/60pt capsule used by the Favorites → My Drinks cells on
+        // the same device. Bump the heart-button frame (and the glyph
+        // inside it) to match Favorites: 60pt capsule + 36pt glyph on
+        // iPad, 40pt capsule + 22pt glyph on iPhone. Pre-iOS-26 keeps
+        // the original 30/40pt sizing so the legacy bare-silhouette
+        // heart on darker thumbnails is untouched.
+        let heartGlyph: CGFloat = {
+            if #available(iOS 26.0, *) {
+                return isIPad ? 36 : 22
+            } else {
+                return isIPad ? 28 : 22
+            }
+        }()
+        let heartButton: CGFloat = {
+            if #available(iOS 26.0, *) {
+                return isIPad ? 60 : 40
+            } else {
+                return isIPad ? 40 : 30
+            }
+        }()
 
         // QA fix (iOS 26 only — "explore 'we think you'll love these'
         // content is not in the centre"): on iOS 26 the dark-glass
