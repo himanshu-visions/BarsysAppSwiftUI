@@ -443,6 +443,13 @@ struct SelectQuantityView: View {
     /// `checkIsValueSame`.
     @State private var preEditWholeRow: Int = 0
     @State private var preEditDecimalRow: Int = 0
+    /// Snapshot of `quantityMl` taken alongside the picker rows when
+    /// editing begins, so Cancel restores the canonical ml value
+    /// exactly (no float-drift from re-deriving it through the
+    /// `oz → ml` conversion). UIKit equivalent: the `defaultValue`
+    /// remains untouched until `tapDone` so a `Cancel` already had
+    /// the original ml stored on the ViewModel.
+    @State private var preEditQuantityMl: Double = 0
     /// Tracks which (if any) of the manual-input fields holds focus.
     /// Drives the keyboard toolbar AND the "show typed text on top of
     /// picker" visual that mirrors UIKit's
@@ -513,10 +520,47 @@ struct SelectQuantityView: View {
         return ""
     }
 
-    /// Save button enabled when current quantity > 0. UIKit's
-    /// `onUpdateSaveButtonState` toggles the background between
-    /// `sideMenuSelectionColor` and `lightGray`.
-    private var isSaveEnabled: Bool { quantityMl > 0 }
+    /// Save button enabled state — gated by the SAME per-unit
+    /// minimums UIKit uses, so the disabled / alert behaviour is
+    /// byte-for-byte consistent:
+    ///
+    ///   ┌────────┬────────────────────────────────────────────┬─────────────────────┐
+    ///   │  Unit  │  UIKit constant                            │ SwiftUI gate        │
+    ///   ├────────┼────────────────────────────────────────────┼─────────────────────┤
+    ///   │  .ml   │  NumericConstants.minimumQtyDouble (5.0)   │ quantityMl ≥ 5      │
+    ///   │  .oz   │  NumericConstants.minimumQtyInOzDouble     │ currentOzValue() ≥  │
+    ///   │        │                                  (0.17)    │                0.17 │
+    ///   └────────┴────────────────────────────────────────────┴─────────────────────┘
+    ///
+    /// These are the same values UIKit checks in three places:
+    ///   • `validateAndPrepareSaveData` (save tap → alert if below
+    ///     minimum). Both branches compare `defaultValue` (ml) to
+    ///     `minimumQtyDouble = 5.0`; the alert text differs by unit
+    ///     (`enterMinimumQtyAlertML` "Minimum quantity allowed is
+    ///     5 ml.", `enterMinimumQtyAlertOZ` "Minimum quantity
+    ///     allowed is 0.17 Oz.").
+    ///   • `shouldRevertSegment(0)` (oz → ml flip) — reverts when
+    ///     `valueInOzActual < minimumQtyInOzDouble`.
+    ///   • `shouldRevertSegment(1)` (ml → oz flip) — reverts when
+    ///     `quantitySelectedRowIndex < 5` (ml row index = ml value).
+    ///
+    /// Using `currentOzValue()` directly (instead of converting
+    /// quantityMl back to oz) avoids the float drift across
+    /// `*ounceValue` / `/ounceValue` round-trips. The save button
+    /// state lines up exactly with the oz picker rows the user sees.
+    ///
+    /// `handleSave` still runs the matching UIKit
+    /// `validateAndPrepareSaveData` chain as defence-in-depth — so
+    /// any code path that bypasses the gate (a future deep-link, a
+    /// stale router seed) still surfaces the correct minimum-quantity
+    /// alert instead of saving an invalid value.
+    private var isSaveEnabled: Bool {
+        if selectedUnit == .ml {
+            return quantityMl >= NumericConstants.minimumQtyDouble
+        } else {
+            return currentOzValue() >= NumericConstants.minimumQtyInOzDouble
+        }
+    }
 
     /// `true` whenever the canvas is wider than tall — iPhone
     /// landscape OR iPad in landscape orientation.
@@ -977,7 +1021,7 @@ struct SelectQuantityView: View {
     private var pickerWheels: some View {
         HStack(spacing: 5) {
             // Whole component — always shown. UIKit picker component 0.
-            Picker("Whole quantity", selection: $wholeRow) {
+            Picker("Whole quantity", selection: wholeRowBinding) {
                 ForEach(wholeArray.indices, id: \.self) { idx in
                     Text("\(wholeArray[idx])")
                         .font(.system(size: 28, weight: .bold))
@@ -988,19 +1032,10 @@ struct SelectQuantityView: View {
             .pickerStyle(.wheel)
             .frame(width: 80, height: 300)
             .clipped()
-            .onChange(of: wholeRow) { _ in
-                // UIKit `handlePickerDidSelectRow` (component 0) —
-                // recomputes `defaultValue`, re-syncs the field text,
-                // and (in oz mode) regenerates the decimal array so
-                // 25.* / 50.* caps apply.
-                recomputeQuantity()
-                ensureDecimalWithinCap()
-                syncFieldTextsFromRows()
-            }
 
             if selectedUnit == .oz {
                 // Decimal component — UIKit picker component 1.
-                Picker("Decimal", selection: $decimalRow) {
+                Picker("Decimal", selection: decimalRowBinding) {
                     ForEach(decimalArray.indices, id: \.self) { idx in
                         Text(decimalArray[idx])
                             .font(.system(size: 28, weight: .bold))
@@ -1011,12 +1046,70 @@ struct SelectQuantityView: View {
                 .pickerStyle(.wheel)
                 .frame(width: 80, height: 300)
                 .clipped()
-                .onChange(of: decimalRow) { _ in
-                    recomputeQuantity()
-                    syncFieldTextsFromRows()
-                }
             }
         }
+    }
+
+    // MARK: - Custom picker bindings (user-vs-programmatic gate)
+    //
+    // **Why a custom Binding instead of `$wholeRow` / `$decimalRow`**:
+    //
+    // UIKit's `pickerView(_:didSelectRow:inComponent:)` only fires
+    // for USER-driven scrolls. The programmatic
+    // `pickerView.selectRow(_:inComponent:animated:)` calls UIKit
+    // makes inside `handleSegmentChange` / `setupPickerInitialSelection`
+    // do NOT trigger the delegate, so `defaultValue` (the canonical
+    // ml value) is preserved across ml↔oz transitions.
+    //
+    // SwiftUI's `.onChange(of:)` is symmetric — it fires for BOTH
+    // user gestures and `@State` mutations. That meant the previous
+    // implementation re-derived `quantityMl` from the picker rows
+    // every time `positionPickerForCurrentQuantity` adjusted them
+    // for a unit flip, drifting the value:
+    //
+    //   • Start: `quantityMl = 100` (user picked 100 ml)
+    //   • Tap OZ → `positionPicker` sets `wholeRow=3, decimalRow=38`
+    //     → `.onChange` fires → `recomputeQuantity` runs:
+    //       `quantityMl = 3.38 / 0.033814 = 99.959`  ← DRIFT
+    //   • Save at oz mode → posts 99.959 ml instead of 100 ml.
+    //
+    // The custom Binding pattern restores UIKit's user-vs-programmatic
+    // split: the setter closure is invoked ONLY when SwiftUI's
+    // Picker pushes a value through the binding (user gesture).
+    // Direct `wholeRow = X` assignments by our own code (unit-switch
+    // positioning, seed, manual-input commit, cancel-restore) update
+    // the `@State` storage without ever calling the binding's
+    // `set`. So `recomputeQuantity()` only runs on real user picker
+    // scrolls — exactly the UIKit semantics.
+
+    /// User-driven setter for the whole-component picker. Mirrors
+    /// UIKit `pickerView(_:didSelectRow:inComponent: 0)`.
+    private var wholeRowBinding: Binding<Int> {
+        Binding<Int>(
+            get: { wholeRow },
+            set: { newValue in
+                wholeRow = newValue
+                // User scrolled — recompute the canonical ml value,
+                // re-clamp the decimal row if we landed on the cap,
+                // and refresh the manual-input buffers.
+                recomputeQuantity()
+                ensureDecimalWithinCap()
+                syncFieldTextsFromRows()
+            }
+        )
+    }
+
+    /// User-driven setter for the decimal-component picker. Mirrors
+    /// UIKit `pickerView(_:didSelectRow:inComponent: 1)`.
+    private var decimalRowBinding: Binding<Int> {
+        Binding<Int>(
+            get: { decimalRow },
+            set: { newValue in
+                decimalRow = newValue
+                recomputeQuantity()
+                syncFieldTextsFromRows()
+            }
+        )
     }
 
     /// Tappable TextField overlay matching UIKit `Joa-xS-fU7` (whole)
@@ -1105,12 +1198,17 @@ struct SelectQuantityView: View {
         .onChange(of: focusedField) { newValue in
             if newValue != nil {
                 // UIKit `textFieldDidBeginEditing` — snapshot the
-                // picker rows so Cancel restores them. Also re-syncs
-                // the field text to the current picker selection in
-                // case the user opens an empty field after manual
-                // sanitisation.
+                // picker rows AND the canonical `quantityMl` so a
+                // Cancel restores the exact pre-edit state. We
+                // snapshot quantityMl separately because deriving
+                // it from `oz` picker rows after Cancel would drift
+                // it slightly (3.38 oz → 99.959 ml, not the original
+                // 100). UIKit avoids the drift by leaving
+                // `defaultValue` untouched during text-field edits;
+                // we mirror that by snapshotting + restoring.
                 preEditWholeRow = wholeRow
                 preEditDecimalRow = decimalRow
+                preEditQuantityMl = quantityMl
                 syncFieldTextsFromRows()
             }
         }
@@ -1326,13 +1424,16 @@ struct SelectQuantityView: View {
     }
 
     /// UIKit `onCancel` / `onCancelForDecimalsField`. Reverts the
-    /// picker rows to their pre-edit values and re-syncs the field
-    /// text so it matches the picker again.
+    /// picker rows AND the canonical `quantityMl` to their pre-edit
+    /// values. We DO NOT call `recomputeQuantity` here — re-deriving
+    /// `quantityMl` from the (restored) oz picker rows would drift
+    /// it (e.g. 100 ml → 3.38 oz → 99.959 ml). Restoring the
+    /// snapshot directly is byte-for-byte UIKit parity.
     private func onCancelManualInput() {
         wholeRow = preEditWholeRow
         decimalRow = preEditDecimalRow
+        quantityMl = preEditQuantityMl
         focusedField = nil
-        recomputeQuantity()
         syncFieldTextsFromRows()
     }
 
