@@ -4252,8 +4252,21 @@ struct BarBotHistorySideMenuOverlay: View {
     @State private var panelDragAxis: PanelDragAxis = .undetermined
 
     /// UIKit panel visible width = 351 / 393 ≈ 89.3% of screen width.
+    ///
+    /// Base width is the SHORT side of the screen so the panel stays the
+    /// same physical size in portrait and landscape. Using
+    /// `UIScreen.main.bounds.width` directly produced two bugs in
+    /// landscape: (1) opening the menu in landscape made the panel ~89%
+    /// of the LONG side (e.g. 852·0.893 = 761pt on iPhone — too wide),
+    /// and (2) opening in portrait then rotating could leave the panel
+    /// at its stale portrait width because the body didn't re-render —
+    /// so the two paths produced visibly different widths. Anchoring
+    /// to `min(width, height)` keeps portrait pixel-identical (short
+    /// side == portrait width) and gives landscape the same panel
+    /// width as portrait, removing the inconsistency.
     private var panelWidth: CGFloat {
-        UIScreen.main.bounds.width * (351.0 / 393.0)
+        let bounds = UIScreen.main.bounds
+        return min(bounds.width, bounds.height) * (351.0 / 393.0)
     }
 
     /// Computed offset (negative = panel partially or fully off-screen
