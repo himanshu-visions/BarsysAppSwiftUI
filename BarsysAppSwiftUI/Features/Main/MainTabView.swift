@@ -662,23 +662,26 @@ struct MainTabView: View {
             // so the edge-pan gesture inside `BarBotCraftView` still
             // drives the open animation while the overlay itself lives
             // at the higher z-layer here.
-            if router.showBarBotHistory || router.historyOpenDragProgress > 0 {
-                BarBotHistorySideMenuOverlay(
-                    isPresented: $router.showBarBotHistory,
-                    vm: barBotSharedVM,
-                    closeDragProgress: $router.historyCloseDragProgress,
-                    openDragProgress: router.historyOpenDragProgress,
-                    isFullyPresented: router.showBarBotHistory
-                )
-                .zIndex(10)
-                .transition(.asymmetric(
-                    insertion: .identity,
-                    removal: .move(edge: .leading)
-                ))
-            }
+            //
+            // ALWAYS MOUNTED (no `if` gate) — same pattern as
+            // `SideMenuOverlay` (see SideMenuView.swift L387-389 for
+            // why). The earlier conditional + broad
+            // `.animation(_:value: router.showBarBotHistory)` on this
+            // ZStack made the spring transaction ripple through the
+            // TabView's `BarBotCraftView`, visibly jolting the chat
+            // content while the panel slid in. With the overlay always
+            // mounted, the panel's `offset(x:)` animates cleanly under
+            // each call site's `withAnimation` and no ambient animation
+            // is needed at the ZStack level.
+            BarBotHistorySideMenuOverlay(
+                isPresented: $router.showBarBotHistory,
+                vm: barBotSharedVM,
+                closeDragProgress: $router.historyCloseDragProgress,
+                openDragProgress: router.historyOpenDragProgress,
+                isFullyPresented: router.showBarBotHistory
+            )
+            .zIndex(10)
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85),
-                   value: router.showBarBotHistory)
         // Rating popup — shown on the full screen AFTER side menu dismisses.
         // 1:1 port of UIKit: dismissSideMenu(isAnimated: false) → then
         // showCustomAlertMultipleButtons on topViewController.

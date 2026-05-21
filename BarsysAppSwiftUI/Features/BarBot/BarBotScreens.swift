@@ -4272,19 +4272,40 @@ struct BarBotHistorySideMenuOverlay: View {
     /// Computed offset (negative = panel partially or fully off-screen
     /// to the left). Drives the LIVE follow-the-finger feel.
     ///
-    /// Three states drive the offset:
-    ///   1. Mid-OPEN drag (openDragProgress > 0, !isFullyPresented):
+    /// Four states drive the offset:
+    ///   1. Mid-OPEN drag (openDragProgress > 0 && !isFullyPresented):
     ///      offset = (progress - 1) * panelWidth → -panelWidth at progress=0,
     ///      0 at progress=1.
-    ///   2. Mid-CLOSE drag (closeDragProgress > 0, isFullyPresented):
+    ///   2. Mid-CLOSE drag (closeDragProgress > 0 && isFullyPresented):
     ///      offset = -progress * panelWidth → 0 at progress=0,
     ///      -panelWidth at progress=1.
-    ///   3. Idle (panel fully shown OR fully hidden): offset = 0.
+    ///   3. Idle, presented: offset = 0 (fully visible).
+    ///   4. Idle, NOT presented: offset = -panelWidth (parked off-screen).
+    ///
+    /// State 4 is the addition that lets the overlay be always-mounted
+    /// (see MainTabView's ZStack — no `if` conditional anymore). When
+    /// the call site flips `isFullyPresented` true under `withAnimation`,
+    /// SwiftUI interpolates `panelOffsetX` from `-panelWidth → 0` for a
+    /// clean slide-in WITHOUT needing a broad ambient
+    /// `.animation(value:)` on the parent — which previously caused the
+    /// BarBot chat content behind the panel to visibly jolt because the
+    /// ambient animation rippled into the TabView subtree.
     private var panelOffsetX: CGFloat {
-        if !isFullyPresented {
+        if openDragProgress > 0 && !isFullyPresented {
             return (openDragProgress - 1) * panelWidth
         }
-        return -closeDragProgress * panelWidth
+        if closeDragProgress > 0 && isFullyPresented {
+            return -closeDragProgress * panelWidth
+        }
+        return isFullyPresented ? 0 : -panelWidth
+    }
+
+    /// True whenever any part of the panel is on-screen — presented,
+    /// mid-open-drag, or mid-close-drag. Drives the panel's hit-testing
+    /// gate so the always-mounted (but parked off-screen) overlay never
+    /// intercepts touches meant for the chat content below.
+    private var isVisible: Bool {
+        isFullyPresented || openDragProgress > 0 || closeDragProgress > 0
     }
 
     /// Scrim opacity follows the panel position so the dim builds in /
@@ -4364,6 +4385,12 @@ struct BarBotHistorySideMenuOverlay: View {
             }
             .frame(width: panelWidth, alignment: .leading)
             .offset(x: panelOffsetX)
+            // Parked off-screen when not visible: never intercept
+            // touches meant for the chat content / edge-pan gesture
+            // below. The always-mounted overlay (see MainTabView)
+            // means this gate is the only thing preventing the panel's
+            // 351pt frame from claiming touches in its parked region.
+            .allowsHitTesting(isVisible)
             // Interactive LEFTWARD-pan dismiss — 1:1 with UIKit
             // SideMenuManager `addPanGestureToPresent` for a left menu.
             //
@@ -4459,36 +4486,34 @@ struct BarBotHistorySideMenuOverlay: View {
     }
 
     /// Two-step commit so the slide-off animation visibly completes
-    /// before the overlay unmounts. Mirrors UIKit's
-    /// `present(menu, animated: true)` ↔ `dismiss(animated: true)` where
-    /// the dismiss animation runs to completion before the panel VC is
-    /// removed from the hierarchy.
+    /// before the panel returns to its parked off-screen position.
+    /// Mirrors UIKit's `present(menu, animated: true)` ↔
+    /// `dismiss(animated: true)` where the dismiss animation runs to
+    /// completion before the panel VC is removed from the hierarchy.
     ///
-    /// **Critical**: the final `isPresented = false` flip must happen
-    /// inside a `Transaction(animation: nil)` / `disablesAnimations =
-    /// true` block. Otherwise the parent overlay's
-    /// `.animation(.spring(...), value: router.showBarBotHistory)` +
-    /// `.transition(.move(edge: .leading))` would replay the slide-off
-    /// AFTER our own offset-driven slide already completed, producing
-    /// the visible "panel slides off → reappears → slides off again"
-    /// double-animation the user reported. Suppressing the implicit
-    /// animation on the binding flip lets the offset animation own the
-    /// motion and lets the unmount happen invisibly while the panel is
-    /// already off-screen at x = -panelWidth.
+    /// In the always-mounted layout (MainTabView no longer
+    /// conditionally renders the overlay), step 2 just resets
+    /// `isPresented` + `closeDragProgress` so `panelOffsetX` flips
+    /// branches from "closeDrag formula" to "idle, not presented"
+    /// (both evaluate to -panelWidth at that instant, so visually no
+    /// change). The `disablesAnimations = true` transaction is kept
+    /// belt-and-braces so any implicit animation on the binding flip
+    /// can't add a stray second pass on top of the offset slide.
     private func commitClose() {
         // Step 1: animate the panel off-screen to the left.
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
             closeDragProgress = 1
         }
-        // Step 2: AFTER the slide-off completes, unmount silently.
+        // Step 2: AFTER the slide-off completes, settle state silently.
         // The 0.32s delay matches `dismissDuration = 0.3` plus a small
         // spring-tail buffer so the user reads the motion as completing
-        // rather than getting truncated by the overlay removal.
+        // before the offset formula flips branches.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
-            // Suppress the parent's `.animation(value:)` on
-            // `router.showBarBotHistory` so the conditional unmount
-            // (and its `.transition(.move(edge:.leading))` removal)
-            // happens WITHOUT a second slide-off pass.
+            // Belt-and-braces — flip `isPresented` and reset
+            // `closeDragProgress` inside a no-animation transaction so
+            // the offset formula's branch switch (closeDrag → idle)
+            // can't introduce a stray spring on top of the slide that
+            // already completed in step 1.
             var t = Transaction()
             t.disablesAnimations = true
             withTransaction(t) {
