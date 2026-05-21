@@ -3018,33 +3018,56 @@ enum MediaPermissions {
 //   verbatim (see ImagePickerViewController.swift L95 vs L176).
 extension AlertQueue {
     func requestCameraAccess(onGranted: @escaping () -> Void) {
-        MediaPermissions.requestCamera { [weak self] granted in
-            guard let self else { return }
-            if granted {
-                onGranted()
-            } else {
-                self.show(
-                    title: Constants.appNeedsCameraAccess,
-                    primaryTitle: ConstantButtonsTitle.cancelButtonTitle,
-                    secondaryTitle: ConstantButtonsTitle.goToSettingsTitle,
-                    onSecondary: { MediaPermissions.openAppSettings() }
-                )
+        // SwiftUI runs `Button` actions inside `.confirmationDialog` /
+        // `.alert` BEFORE the host modal finishes its dismiss
+        // animation. Calling `AVCaptureDevice.requestAccess` while the
+        // confirmation dialog (or any prior modal) is still on screen
+        // makes iOS silently drop the system permission popup —
+        // surfaces as "no authorization popup appears" on first tap
+        // across MyBar / Profile / EditRecipe / StationsMenu. Deferring
+        // to the next run loop with a delay slightly longer than the
+        // UIKit dialog dismiss animation (~0.35s) gives the host modal
+        // time to fully tear down before iOS tries to present its
+        // system popup.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            MediaPermissions.requestCamera { granted in
+                guard let self else { return }
+                if granted {
+                    onGranted()
+                } else {
+                    self.show(
+                        title: Constants.appNeedsCameraAccess,
+                        primaryTitle: ConstantButtonsTitle.cancelButtonTitle,
+                        secondaryTitle: ConstantButtonsTitle.goToSettingsTitle,
+                        onSecondary: { MediaPermissions.openAppSettings() }
+                    )
+                }
             }
         }
     }
 
     func requestPhotoLibraryAccess(onGranted: @escaping () -> Void) {
-        MediaPermissions.requestPhotoLibrary { [weak self] granted in
-            guard let self else { return }
-            if granted {
-                onGranted()
-            } else {
-                self.show(
-                    title: Constants.appNeedsGalleryAccess,
-                    primaryTitle: ConstantButtonsTitle.goToSettingsTitle,
-                    secondaryTitle: ConstantButtonsTitle.cancelButtonTitle,
-                    onPrimary: { MediaPermissions.openAppSettings() }
-                )
+        // Same modal-dismiss race as `requestCameraAccess` above — the
+        // "Photos" button lives inside a `.confirmationDialog` / `.alert`
+        // on every call site (MyBar, Profile, EditRecipe), and SwiftUI
+        // fires the button action while the dialog is still
+        // dismissing. `PHPhotoLibrary.requestAuthorization` then no-ops
+        // because iOS won't stack a system permission popup on top of
+        // a presenting/dismissing modal. The 0.4s delay matches the
+        // camera path so both pickers behave identically.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            MediaPermissions.requestPhotoLibrary { granted in
+                guard let self else { return }
+                if granted {
+                    onGranted()
+                } else {
+                    self.show(
+                        title: Constants.appNeedsGalleryAccess,
+                        primaryTitle: ConstantButtonsTitle.goToSettingsTitle,
+                        secondaryTitle: ConstantButtonsTitle.cancelButtonTitle,
+                        onPrimary: { MediaPermissions.openAppSettings() }
+                    )
+                }
             }
         }
     }
