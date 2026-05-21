@@ -505,35 +505,31 @@ struct SelectQuantityView: View {
     //       "Maximum Volume: …" label 17pt semibold mediumLightGray
     //       Save / Add button 150×45 rounded-corner=20 centered
     //       Bottom inset 20pt from safe area
-    //
-    // Native nav-bar is hidden — we render a custom top bar so the
-    // UIKit toolbar 60pt height + center device cluster can be matched
-    // exactly (the standard SwiftUI nav bar wraps the title slot
-    // differently and would lose the icon + label centre pair).
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Scrollable middle section — UIKit `OG6-hA-SCa`.
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
-                    // Units row — UIKit `qO5-ij-LNB` (height 40pt).
-                    unitsRow
-                        .padding(.horizontal, 17)
-                        .padding(.top, 10)
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                // Units row — UIKit `qO5-ij-LNB` (height 40pt).
+                unitsRow
+                    .padding(.horizontal, 17)
+                    .padding(.top, 10)
 
-                    // Picker — UIKit `U93-ue-cgA` (327×300, 24pt
-                    // leading/trailing).
-                    pickerStack
-                        .frame(height: 300)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 10)
-                }
+                // Picker — UIKit `U93-ue-cgA` (327×300, 24pt
+                // leading/trailing).
+                pickerStack
+                    .frame(height: 300)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
             }
-
-            // Bottom container — UIKit `Bgh-7a-Hfr` (122pt tall),
-            // pinned to the bottom safe-area inset (NOT in ScrollView)
-            // so the Save button stays visible regardless of content
-            // size, identical to the storyboard layout.
+        }
+        // Bottom container — UIKit `Bgh-7a-Hfr` (122pt tall), pinned
+        // via `safeAreaInset` so the Save button stays visible
+        // regardless of content size. Using `safeAreaInset` instead of
+        // a sibling `VStack` keeps `ScrollView` as the root view —
+        // iOS 26's Liquid-Glass nav bar attaches to the scrollable
+        // surface, which is what restores the glass capsule around
+        // the back button + the right-hand favourites/profile pill.
+        .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
                 // Maximum-volume label — UIKit `pP0-XI-Ftn`. 17pt
                 // semibold, mediumLightGrayColor, centred.
@@ -565,7 +561,10 @@ struct SelectQuantityView: View {
                 .accessibilityHint("Saves the selected quantity")
             }
             .padding(.horizontal, 17)
+            .padding(.top, 8)
             .padding(.bottom, 20)
+            .frame(maxWidth: .infinity)
+            .background(Color("primaryBackgroundColor"))
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
