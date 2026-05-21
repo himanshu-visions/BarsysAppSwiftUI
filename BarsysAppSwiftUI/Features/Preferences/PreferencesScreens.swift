@@ -513,9 +513,6 @@ struct SelectQuantityView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top toolbar — UIKit `edu-4m-EeV` (height 60pt).
-            customToolbar
-
             // Scrollable middle section — UIKit `OG6-hA-SCa`.
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
@@ -525,10 +522,7 @@ struct SelectQuantityView: View {
                         .padding(.top, 10)
 
                     // Picker — UIKit `U93-ue-cgA` (327×300, 24pt
-                    // leading/trailing). SwiftUI native wheel
-                    // picker is mounted side-by-side for the oz
-                    // 2-component case; single picker is centred
-                    // for the ml 1-component case.
+                    // leading/trailing).
                     pickerStack
                         .frame(height: 300)
                         .padding(.horizontal, 24)
@@ -536,9 +530,10 @@ struct SelectQuantityView: View {
                 }
             }
 
-            // Bottom container — UIKit `Bgh-7a-Hfr` (122pt tall).
-            // Pinned via VStack (NOT inside ScrollView) so the Save
-            // button stays at the bottom regardless of content size.
+            // Bottom container — UIKit `Bgh-7a-Hfr` (122pt tall),
+            // pinned to the bottom safe-area inset (NOT in ScrollView)
+            // so the Save button stays visible regardless of content
+            // size, identical to the storyboard layout.
             VStack(spacing: 10) {
                 // Maximum-volume label — UIKit `pP0-XI-Ftn`. 17pt
                 // semibold, mediumLightGrayColor, centred.
@@ -549,9 +544,7 @@ struct SelectQuantityView: View {
                     .accessibilityLabel(minimumVolumeText)
 
                 // Save / Add button — UIKit `K1N-67-kPf`. 150×45,
-                // 20pt corner radius. UIKit's storyboard title is
-                // "Add"; the runtime applies PrimaryOrange style on
-                // iOS 26 and a flat fill on earlier iOS.
+                // 20pt corner radius.
                 Button {
                     HapticService.success()
                     handleSave()
@@ -577,7 +570,66 @@ struct SelectQuantityView: View {
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
+        .toolbar {
+            // Back button — UIKit `aiP-o8-GAQ`. Routed through the
+            // standard `.toolbar` API so iOS 26+ wraps it in a
+            // Liquid-Glass capsule automatically (matches the back
+            // button on Preferences, MyProfile, RecipeDetail, etc.).
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    HapticService.light()
+                    dismiss()
+                } label: {
+                    Image("back")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(
+                            width: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 15,
+                            height: UIDevice.current.userInterfaceIdiom == .pad ? 22 : 15
+                        )
+                        .foregroundStyle(Color("appBlackColor"))
+                }
+                .accessibilityLabel("Back")
+            }
+
+            // Center: device ICON ONLY (if connected). UIKit
+            // `SelectQuantityViewController.swift` hides
+            // `lblDeviceName` in `viewDidLoad` and never reverses
+            // it; only the 25×25 `imgDevice` is visible.
+            if !deviceImageName.isEmpty {
+                ToolbarItem(placement: .principal) {
+                    DevicePrincipalIcon(assetName: deviceImageName,
+                                        accessibilityLabel: deviceDisplayName)
+                }
+            }
+
+            // Right: fav + profile — shared 100×48 glass pill
+            // (iOS 26+) or bare 61×24 icon stack (pre-26).
+            // 1:1 UIKit `navigationRightGlassView` parity, identical
+            // to PreferencesView / MyProfileView / ControlCenter.
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationRightGlassButtons(
+                    onFavorites: { router.push(.favorites) },
+                    onProfile: {
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            router.showSideMenu = true
+                        }
+                    }
+                )
+            }
+        }
+        // Flat `primaryBackgroundColor` nav bar so the iOS 26
+        // top-right glass pill renders against the same canvas as
+        // HomeView (ChooseOptions) — makes the material blur +
+        // capsule stroke read identical to PreferencesView, MyProfile,
+        // ControlCenter, etc. Without this, the nav-bar picks up a
+        // lighter Liquid-Glass tint than the page body.
+        .chooseOptionsStyleNavBar()
+        // Re-enable swipe-back gesture (custom back chevron above
+        // hides the system one, which would otherwise disable
+        // `interactivePopGestureRecognizer`).
+        .interactivePopGestureEnabled()
         .alert(
             "",
             isPresented: Binding(
@@ -590,71 +642,6 @@ struct SelectQuantityView: View {
             message: { Text(alertMessage ?? "") }
         )
         .onAppear { seedFromRouterIfNeeded() }
-    }
-
-    // MARK: - Custom top toolbar (matches UIKit `edu-4m-EeV` 60pt bar)
-
-    @ViewBuilder
-    private var customToolbar: some View {
-        HStack(spacing: 0) {
-            // Back button — UIKit `aiP-o8-GAQ` (30×30, leading 12pt).
-            Button {
-                HapticService.light()
-                dismiss()
-            } label: {
-                Image("back")
-                    .renderingMode(.template)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 15, height: 15)
-                    .foregroundStyle(Color("appBlackColor"))
-                    .frame(width: 30, height: 30)
-            }
-            .padding(.leading, 12)
-            .accessibilityLabel("Back")
-
-            Spacer()
-
-            // Center cluster — UIKit `Ke1-tT-ohh`. Icon ONLY — UIKit
-            // `SelectQuantityViewController.swift` hides `lblDeviceName`
-            // in `setupView()` and never reverses it, matching every
-            // other connected-device screen (Control Center, Stations
-            // Menu, Station Cleaning, Favorites, My Profile, …). The
-            // shared `DevicePrincipalIcon` keeps the 25×25 frame +
-            // dark-mode template tint consistent with those screens.
-            if !deviceImageName.isEmpty {
-                DevicePrincipalIcon(assetName: deviceImageName,
-                                    accessibilityLabel: deviceDisplayName)
-            }
-
-            Spacer()
-
-            // Right cluster placeholder — preserves toolbar
-            // visual balance (UIKit has a 100×48 glass pill with
-            // favorite + profile icons). 30+30+7 = 67pt to
-            // mirror the back button + spacing.
-            HStack(spacing: 7) {
-                Image("favoriteIcon")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 30, height: 30)
-                    .accessibilityHidden(true)
-                Image("profileIcon")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 30, height: 30)
-                    .accessibilityHidden(true)
-            }
-            .padding(.trailing, 24)
-            // Right-side icons are decorative on this screen — UIKit's
-            // outlets are wired to side menu / favourites in shared
-            // code, but the SelectQuantity screen is rarely the place
-            // those are used. Leaving them visual-only here matches
-            // the storyboard chrome without adding side-menu plumbing.
-            .allowsHitTesting(false)
-        }
-        .frame(height: 60)
-        .background(Color("primaryBackgroundColor"))
     }
 
     // MARK: - Units row (segmented control + description)
