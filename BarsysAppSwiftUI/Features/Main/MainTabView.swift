@@ -663,24 +663,32 @@ struct MainTabView: View {
             // drives the open animation while the overlay itself lives
             // at the higher z-layer here.
             //
-            // ALWAYS MOUNTED (no `if` gate) — same pattern as
-            // `SideMenuOverlay` (see SideMenuView.swift L387-389 for
-            // why). The earlier conditional + broad
-            // `.animation(_:value: router.showBarBotHistory)` on this
-            // ZStack made the spring transaction ripple through the
-            // TabView's `BarBotCraftView`, visibly jolting the chat
-            // content while the panel slid in. With the overlay always
-            // mounted, the panel's `offset(x:)` animates cleanly under
-            // each call site's `withAnimation` and no ambient animation
-            // is needed at the ZStack level.
-            BarBotHistorySideMenuOverlay(
-                isPresented: $router.showBarBotHistory,
-                vm: barBotSharedVM,
-                closeDragProgress: $router.historyCloseDragProgress,
-                openDragProgress: router.historyOpenDragProgress,
-                isFullyPresented: router.showBarBotHistory
-            )
-            .zIndex(10)
+            // Conditional mount: only show while the drawer is open OR
+            // a swipe is mid-open / mid-close. The drawer's heavy
+            // session list / fetch lifecycle lives inside, so always-
+            // mounting it would (a) run `vm.fetchSessions()` at app
+            // start and (b) keep the ScrollView + ForEach hot in the
+            // view tree, which produced SwiftUI's "invalid reuse after
+            // initialization failure" runtime warnings on launch.
+            // Keeping the mount conditional and the ambient
+            // `.animation(_:value:)` REMOVED (it used to live on this
+            // ZStack and spring-rippled through the TabView, visibly
+            // jolting the chat content). The smooth slide-in is now
+            // driven by `.transition(.move(edge: .leading))` paired
+            // with the call-site `withAnimation` — edge-pan opens
+            // suppress the transition via a `disablesAnimations`
+            // transaction so the panel still tracks the finger live.
+            if router.showBarBotHistory || router.historyOpenDragProgress > 0 {
+                BarBotHistorySideMenuOverlay(
+                    isPresented: $router.showBarBotHistory,
+                    vm: barBotSharedVM,
+                    closeDragProgress: $router.historyCloseDragProgress,
+                    openDragProgress: router.historyOpenDragProgress,
+                    isFullyPresented: router.showBarBotHistory
+                )
+                .zIndex(10)
+                .transition(.move(edge: .leading))
+            }
         }
         // Rating popup — shown on the full screen AFTER side menu dismisses.
         // 1:1 port of UIKit: dismissSideMenu(isAnimated: false) → then
