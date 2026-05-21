@@ -615,19 +615,16 @@ struct SelectQuantityView: View {
 
             Spacer()
 
-            // Center cluster — UIKit `Ke1-tT-ohh`:
-            //   device icon (25×25) + "Barsys 360" label 12pt
-            // 8pt spacing between icon + label.
-            HStack(spacing: 8) {
-                if !deviceImageName.isEmpty {
-                    Image(deviceImageName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
-                }
-                Text(deviceDisplayName)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color("appBlackColor"))
+            // Center cluster — UIKit `Ke1-tT-ohh`. Icon ONLY — UIKit
+            // `SelectQuantityViewController.swift` hides `lblDeviceName`
+            // in `setupView()` and never reverses it, matching every
+            // other connected-device screen (Control Center, Stations
+            // Menu, Station Cleaning, Favorites, My Profile, …). The
+            // shared `DevicePrincipalIcon` keeps the 25×25 frame +
+            // dark-mode template tint consistent with those screens.
+            if !deviceImageName.isEmpty {
+                DevicePrincipalIcon(assetName: deviceImageName,
+                                    accessibilityLabel: deviceDisplayName)
             }
 
             Spacer()
