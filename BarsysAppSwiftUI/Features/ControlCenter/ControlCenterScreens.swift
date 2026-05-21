@@ -3529,7 +3529,7 @@ struct StationsMenuView: View {
                     // UIKit stack gRn-1d-c0y: spacing=8, distribution=fillEqually.
                     HStack(spacing: 8) {
                         primaryActionButton(title: "Clean", color: Color.white,
-                                            textColor: Color("appBlackColor"),
+                                            textColor: cleanButtonTextColor,
                                             stroke: Color("borderColor")) {
                             // Control-center-origin Clean — clear any
                             // stale setup context so the cleaning
@@ -3554,7 +3554,7 @@ struct StationsMenuView: View {
                     // in the HStack) so the user's attention is
                     // pinned to the required recovery action.
                     primaryActionButton(title: "Clean", color: Color.white,
-                                        textColor: Color("appBlackColor"),
+                                        textColor: cleanButtonTextColor,
                                         stroke: Color("borderColor")) {
                         router.push(.stationCleaning)
                     }
@@ -3569,7 +3569,7 @@ struct StationsMenuView: View {
                     // without first having to occupy a station.
                     HStack(spacing: 8) {
                         primaryActionButton(title: "Clean", color: Color.white,
-                                            textColor: Color("appBlackColor"),
+                                            textColor: cleanButtonTextColor,
                                             stroke: Color("borderColor")) {
                             // Control-center-origin Clean — clear any
                             // stale setup context so the cleaning
@@ -3612,6 +3612,28 @@ struct StationsMenuView: View {
             LinearGradient(colors: [Theme.Color.background.opacity(0), Theme.Color.background],
                            startPoint: .top, endPoint: .bottom)
         )
+    }
+
+    /// Title colour for the white-fill "Clean" button on the bottom
+    /// action bar. Pre-iOS 26 the cancel capsule fill is
+    /// `Theme.Color.surface` (adaptive: white in light mode, #2C2C2E
+    /// in dark mode), so the adaptive `appBlackColor` flips with the
+    /// scheme and stays legible. iOS 26+ replaces the fill with a
+    /// non-adaptive `Color.white.opacity(0.85)` in BOTH modes (see
+    /// the QA-fix comment in `Theme.cancelCapsule(...)` lines 792-825),
+    /// so the adaptive `appBlackColor` — which resolves to near-white
+    /// #E5E5EA in dark mode — becomes white-on-white and disappears
+    /// on Stations Menu in dark mode (both portrait and landscape).
+    /// Pin the title to the LIGHT-mode `appBlackColor` RGB on iOS 26+
+    /// so dark mode stays readable; light-mode pixels are unchanged
+    /// because the resolved RGB is bit-identical to the asset's
+    /// light variant.
+    private var cleanButtonTextColor: Color {
+        if #available(iOS 26.0, *) {
+            return Color(red: 0.298, green: 0.302, blue: 0.310)
+        } else {
+            return Color("appBlackColor")
+        }
     }
 
     // 45pt-tall button matching UIKit's bottom-stack convention.
