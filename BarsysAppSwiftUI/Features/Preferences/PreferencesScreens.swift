@@ -387,9 +387,17 @@ struct SelectQuantityView: View {
     var defaultValueMl: Double = 0
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var ble: BLEService
+
+    /// Bumped by the `orientationDidChangeNotification` observer wired
+    /// into `body.onAppear` so iPad rotation (which keeps
+    /// `regular/regular` size classes in both orientations) still
+    /// triggers a SwiftUI re-evaluation of the `isLandscape` layout
+    /// switch. Same pattern used by ControlCenterScreens for its grid.
+    @State private var orientationTick: Int = 0
 
     // MARK: - Local state (mirrors `SelectQuantityViewModel`)
 
@@ -414,6 +422,34 @@ struct SelectQuantityView: View {
     /// presentation — pushing the screen twice in a single session
     /// would otherwise re-seed mid-edit and wipe the user's input.
     @State private var didSeed: Bool = false
+
+    // MARK: - Manual-input state (1:1 UIKit `txtInput` / `txtInputDecimals`)
+    //
+    // UIKit overlays two `UITextField`s on the picker center row
+    // (`Joa-xS-fU7` whole, `3yS-P6-FJF` decimal — 80×50 each, font
+    // 45pt, `textColor = .clear` so the picker's `attributedTitleForRow`
+    // is what the user actually reads). Tapping focuses the field;
+    // `addDoneCancelToolbar` wires Done → validate+snap, Cancel → revert.
+    // We mirror that here with two `TextField`s + `FocusState` so
+    // typing falls through to the picker on commit.
+
+    /// Buffer for the whole-component text field. UIKit `txtInput.text`.
+    @State private var wholeFieldText: String = "0"
+    /// Buffer for the decimal-component text field. UIKit
+    /// `txtInputDecimals.text`. Only used in `.oz` mode.
+    @State private var decimalFieldText: String = "00"
+    /// Snapshot of `wholeRow` taken at editing-begin so Cancel can
+    /// revert without leaving stale picker state. UIKit
+    /// `checkIsValueSame`.
+    @State private var preEditWholeRow: Int = 0
+    @State private var preEditDecimalRow: Int = 0
+    /// Tracks which (if any) of the manual-input fields holds focus.
+    /// Drives the keyboard toolbar AND the "show typed text on top of
+    /// picker" visual that mirrors UIKit's
+    /// `pickerView.reloadComponent(0)` while `checkIsUserChangingQty`.
+    @FocusState private var focusedField: ManualInputField?
+
+    enum ManualInputField: Hashable { case whole, decimal }
 
     // MARK: - Computed: picker data
 
@@ -482,6 +518,28 @@ struct SelectQuantityView: View {
     /// `sideMenuSelectionColor` and `lightGray`.
     private var isSaveEnabled: Bool { quantityMl > 0 }
 
+    /// `true` whenever the canvas is wider than tall — iPhone
+    /// landscape OR iPad in landscape orientation.
+    ///   • iPhone landscape: `verticalSizeClass == .compact` is the
+    ///     authoritative signal.
+    ///   • iPad: stays `regular/regular` in both orientations, so we
+    ///     fall back to a `UIScreen` bounds compare. `orientationTick`
+    ///     is read here purely so SwiftUI re-evaluates the flag when
+    ///     the rotation observer increments it.
+    /// Used by `body` to swap between the portrait stack and the
+    /// landscape side-by-side layout requested by QA (units +
+    /// segmented + save + description on the LEFT, picker on the
+    /// RIGHT).
+    private var isLandscape: Bool {
+        _ = orientationTick
+        if verticalSizeClass == .compact { return true }
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let bounds = UIScreen.main.bounds
+            return bounds.width > bounds.height
+        }
+        return false
+    }
+
     // MARK: - Body
     //
     // 1:1 with UIKit ControlCenter.storyboard scene `XVx-Hv-Mvu`:
@@ -507,64 +565,12 @@ struct SelectQuantityView: View {
     //       Bottom inset 20pt from safe area
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
-                // Units row — UIKit `qO5-ij-LNB` (height 40pt).
-                unitsRow
-                    .padding(.horizontal, 17)
-                    .padding(.top, 10)
-
-                // Picker — UIKit `U93-ue-cgA` (327×300, 24pt
-                // leading/trailing).
-                pickerStack
-                    .frame(height: 300)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 10)
+        Group {
+            if isLandscape {
+                landscapeBody
+            } else {
+                portraitBody
             }
-        }
-        // Bottom container — UIKit `Bgh-7a-Hfr` (122pt tall), pinned
-        // via `safeAreaInset` so the Save button stays visible
-        // regardless of content size. Using `safeAreaInset` instead of
-        // a sibling `VStack` keeps `ScrollView` as the root view —
-        // iOS 26's Liquid-Glass nav bar attaches to the scrollable
-        // surface, which is what restores the glass capsule around
-        // the back button + the right-hand favourites/profile pill.
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 10) {
-                // Maximum-volume label — UIKit `pP0-XI-Ftn`. 17pt
-                // semibold, mediumLightGrayColor, centred.
-                Text(minimumVolumeText)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Color("mediumLightGrayColor"))
-                    .multilineTextAlignment(.center)
-                    .accessibilityLabel(minimumVolumeText)
-
-                // Save / Add button — UIKit `K1N-67-kPf`. 150×45,
-                // 20pt corner radius.
-                Button {
-                    HapticService.success()
-                    handleSave()
-                } label: {
-                    Text(isAddingNewIngredient ? "Add" : "Save")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 150, height: 45)
-                        .background(
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(isSaveEnabled
-                                      ? Color("segmentSelectionColor")
-                                      : Color("lightGrayColor"))
-                        )
-                }
-                .disabled(!isSaveEnabled)
-                .accessibilityLabel(isAddingNewIngredient ? "Add" : "Save")
-                .accessibilityHint("Saves the selected quantity")
-            }
-            .padding(.horizontal, 17)
-            .padding(.top, 8)
-            .padding(.bottom, 20)
-            .frame(maxWidth: .infinity)
-            .background(Color("primaryBackgroundColor"))
         }
         .background(Color("primaryBackgroundColor").ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -596,7 +602,15 @@ struct SelectQuantityView: View {
             // `SelectQuantityViewController.swift` hides
             // `lblDeviceName` in `viewDidLoad` and never reverses
             // it; only the 25×25 `imgDevice` is visible.
-            if !deviceImageName.isEmpty {
+            //
+            // Gated on `ble.isAnyDeviceConnected` first (a direct
+            // `@Published` read) so SwiftUI re-evaluates the toolbar
+            // when the BLE connection state changes — matching the
+            // pattern used by MyProfile / Preferences / ScanIngredients
+            // / Favorites. Reading only `!deviceImageName.isEmpty`
+            // hides this dependency behind method calls and the
+            // principal item can stay missing after a late connect.
+            if ble.isAnyDeviceConnected, !deviceImageName.isEmpty {
                 ToolbarItem(placement: .principal) {
                     DevicePrincipalIcon(assetName: deviceImageName,
                                         accessibilityLabel: deviceDisplayName)
@@ -616,6 +630,28 @@ struct SelectQuantityView: View {
                         }
                     }
                 )
+            }
+
+            // Keyboard accessory toolbar — UIKit
+            // `addDoneCancelToolbar(onDone:onCancel:)` attached to
+            // both `txtInput` and `txtInputDecimals`. SwiftUI's
+            // `.keyboard` placement surfaces the same Cancel/Done
+            // pair above the decimal-pad keyboard:
+            //   • Cancel → `onCancelManualInput` (UIKit `onCancel`
+            //     / `onCancelForDecimalsField`) — reverts the picker
+            //     rows to their pre-edit snapshot.
+            //   • Done → `onDoneManualInput` (UIKit `tapDone` /
+            //     `tapDoneForDecimalsField`) — validates, caps, and
+            //     snaps the picker to the typed value.
+            ToolbarItemGroup(placement: .keyboard) {
+                Button(ConstantButtonsTitle.cancelButtonTitle) {
+                    onCancelManualInput()
+                }
+                Spacer()
+                Button("Done") {
+                    onDoneManualInput()
+                }
+                .fontWeight(.semibold)
             }
         }
         // Flat `primaryBackgroundColor` nav bar so the iOS 26
@@ -640,7 +676,227 @@ struct SelectQuantityView: View {
             },
             message: { Text(alertMessage ?? "") }
         )
-        .onAppear { seedFromRouterIfNeeded() }
+        .onAppear {
+            seedFromRouterIfNeeded()
+            // iPad keeps `regular/regular` size classes in both
+            // orientations, so the iPad branch of `isLandscape` reads
+            // `UIScreen.main.bounds` instead. That sample never
+            // updates without an explicit rotation notification, so
+            // we kick UIKit to start emitting them here (mirroring
+            // `ControlCenterScreens`).
+            if !UIDevice.current.isGeneratingDeviceOrientationNotifications {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            }
+        }
+        // Re-evaluate `isLandscape` on every rotation. iPhone gets
+        // this for free through `verticalSizeClass`; iPad needs the
+        // explicit tick because its size classes stay regular/regular.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )
+        ) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                orientationTick &+= 1
+            }
+        }
+    }
+
+    // MARK: - Portrait body
+    //
+    // Vertical stack: units row at top, picker below, Save + maximum
+    // volume pinned to the bottom via `safeAreaInset`. This is the
+    // 1:1 UIKit storyboard layout.
+
+    @ViewBuilder
+    private var portraitBody: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                // Units row — UIKit `qO5-ij-LNB` (height 40pt).
+                unitsRow
+                    .padding(.horizontal, 17)
+                    .padding(.top, 10)
+
+                // Picker — UIKit `U93-ue-cgA` (327×300, 24pt
+                // leading/trailing). The ZStack here is sized to
+                // match the UIKit `pickerView` frame so the centre
+                // band (where the picker's selection sits and where
+                // the manual-input TextFields hover) lines up
+                // pixel-for-pixel with the storyboard.
+                pickerStack
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 300)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+            }
+        }
+        // Bottom container — UIKit `Bgh-7a-Hfr` (122pt tall), pinned
+        // via `safeAreaInset` so the Save button stays visible
+        // regardless of content size. Using `safeAreaInset` instead of
+        // a sibling `VStack` keeps `ScrollView` as the root view —
+        // iOS 26's Liquid-Glass nav bar attaches to the scrollable
+        // surface, which is what restores the glass capsule around
+        // the back button + the right-hand favourites/profile pill.
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 10) {
+                maximumVolumeLabel
+                saveButton
+            }
+            .padding(.horizontal, 17)
+            .padding(.top, 8)
+            .padding(.bottom, 20)
+            .frame(maxWidth: .infinity)
+            .background(Color("primaryBackgroundColor"))
+        }
+    }
+
+    // MARK: - Landscape body
+    //
+    // Two columns, side by side. The LEFT column stacks the Units
+    // section ABOVE the Save section (Save button + Maximum Volume
+    // caption). The RIGHT column holds the picker. The split keeps
+    // the long-form fields together on one side and lets the wheel
+    // breathe on the other:
+    //
+    //   ┌──────────────────────────┬───────────────────────────┐
+    //   │  Units                   │                           │
+    //   │  Your preferred …        │     ┌────┬─┬────┐         │
+    //   │  [ ML │ OZ ]             │     │    │ │    │         │
+    //   │                          │     │ 10 │•│ 00 │         │
+    //   │  ┌────────────┐          │     │    │ │    │         │
+    //   │  │   Save     │          │     └────┴─┴────┘         │
+    //   │  └────────────┘          │                           │
+    //   │  Maximum Volume: 750 ml. │                           │
+    //   └──────────────────────────┴───────────────────────────┘
+    //
+    // Layout choices:
+    //   • Outer `HStack` uses `.top` alignment so the Units section
+    //     pins to the top of the canvas while a `Spacer` between
+    //     Units and Save pushes Save toward the vertical middle —
+    //     keeping the LEFT column readable top-down regardless of
+    //     canvas height.
+    //   • Each column uses `frame(maxWidth: .infinity)` so they
+    //     share the canvas 50/50.
+    //   • The picker sits inside its own VStack so the wheel is
+    //     vertically centred against the LEFT column's content.
+
+    @ViewBuilder
+    private var landscapeBody: some View {
+        HStack(alignment: .center, spacing: 24) {
+            // ─── LEFT column: Units section + Save section in a
+            //     single VStack with `.leading` alignment.
+            //
+            // Switching the outer VStack to `.leading` (and the
+            // inner Save VStack to `.leading` too) pins the
+            // following four leading edges to the SAME X:
+            //
+            //     • "Units" label
+            //     • "Your preferred measuring unit." caption
+            //     • ML / OZ segmented control
+            //     • Save button
+            //     • Maximum Volume caption
+            //
+            // That gives the Save button the same leading X as the
+            // ML/OZ control above it — which is exactly the user's
+            // ask ("leading of save button and ml oz button set
+            // similar leading").
+            //
+            // The whole VStack is still vertically centred inside
+            // the column via `.frame(maxHeight: .infinity,
+            // alignment: .leading)` (which resolves to centre Y +
+            // leading X).
+            VStack(alignment: .leading, spacing: 28) {
+                // 1. Units section — UIKit `qO5-ij-LNB` content
+                //    stacked vertically (title + caption + ML/OZ
+                //    segmented control). Already `.leading`
+                //    internally, so all three rows hug X=0.
+                unitsRowLandscape
+
+                // 2. Save section — Save / Add button on top with
+                //    the "Maximum Volume" caption beneath, both
+                //    pinned to the SAME leading edge as the ML/OZ
+                //    segmented control directly above.
+                VStack(alignment: .leading, spacing: 10) {
+                    saveButton
+                    maximumVolumeLabel
+                }
+            }
+            .padding(.leading, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                   alignment: .leading)
+
+            // ─── RIGHT column: picker (vertically centred). ───
+            pickerStack
+                .frame(width: 240, height: 300)
+                .frame(maxWidth: .infinity, maxHeight: .infinity,
+                       alignment: .center)
+                .padding(.trailing, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Shared building blocks
+
+    /// Save / Add button — UIKit `K1N-67-kPf`. 150×45, 20pt corner
+    /// radius. UIKit `SelectQuantityViewController.bindViewModel`
+    /// toggles the background between `sideMenuSelectionColor`
+    /// (enabled) and `UIColor.lightGray` (disabled) via the
+    /// `onUpdateSaveButtonState` callback — mirrored here through
+    /// `isSaveEnabled`. Font is `AppFontClass.font(.body)` ≈ 17pt
+    /// regular.
+    @ViewBuilder
+    private var saveButton: some View {
+        Button {
+            HapticService.success()
+            handleSave()
+        } label: {
+            Text(isAddingNewIngredient ? "Add" : "Save")
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(Color.white)
+                .frame(width: 150, height: 45)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(isSaveEnabled
+                              ? Color("sideMenuSelectionColor")
+                              : Color("lightGrayColor"))
+                )
+        }
+        .disabled(!isSaveEnabled)
+        .accessibilityLabel(isAddingNewIngredient ? "Add" : "Save")
+        .accessibilityHint("Saves the selected quantity")
+    }
+
+    /// Maximum-volume label — UIKit `pP0-XI-Ftn`. 17pt semibold,
+    /// `mediumLightGrayColor`, centred.
+    @ViewBuilder
+    private var maximumVolumeLabel: some View {
+        Text(minimumVolumeText)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(Color("mediumLightGrayColor"))
+            .multilineTextAlignment(.center)
+            .accessibilityLabel(minimumVolumeText)
+    }
+
+    /// Landscape variant of `unitsRow`. Same content (Units title,
+    /// caption, ML/OZ segmented control), but the segmented control
+    /// drops UNDER the description so the LEFT column reads top-down
+    /// instead of left-right. Matches the user request — "units
+    /// label and ml oz in left side in landscape".
+    @ViewBuilder
+    private var unitsRowLandscape: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Units")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color("veryDarkGrayColor"))
+                Text("Your preferred measuring unit.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color("appBlackColor"))
+            }
+
+            unitSegmentedControl
+                .frame(width: 100, height: 31)
+        }
     }
 
     // MARK: - Units row (segmented control + description)
@@ -670,17 +926,57 @@ struct SelectQuantityView: View {
     }
 
     // MARK: - Picker
+    //
+    // 1:1 with UIKit `pickerView` (`U93-ue-cgA` — 327×300pt, row
+    // height 48pt, component width 80pt from
+    // `pickerView(_:widthForComponent:)`) with TWO overlay
+    // `UITextField`s (`Joa-xS-fU7`, `3yS-P6-FJF`) sitting at the
+    // picker centre. SwiftUI replicates this with a `ZStack`:
+    //
+    //   • Background layer: `Picker(.wheel)` per UIKit component —
+    //     ml has 1 picker (whole), oz has 2 pickers (whole + decimal).
+    //     Frame width 80pt (UIKit `widthForComponent` = 80), height
+    //     300pt (UIKit `pickerView` frame). 5pt gap matches UIKit
+    //     stackView spacing `b7K-9c-B39`.
+    //
+    //   • Overlay layer: invisible `TextField`s at the same 80×50pt
+    //     centre that capture tap → keyboard → manual entry. UIKit
+    //     hides their text via `textColor = .clear`; SwiftUI uses
+    //     `.foregroundStyle(.clear)` with `.tint(black)` so the caret
+    //     remains visible while the picker's bold centre row reads as
+    //     the on-screen value (matching `attributedTitleForRow`).
+    //
+    //   • Centre marker: 7×7 `roundCorners=3.5` black dot (UIKit
+    //     `lblQtyFullStop` `H8Y-PZ-vjJ`), only in `.oz` mode. The
+    //     storyboard label has `text=""`, `backgroundColor=black`,
+    //     `width=7`, `height=7`, `roundCorners=3.5` — so it is a
+    //     CIRCLE, NOT a literal "." glyph. We mirror that with
+    //     `Circle().fill(.black).frame(width: 7, height: 7)`.
 
-    /// Builds the side-by-side wheel picker. SwiftUI's native
-    /// `Picker(.wheel)` accepts a single selection so we mount one
-    /// picker per UIKit component and arrange them horizontally.
-    /// On the oz unit the "." separator label sits between the two.
     @ViewBuilder
     private var pickerStack: some View {
-        HStack(spacing: 0) {
-            Spacer()
+        ZStack {
+            // ─── Background: native UIPickerView-backed wheel(s) ───
+            pickerWheels
 
-            // Whole component — always shown.
+            // ─── Overlay: tappable invisible text fields ───
+            manualInputOverlay
+
+            // ─── Centre marker: 7×7 black dot (oz only) ───
+            if selectedUnit == .oz {
+                Circle()
+                    .fill(Color("appBlackColor"))
+                    .frame(width: 7, height: 7)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pickerWheels: some View {
+        HStack(spacing: 5) {
+            // Whole component — always shown. UIKit picker component 0.
             Picker("Whole quantity", selection: $wholeRow) {
                 ForEach(wholeArray.indices, id: \.self) { idx in
                     Text("\(wholeArray[idx])")
@@ -690,24 +986,20 @@ struct SelectQuantityView: View {
                 }
             }
             .pickerStyle(.wheel)
-            .frame(width: 100, height: 220)
+            .frame(width: 80, height: 300)
             .clipped()
-            .onChange(of: wholeRow) { newValue in
-                // UIKit `handlePickerDidSelectRow` — recomputes
-                // `defaultValue` and (in oz mode) regenerates the
-                // decimal array so 25.* / 50.* caps apply.
+            .onChange(of: wholeRow) { _ in
+                // UIKit `handlePickerDidSelectRow` (component 0) —
+                // recomputes `defaultValue`, re-syncs the field text,
+                // and (in oz mode) regenerates the decimal array so
+                // 25.* / 50.* caps apply.
                 recomputeQuantity()
                 ensureDecimalWithinCap()
+                syncFieldTextsFromRows()
             }
 
             if selectedUnit == .oz {
-                // Decimal-separator "." — UIKit `lblQtyFullStop`.
-                Text(".")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(Color("appBlackColor"))
-                    .padding(.horizontal, 4)
-
-                // Decimal component — only mounted on oz.
+                // Decimal component — UIKit picker component 1.
                 Picker("Decimal", selection: $decimalRow) {
                     ForEach(decimalArray.indices, id: \.self) { idx in
                         Text(decimalArray[idx])
@@ -717,14 +1009,110 @@ struct SelectQuantityView: View {
                     }
                 }
                 .pickerStyle(.wheel)
-                .frame(width: 100, height: 220)
+                .frame(width: 80, height: 300)
                 .clipped()
                 .onChange(of: decimalRow) { _ in
                     recomputeQuantity()
+                    syncFieldTextsFromRows()
                 }
             }
+        }
+    }
 
-            Spacer()
+    /// Tappable TextField overlay matching UIKit `Joa-xS-fU7` (whole)
+    /// and `3yS-P6-FJF` (decimal). 80×50pt each, 5pt spacing, sat at
+    /// the picker's centre band.
+    ///
+    /// **UIKit fidelity trick**: the UIKit fields have
+    /// `textColor = .clear` and the picker's `attributedTitleForRow`
+    /// reads `txtInput.text` to render the typed value at the centre
+    /// row. SwiftUI's `Picker(.wheel)` does not expose its centre row
+    /// for override, so we approximate by toggling the TextField's
+    /// foreground:
+    ///   • **Unfocused** → text is `.clear` so the picker's own bold
+    ///     centre row reads through (exactly UIKit's resting state).
+    ///   • **Focused** → text becomes black + opaque background so it
+    ///     visually covers the picker centre row while the user types,
+    ///     mirroring UIKit's "picker shows the typed value" effect.
+    /// The 28pt bold font matches the picker rows so the on-screen
+    /// number looks identical regardless of which layer is on top.
+    @ViewBuilder
+    private var manualInputOverlay: some View {
+        HStack(spacing: 5) {
+            // Whole-input TextField — UIKit `Joa-xS-fU7`.
+            TextField("", text: $wholeFieldText)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.center)
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(
+                    focusedField == .whole
+                        ? Color("appBlackColor")
+                        : Color.clear
+                )
+                .tint(Color("appBlackColor").opacity(0.7))
+                .frame(width: 80, height: 50)
+                .background(
+                    focusedField == .whole
+                        ? Color("primaryBackgroundColor")
+                        : Color.clear
+                )
+                .focused($focusedField, equals: .whole)
+                .accessibilityLabel("Quantity value")
+                .accessibilityHint("Enter quantity amount")
+                .onChange(of: wholeFieldText) { newValue in
+                    // UIKit `shouldChangeCharactersIn` runs on every
+                    // keystroke. Sanitised here on `onChange` so the
+                    // bound state never holds an invalid string.
+                    let sanitised = sanitiseInput(newValue,
+                                                  forField: .whole)
+                    if sanitised != newValue {
+                        wholeFieldText = sanitised
+                    }
+                }
+
+            if selectedUnit == .oz {
+                // Decimal-input TextField — UIKit `3yS-P6-FJF`. Only
+                // mounted on oz to match `txtInputDecimals.isHidden`
+                // logic in `setupView`.
+                TextField("", text: $decimalFieldText)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.center)
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(
+                        focusedField == .decimal
+                            ? Color("appBlackColor")
+                            : Color.clear
+                    )
+                    .tint(Color("appBlackColor").opacity(0.7))
+                    .frame(width: 80, height: 50)
+                    .background(
+                        focusedField == .decimal
+                            ? Color("primaryBackgroundColor")
+                            : Color.clear
+                    )
+                    .focused($focusedField, equals: .decimal)
+                    .accessibilityLabel("Decimal value")
+                    .accessibilityHint("Enter decimal portion")
+                    .onChange(of: decimalFieldText) { newValue in
+                        let sanitised = sanitiseInput(newValue,
+                                                      forField: .decimal)
+                        if sanitised != newValue {
+                            decimalFieldText = sanitised
+                        }
+                    }
+            }
+        }
+        .onChange(of: focusedField) { newValue in
+            if newValue != nil {
+                // UIKit `textFieldDidBeginEditing` — snapshot the
+                // picker rows so Cancel restores them. Also re-syncs
+                // the field text to the current picker selection in
+                // case the user opens an empty field after manual
+                // sanitisation.
+                preEditWholeRow = wholeRow
+                preEditDecimalRow = decimalRow
+                syncFieldTextsFromRows()
+            }
         }
     }
 
@@ -756,6 +1144,10 @@ struct SelectQuantityView: View {
         selectedUnit = UserDefaultsClass.getPreferencesUnit()
         quantityMl = max(0, defaultValueMl)
         positionPickerForCurrentQuantity()
+        // Initial text-field buffers must match the picker, otherwise
+        // tapping the (invisible) field for the first time would
+        // present a stale "0" against a non-zero picker selection.
+        syncFieldTextsFromRows()
     }
 
     /// Snaps both picker components to the row(s) representing
@@ -838,6 +1230,12 @@ struct SelectQuantityView: View {
         // the unit change.
         positionPickerForCurrentQuantity()
         ensureDecimalWithinCap()
+        // Re-sync the manual-input buffers so the (invisible) text
+        // field shows the same value the picker just snapped to in
+        // the new unit. UIKit's `handleSegmentChange` triggers the
+        // same sync via its `onUpdateInputFieldText` /
+        // `onUpdateDecimalFieldText` callbacks.
+        syncFieldTextsFromRows()
     }
 
     // MARK: - Recompute quantity from picker rows
@@ -893,6 +1291,180 @@ struct SelectQuantityView: View {
         if decimalRow >= cap {
             decimalRow = max(0, cap - 1)
             recomputeQuantity()
+        }
+    }
+
+    // MARK: - Manual input → picker sync
+    //
+    // UIKit's tap-Done flow is split across
+    // `SelectQuantityViewController+Actions.tapDone()` /
+    // `tapDoneForDecimalsField()` (UI side) and the ViewModel's
+    // `processTapDone(_:_:)` / `processTapDoneForDecimalsField(_:)`
+    // (state side). The behaviour:
+    //
+    //   • If the user typed > max ⇒ snap picker to the cap row AND
+    //     surface the matching "exceeds N" alert.
+    //   • If the user typed a number that fits ⇒ snap picker to that
+    //     row, recompute `defaultValue`.
+    //   • Cancel ⇒ revert both pickers to their pre-edit rows; UIKit
+    //     `handleOnCancel` / `handleOnCancelForDecimalsField` toggles
+    //     `checkIsUserChangingQty / checkIsUserChangingDecimalQty`
+    //     off and reloads the picker components.
+
+    /// UIKit `tapDone` + `processTapDone(_:_:)`.
+    private func onDoneManualInput() {
+        let editingField = focusedField
+        focusedField = nil
+
+        if selectedUnit == .ml {
+            applyMlManualInput()
+        } else {
+            // For oz, apply BOTH fields on Done so the picker
+            // snaps to the typed whole + decimal pair in one shot.
+            applyOzManualInput(editingField: editingField)
+        }
+    }
+
+    /// UIKit `onCancel` / `onCancelForDecimalsField`. Reverts the
+    /// picker rows to their pre-edit values and re-syncs the field
+    /// text so it matches the picker again.
+    private func onCancelManualInput() {
+        wholeRow = preEditWholeRow
+        decimalRow = preEditDecimalRow
+        focusedField = nil
+        recomputeQuantity()
+        syncFieldTextsFromRows()
+    }
+
+    /// UIKit `processTapDone(_:_:)` for the ml branch. The picker
+    /// snaps to `min(value, maxRow)` and an alert appears when the
+    /// typed value exceeded the device cap (`> 750` for 360,
+    /// `> 1500` for Coaster/Shaker).
+    private func applyMlManualInput() {
+        let typed = Double(wholeFieldText) ?? 0
+        let cap: Double = ble.isBarsys360Connected()
+            ? NumericConstants.maximumQuantityDoubleMLFor360
+            : NumericConstants.maximumQuantityDoubleMLForCoaster
+        let capAlert: String = ble.isBarsys360Connected()
+            ? Constants.enterQuantityAlert750Ml
+            : Constants.enterQuantityAlert1500Ml
+
+        if typed > cap {
+            wholeRow = clampWholeRow(wholeArray.count - 1)
+            recomputeQuantity()
+            syncFieldTextsFromRows()
+            alertMessage = capAlert
+            return
+        }
+        // Round to the nearest whole row (UIKit uses
+        // `defaultTemp?.rounded()`).
+        let rounded = Int(typed.rounded())
+        wholeRow = clampWholeRow(rounded)
+        recomputeQuantity()
+        syncFieldTextsFromRows()
+    }
+
+    /// UIKit `processTapDone(_:_:)` (oz branch) +
+    /// `processTapDoneForDecimalsField(_:)`. Caps to 25.36 / 50.72 Oz
+    /// when the typed value would exceed the device limit, otherwise
+    /// snaps both picker components and re-syncs the field text.
+    private func applyOzManualInput(editingField: ManualInputField?) {
+        let typedWhole = Double(wholeFieldText) ?? 0
+        let typedDec = Double(decimalFieldText) ?? 0
+
+        let is360 = ble.isBarsys360Connected()
+        let wholeMax: Int = is360 ? 25 : 50
+        let decMaxAtCap: Int = is360 ? 36 : 72
+        let exceedAlert: String = is360
+            ? Constants.enterQuantityAlert25OZ
+            : Constants.enterQuantityAlert50OZ
+
+        // Above the whole-cap → snap to the maximum oz value AND
+        // alert (UIKit's "> 25" / "> 50" branches in
+        // `processTapDone`).
+        if typedWhole > Double(wholeMax) {
+            wholeRow = clampWholeRow(wholeMax)
+            // Decimal array shrinks to (decMaxAtCap + 1) entries when
+            // whole == cap. After recomputing `decimalArray`, the
+            // top-row index equals `decMaxAtCap`.
+            decimalRow = decMaxAtCap
+            recomputeQuantity()
+            syncFieldTextsFromRows()
+            alertMessage = exceedAlert
+            return
+        }
+
+        // Fits in the whole cap — snap whole.
+        let wholeRowIdx = Int(typedWhole)
+        wholeRow = clampWholeRow(wholeRowIdx)
+
+        // Decimal: when sitting on the max whole row the decimal
+        // array is capped at decMaxAtCap; clamp the typed decimal
+        // before assigning so we never overshoot the picker.
+        let decTypedInt = Int(typedDec)
+        if wholeRow == wholeMax {
+            decimalRow = min(decTypedInt, decMaxAtCap)
+            if decTypedInt > decMaxAtCap {
+                // UIKit's `processTapDoneForDecimalsField` surfaces
+                // the SAME 25.36/50.72 alert when the decimal is
+                // overflowed at the cap row.
+                recomputeQuantity()
+                syncFieldTextsFromRows()
+                alertMessage = exceedAlert
+                return
+            }
+        } else {
+            decimalRow = clampDecimalRow(decTypedInt)
+        }
+
+        recomputeQuantity()
+        syncFieldTextsFromRows()
+    }
+
+    /// UIKit `shouldChangeCharactersIn(textField:range:replacementString:)`
+    /// — port of the per-keystroke filter from
+    /// `SelectQuantityViewModel.shouldChangeCharacters(in:range:replacementString:)`.
+    /// • ml: digits only, no decimal separator, max 4 chars (cap
+    ///   1500 is 4 digits).
+    /// • oz whole: max 2 chars, no decimal separator.
+    /// • oz decimal: max 2 chars, no decimal separator.
+    private func sanitiseInput(_ raw: String,
+                               forField field: ManualInputField) -> String {
+        // Strip everything that isn't a digit. UIKit forbids the
+        // decimal separator outright for both ml and the split
+        // oz fields (the whole and decimal arrive in separate
+        // text fields).
+        var filtered = raw.filter { $0.isNumber }
+
+        let maxLength: Int
+        if selectedUnit == .ml {
+            // UIKit `newText.count > 4` ⇒ reject.
+            maxLength = 4
+        } else {
+            // UIKit `newText.count > 2` ⇒ reject.
+            maxLength = 2
+        }
+        if filtered.count > maxLength {
+            filtered = String(filtered.prefix(maxLength))
+        }
+        return filtered
+    }
+
+    /// Keeps the field-text buffers in lock-step with the picker row
+    /// state. Called whenever the picker selection or unit changes so
+    /// the (invisible) text field always reads the same value the
+    /// picker renders. Equivalent to UIKit's
+    /// `onUpdateInputFieldText` / `onUpdateDecimalFieldText`
+    /// callbacks firing on every `pickerView(_:didSelectRow:)`.
+    private func syncFieldTextsFromRows() {
+        guard !wholeArray.isEmpty else { return }
+        let safeWhole = clampWholeRow(wholeRow)
+        wholeFieldText = "\(wholeArray[safeWhole])"
+        if selectedUnit == .oz, !decimalArray.isEmpty {
+            let safeDec = clampDecimalRow(decimalRow)
+            decimalFieldText = decimalArray[safeDec]
+        } else {
+            decimalFieldText = "00"
         }
     }
 
