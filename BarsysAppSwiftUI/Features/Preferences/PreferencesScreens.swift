@@ -895,8 +895,8 @@ struct SelectQuantityView: View {
             handleSave()
         } label: {
             Text(isAddingNewIngredient ? "Add" : "Save")
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(Color.white)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.black)
                 .frame(width: 150, height: 45)
                 .background(
                     RoundedRectangle(cornerRadius: 20)
