@@ -905,6 +905,17 @@ struct SelectQuantityView: View {
                               : Color("lightGrayColor"))
                 )
         }
+        // QA fix — without an explicit `.buttonStyle(...)`, SwiftUI
+        // falls back to the default button style, which dims the
+        // label's opacity (~0.6) while pressed. With a black title
+        // on a peach/grey background, the dim made the "Save" / "Add"
+        // text wash out and look unclear during tap. Switching to
+        // `BounceButtonStyle()` matches the Refill button on Stations
+        // Menu (and every other primary CTA in the app — Craft, Setup
+        // Stations, Continue, …): a 0.95→1.0 scale bounce with no
+        // opacity change, so the title stays full-strength black
+        // throughout the press.
+        .buttonStyle(BounceButtonStyle())
         .disabled(!isSaveEnabled)
         .accessibilityLabel(isAddingNewIngredient ? "Add" : "Save")
         .accessibilityHint("Saves the selected quantity")
