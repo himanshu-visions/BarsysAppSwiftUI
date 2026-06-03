@@ -409,6 +409,7 @@ struct BarsysSearchBar: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color("barbotBorderColor"), lineWidth: 1)
         )
+        
         // 1:1 with UIKit `addDoneCancelToolbar(onDone:onCancel:)`
         // attached to `txtSearch` on Mixlists / Cocktail Kits /
         // Explore Recipes. The previous SwiftUI port left the search
